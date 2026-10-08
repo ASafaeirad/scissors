@@ -15,9 +15,9 @@ use super::preview_actions::{
 };
 use super::preview_panel::{
     centered_offset, preview_crop_visual_rect, preview_presented_frame, preview_scroll_delta_y,
-    preview_shell_state, preview_timeline_labels, preview_trim_enabled,
-    preview_visual_controls_visible, timeline_fraction_from_percent,
-    timeline_keyboard_time_for_key, timeline_slider_percent_from_bounds,
+    preview_shell_state, preview_trim_enabled, preview_visual_controls_visible,
+    timeline_fraction_from_percent, timeline_keyboard_time_for_key,
+    timeline_slider_percent_from_bounds,
 };
 use super::primitives::frame_highlight_px;
 use super::settings_panel::{hex_to_subtitle_hsv, subtitle_hsv_to_hex};
@@ -4089,7 +4089,7 @@ mod preview_shell {
     }
 
     #[test]
-    fn ready_video_metadata_populates_timeline_labels() {
+    fn ready_video_metadata_populates_timeline_bounds() {
         let config = ConversionConfig::default();
         let metadata = SourceMetadata {
             media_kind: Some(SourceKind::Video),
@@ -4110,13 +4110,12 @@ mod preview_shell {
             render_image: None,
             runtime_error: None,
         });
-        let labels = preview_timeline_labels(&state);
 
         assert_eq!(state.availability.media_kind, PreviewMediaKind::Video);
         assert!(preview_trim_enabled(&state));
-        assert_eq!(labels.start, "00:00:00.000");
-        assert_eq!(labels.end, "00:01:30.400");
-        assert_eq!(labels.duration, "00:01:30.400");
+        assert_eq!(state.playback.start_value(), 0.0);
+        assert_eq!(state.playback.end_value(), 90.4);
+        assert_eq!(state.playback.output_duration(), 90.4);
     }
 
     #[test]
@@ -4150,15 +4149,14 @@ mod preview_shell {
             render_image: None,
             runtime_error: None,
         });
-        let labels = preview_timeline_labels(&state);
 
-        assert_eq!(labels.start, "00:00:05.000");
-        assert_eq!(labels.end, "00:00:30.250");
-        assert_eq!(labels.duration, "00:00:25.250");
+        assert_eq!(state.playback.start_value(), 5.0);
+        assert_eq!(state.playback.end_value(), 30.25);
+        assert_eq!(state.playback.output_duration(), 25.25);
     }
 
     #[test]
-    fn image_metadata_uses_placeholder_timeline_labels() {
+    fn image_metadata_disables_timeline_trimming() {
         let config = ConversionConfig::default();
         let metadata = SourceMetadata {
             media_kind: Some(SourceKind::Image),
@@ -4179,13 +4177,9 @@ mod preview_shell {
             render_image: None,
             runtime_error: None,
         });
-        let labels = preview_timeline_labels(&state);
 
         assert_eq!(state.availability.media_kind, PreviewMediaKind::Image);
         assert!(state.availability.trim_disabled);
-        assert_eq!(labels.start, "--:--:--.---");
-        assert_eq!(labels.end, "--:--:--.---");
-        assert_eq!(labels.duration, "--:--:--.---");
     }
 
     #[test]

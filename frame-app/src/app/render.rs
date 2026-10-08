@@ -195,14 +195,6 @@ impl Render for FrameRoot {
                 let video_bitrate_focus =
                     self.ensure_text_input_focus(FrameTextInputKind::VideoBitrate, cx);
                 let gif_loop_focus = self.ensure_text_input_focus(FrameTextInputKind::GifLoop, cx);
-                let preview_start_time_focus =
-                    self.ensure_text_input_focus(FrameTextInputKind::PreviewStartTime, cx);
-                let preview_end_time_focus =
-                    self.ensure_text_input_focus(FrameTextInputKind::PreviewEndTime, cx);
-                let preview_start_time_value =
-                    self.text_input_value(FrameTextInputKind::PreviewStartTime);
-                let preview_end_time_value =
-                    self.text_input_value(FrameTextInputKind::PreviewEndTime);
                 let metadata_title_focus =
                     self.ensure_text_input_focus(FrameTextInputKind::MetadataTitle, cx);
                 let metadata_artist_focus =
@@ -513,12 +505,6 @@ impl Render for FrameRoot {
                                     last: &overlay_toolbar_last_focus,
                                 },
                             },
-                        },
-                        timecode_focuses: PreviewTimecodeInputFocuses {
-                            start: Some(&preview_start_time_focus),
-                            end: Some(&preview_end_time_focus),
-                            start_value: &preview_start_time_value,
-                            end_value: &preview_end_time_value,
                         },
                         seek_focus: &preview_seek_focus,
                         playback: preview_playback,

@@ -105,20 +105,11 @@ impl PreviewOverlayRenderState {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(in crate::app) struct PreviewTimecodeInputFocuses<'a> {
-    pub(in crate::app) start: Option<&'a FocusHandle>,
-    pub(in crate::app) end: Option<&'a FocusHandle>,
-    pub(in crate::app) start_value: &'a str,
-    pub(in crate::app) end_value: &'a str,
-}
-
 pub(in crate::app) struct PreviewPanelProps<'a> {
     pub(in crate::app) canvas: PreviewCanvasRenderState,
     pub(in crate::app) crop: PreviewCropRenderState,
     pub(in crate::app) overlay: PreviewOverlayRenderState,
     pub(in crate::app) viewport_focuses: PreviewViewportFocuses<'a>,
-    pub(in crate::app) timecode_focuses: PreviewTimecodeInputFocuses<'a>,
     pub(in crate::app) seek_focus: &'a FocusHandle,
     pub(in crate::app) playback: PreviewPlaybackState,
     pub(in crate::app) presentation: PreviewRenderPresentation,
@@ -191,13 +182,7 @@ pub(in crate::app) fn preview_panel(
         .card_surface(palette)
         .p(theme::ui_rem(PREVIEW_PANEL_PADDING))
         .child(preview_viewport(&state, props.viewport_focuses, window, cx))
-        .child(preview_timeline(
-            &state,
-            props.timecode_focuses,
-            props.seek_focus,
-            window,
-            cx,
-        ))
+        .child(preview_timeline(&state, props.seek_focus, window, cx))
 }
 
 pub(in crate::app) fn preview_shell_state(input: PreviewShellStateInput<'_>) -> PreviewShellState {
