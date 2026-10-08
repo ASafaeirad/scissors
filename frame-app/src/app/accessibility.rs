@@ -89,6 +89,18 @@ impl FrameRoot {
         self.focus_registry.finish_frame(window, cx, fallback);
     }
 
+    pub(in crate::app) fn registered_control_contains_focus(
+        &self,
+        id: &str,
+        window: &Window,
+        cx: &App,
+    ) -> bool {
+        self.focus_registry
+            .handles
+            .get(&FrameFocusKey::Control(id.to_string()))
+            .is_some_and(|entry| entry.handle.contains_focused(window, cx))
+    }
+
     pub(in crate::app) fn focus_registered_control(
         &self,
         id: impl Into<String>,

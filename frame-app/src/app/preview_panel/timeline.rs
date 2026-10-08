@@ -87,6 +87,7 @@ impl Element for PreviewTimelineTrackBoundsProbe {
 pub(in crate::app) fn preview_timeline(
     state: &PreviewShellState,
     inputs: PreviewTimecodeInputFocuses<'_>,
+    seek_focus: &FocusHandle,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -174,7 +175,7 @@ pub(in crate::app) fn preview_timeline(
                 .flex_col()
                 .gap(theme::ui_rem(6.0))
                 .child(preview_timeline_label("Trim", palette))
-                .child(preview_timeline_track(state, cx)),
+                .child(preview_timeline_track(state, seek_focus, cx)),
         )
 }
 
@@ -295,6 +296,7 @@ pub(in crate::app) fn preview_timeline_label(
 )]
 pub(in crate::app) fn preview_timeline_track(
     state: &PreviewShellState,
+    focus: &FocusHandle,
     cx: &Context<FrameRoot>,
 ) -> impl IntoElement {
     let palette = state.palette;
@@ -362,7 +364,7 @@ pub(in crate::app) fn preview_timeline_track(
     let owner = cx.entity();
     let decrement_owner = owner.clone();
 
-    apply_accessible_slider(
+    super::super::accessibility::apply_accessible_slider_with_focus(
         track,
         "Preview position",
         enabled,
@@ -370,6 +372,7 @@ pub(in crate::app) fn preview_timeline_track(
         0.0,
         duration,
         format_time(current_time),
+        focus,
         palette,
     )
     .on_a11y_action(gpui::AccessibleAction::Increment, move |_, _window, cx| {

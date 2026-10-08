@@ -2009,7 +2009,7 @@ impl FrameRoot {
         command.pause || command.play || command.seek_to.is_some()
     }
 
-    fn preview_timeline_enabled(&self) -> bool {
+    pub(super) fn preview_timeline_enabled(&self) -> bool {
         self.selected_preview_control_availability()
             .is_some_and(|availability| !availability.trim_disabled)
             && self.preview_ui.playback.duration() > 0.0

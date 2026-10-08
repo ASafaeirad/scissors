@@ -179,6 +179,11 @@ impl Render for FrameRoot {
         let content = match active_content_view {
             None => content.child(welcome_view(palette, window, cx)),
             Some(ActiveView::Workspace) => {
+                let preview_seek_focus = self.ensure_focus(
+                    FrameFocusKey::Control(hotkeys::PREVIEW_SEEK_FOCUS_ID.to_string()),
+                    self.preview_timeline_enabled(),
+                    cx,
+                );
                 let output_name_focus =
                     self.ensure_text_input_focus(FrameTextInputKind::OutputName, cx);
                 let audio_bitrate_focus =
@@ -515,6 +520,7 @@ impl Render for FrameRoot {
                             start_value: &preview_start_time_value,
                             end_value: &preview_end_time_value,
                         },
+                        seek_focus: &preview_seek_focus,
                         playback: preview_playback,
                         presentation: preview_presentation,
                         render_image: preview_render_image,
@@ -536,6 +542,7 @@ impl Render for FrameRoot {
             )),
         };
 
+        let shortcut_root_focus = app_root_focus.clone();
         let mut root = div()
             .id(APP_ROOT_FOCUS_ID)
             .size_full()
@@ -557,8 +564,9 @@ impl Render for FrameRoot {
             .on_action(cx.listener(Self::reset_ui_scale))
             .on_action(cx.listener(Self::toggle_fps_meter))
             .on_key_down(
-                cx.listener(|_root, event: &gpui::KeyDownEvent, window, cx| {
+                cx.listener(move |root, event: &gpui::KeyDownEvent, window, cx| {
                     handle_tab_navigation(event, window, cx);
+                    root.handle_preview_shortcut(event, &shortcut_root_focus, window, cx);
                 }),
             )
             .on_mouse_down(

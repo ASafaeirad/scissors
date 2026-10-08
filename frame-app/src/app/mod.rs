@@ -6,6 +6,7 @@ mod file_list_panel;
 mod files;
 mod fixtures;
 mod fps_meter;
+mod hotkeys;
 mod input;
 mod logs_panel;
 mod logs_state;
