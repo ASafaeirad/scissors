@@ -98,75 +98,83 @@ pub(in crate::app) fn preview_timeline(
         .mt(theme::ui_rem(PREVIEW_TIMELINE_TOP_MARGIN))
         .px_2()
         .flex()
-        .items_center()
+        .flex_col()
         .gap_4()
         .child(
             div()
+                .w_full()
                 .flex()
+                .items_center()
+                .justify_between()
                 .gap_4()
-                .child(preview_timecode_field(
-                    PreviewTimecodeFieldSpec {
-                        label: "Start time",
-                        value: inputs.start_value.to_string(),
-                        enabled: trim_enabled,
-                        width: 128.0,
-                        kind: Some(FrameTextInputKind::PreviewStartTime),
-                        focus: inputs.start,
-                    },
-                    palette,
-                    window,
-                    cx,
-                ))
-                .child(preview_timecode_field(
-                    PreviewTimecodeFieldSpec {
-                        label: "End time",
-                        value: inputs.end_value.to_string(),
-                        enabled: trim_enabled,
-                        width: 128.0,
-                        kind: Some(FrameTextInputKind::PreviewEndTime),
-                        focus: inputs.end,
-                    },
-                    palette,
-                    window,
-                    cx,
-                ))
-                .child(preview_timecode_field(
-                    PreviewTimecodeFieldSpec {
-                        label: "Duration",
-                        value: labels.duration,
-                        enabled: false,
-                        width: 104.0,
-                        kind: None,
-                        focus: None,
-                    },
-                    palette,
-                    window,
-                    cx,
-                )),
+                .child(
+                    div()
+                        .flex()
+                        .gap_4()
+                        .child(preview_timecode_field(
+                            PreviewTimecodeFieldSpec {
+                                label: "Start time",
+                                value: inputs.start_value.to_string(),
+                                enabled: trim_enabled,
+                                width: 128.0,
+                                kind: Some(FrameTextInputKind::PreviewStartTime),
+                                focus: inputs.start,
+                            },
+                            palette,
+                            window,
+                            cx,
+                        ))
+                        .child(preview_timecode_field(
+                            PreviewTimecodeFieldSpec {
+                                label: "End time",
+                                value: inputs.end_value.to_string(),
+                                enabled: trim_enabled,
+                                width: 128.0,
+                                kind: Some(FrameTextInputKind::PreviewEndTime),
+                                focus: inputs.end,
+                            },
+                            palette,
+                            window,
+                            cx,
+                        ))
+                        .child(preview_timecode_field(
+                            PreviewTimecodeFieldSpec {
+                                label: "Duration",
+                                value: labels.duration,
+                                enabled: false,
+                                width: 104.0,
+                                kind: None,
+                                focus: None,
+                            },
+                            palette,
+                            window,
+                            cx,
+                        )),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(theme::ui_rem(6.0))
+                        .child(preview_timeline_label(" ", palette))
+                        .child(
+                            div()
+                                .flex()
+                                .gap_1()
+                                .child(preview_cut_button(state, window, cx))
+                                .child(preview_play_button(state, window, cx)),
+                        ),
+                ),
         )
         .child(
             div()
                 .min_w_0()
-                .flex_1()
+                .w_full()
                 .flex()
                 .flex_col()
                 .gap(theme::ui_rem(6.0))
                 .child(preview_timeline_label("Trim", palette))
                 .child(preview_timeline_track(state, cx)),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(theme::ui_rem(6.0))
-                .child(preview_timeline_label(" ", palette))
-                .child(
-                    div()
-                        .flex()
-                        .gap_1()
-                        .child(preview_cut_button(state, window, cx))
-                        .child(preview_play_button(state, window, cx)),
-                ),
         )
 }
 
