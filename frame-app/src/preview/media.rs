@@ -35,11 +35,17 @@ pub struct PreviewControlInput<'a> {
     pub container: Option<&'a str>,
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Availability exposes independent per-control flags to the preview UI."
+)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PreviewControlAvailability {
     pub media_kind: PreviewMediaKind,
     pub hide_visual_controls: bool,
     pub trim_disabled: bool,
+    /// Whether segments can be removed; cuts need re-encoding and a timeline.
+    pub cut_available: bool,
     pub overlay_available: bool,
 }
 
@@ -66,14 +72,17 @@ pub fn preview_control_availability(input: PreviewControlInput<'_>) -> PreviewCo
     let container = input.container.unwrap_or_default();
     let is_audio_only_output = media_rules::is_audio_only_container(container);
     let is_image = media_kind == PreviewMediaKind::Image;
+    let trim_disabled =
+        input.controls_disabled || is_image || media_kind == PreviewMediaKind::Unknown;
 
     PreviewControlAvailability {
         media_kind,
         hide_visual_controls: media_kind == PreviewMediaKind::Audio
             || (media_kind == PreviewMediaKind::Video && is_audio_only_output),
-        trim_disabled: input.controls_disabled
-            || is_image
-            || media_kind == PreviewMediaKind::Unknown,
+        trim_disabled,
+        cut_available: !trim_disabled
+            && input.processing_mode != ProcessingMode::Copy
+            && !media_rules::is_image_container(container),
         overlay_available: media_kind == PreviewMediaKind::Video
             && !is_audio_only_output
             && input.processing_mode != ProcessingMode::Copy

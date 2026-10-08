@@ -645,6 +645,7 @@ pub fn create_custom_preset(id: String, name: &str, config: &ConversionConfig) -
     preset_config.selected_subtitle_tracks.clear();
     preset_config.external_subtitle_tracks.clear();
     preset_config.subtitle_burn_path = None;
+    preset_config.cut_segments.clear();
 
     PresetDefinition::custom(
         id,

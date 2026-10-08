@@ -1021,6 +1021,39 @@ fn trimmed_reencode_should_shorten_duration() -> TestResult {
 
 #[test]
 #[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn cut_segments_should_remove_time_from_trimmed_reencode() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("cut_segments")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("cut.mp4");
+
+    generate_h264_aac_source(&tools, &input, 4.0, 64, 48)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.start_time = Some("00:00:00.500".to_string());
+    config.end_time = Some("00:00:03.500".to_string());
+    config.cut_segments = vec![
+        frame_core::types::CutSegment {
+            start_time: "00:00:01.000".to_string(),
+            end_time: "00:00:01.500".to_string(),
+        },
+        frame_core::types::CutSegment {
+            start_time: "00:00:02.500".to_string(),
+            end_time: "00:00:03.000".to_string(),
+        },
+    ];
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    let duration = duration_seconds(&metadata)?;
+    assert!(
+        (1.8..=2.2).contains(&duration),
+        "3s trim minus 1s of cuts should be close to 2s, got {duration}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
 fn stream_copy_should_preserve_h264_aac_streams() -> TestResult {
     let tools = Toolchain::discover()?;
     let sandbox = Sandbox::new("stream_copy")?;
@@ -1579,6 +1612,7 @@ fn base_config(container: &str, video_codec: &str) -> ConversionConfig {
         preset: "ultrafast".to_string(),
         start_time: None,
         end_time: None,
+        cut_segments: Vec::new(),
         metadata: MetadataConfig::default(),
         rotation: "0".to_string(),
         flip_horizontal: false,

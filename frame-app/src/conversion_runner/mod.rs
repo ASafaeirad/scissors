@@ -23,4 +23,4 @@ use frame_core::{
     types::{ConversionTask, DEFAULT_MAX_CONCURRENCY},
 };
 #[cfg(test)]
-use runner::{ffmpeg_progress_from_line, next_batch_launch_count};
+use runner::{ProgressDuration, ffmpeg_progress_from_line, next_batch_launch_count};

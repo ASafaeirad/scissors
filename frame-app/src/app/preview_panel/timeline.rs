@@ -1,5 +1,6 @@
 use super::*;
 use crate::numeric::unit_f64_to_f32;
+use crate::preview::CutRange;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PreviewTimelineDrag {
@@ -159,7 +160,13 @@ pub(in crate::app) fn preview_timeline(
                 .flex_col()
                 .gap(theme::ui_rem(6.0))
                 .child(preview_timeline_label(" ", palette))
-                .child(preview_play_button(state, window, cx)),
+                .child(
+                    div()
+                        .flex()
+                        .gap_1()
+                        .child(preview_cut_button(state, window, cx))
+                        .child(preview_play_button(state, window, cx)),
+                ),
         )
 }
 
@@ -185,7 +192,7 @@ pub(in crate::app) fn preview_timeline_labels(state: &PreviewShellState) -> Prev
     PreviewTimelineLabels {
         start: format_time(state.playback.start_value()),
         end: format_time(state.playback.end_value()),
-        duration: format_time(state.playback.end_value() - state.playback.start_value()),
+        duration: format_time(state.playback.output_duration()),
     }
 }
 
@@ -414,6 +421,16 @@ pub(in crate::app) fn preview_timeline_track(
             .rounded(theme::ui_rem(1.0))
             .bg(color(palette.text_primary)),
     )
+    .children(
+        state
+            .playback
+            .cuts()
+            .iter()
+            .enumerate()
+            .map(|(index, cut)| {
+                preview_timeline_cut_region(state, index, cut, playhead_top, enabled)
+            }),
+    )
     .child(PreviewTimelineTrackBoundsProbe { owner: cx.entity() })
     .child(
         div()
@@ -443,6 +460,114 @@ pub(in crate::app) fn preview_timeline_track(
         palette,
         cx,
     ))
+    .children(
+        state
+            .playback
+            .cuts()
+            .iter()
+            .enumerate()
+            .flat_map(|(index, cut)| {
+                [
+                    (TimelineDragTarget::CutStart(index), cut.start),
+                    (TimelineDragTarget::CutEnd(index), cut.end),
+                ]
+            })
+            .map(|(target, value)| {
+                preview_timeline_handle(
+                    target,
+                    timeline_fraction_from_percent(state.playback.to_timeline_percent(value)),
+                    enabled,
+                    value,
+                    duration,
+                    palette,
+                    cx,
+                )
+            }),
+    )
+}
+
+fn preview_timeline_cut_region(
+    state: &PreviewShellState,
+    index: usize,
+    cut: &CutRange,
+    top: f32,
+    enabled: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let palette = state.palette;
+    let start_fraction =
+        timeline_fraction_from_percent(state.playback.to_timeline_percent(cut.start));
+    let end_fraction = timeline_fraction_from_percent(state.playback.to_timeline_percent(cut.end));
+
+    // Mouse down is left to the track so the playhead lands on the grab point,
+    // which keeps the region anchored under the pointer while it moves.
+    let region = div()
+        .id(("preview-timeline-cut-region", index))
+        .absolute()
+        .left(relative(start_fraction))
+        .right(relative((1.0 - end_fraction).max(0.0)))
+        .top(theme::ui_rem(top))
+        .h(theme::ui_rem(PREVIEW_PLAYHEAD_HEIGHT))
+        .rounded(theme::ui_rem(theme::RADIUS_SM))
+        .border_1()
+        .border_color(color(palette.danger))
+        .bg(color(palette.danger.with_alpha(0.3)));
+
+    if !enabled {
+        return region;
+    }
+
+    let dragging = state.playback.dragging() == Some(TimelineDragTarget::CutMove(index));
+    region
+        .when(dragging, gpui::Styled::cursor_grabbing)
+        .when(!dragging, gpui::Styled::cursor_grab)
+        .on_drag(
+            PreviewTimelineDrag {
+                target: TimelineDragTarget::CutMove(index),
+            },
+            |_drag, _position, _window, cx| cx.new(|_| PreviewTimelineDragPreview),
+        )
+}
+
+pub(in crate::app) fn preview_cut_enabled(state: &PreviewShellState) -> bool {
+    state.availability.cut_available && state.duration_seconds > 0.0
+}
+
+pub(in crate::app) fn preview_cut_button(
+    state: &PreviewShellState,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> impl IntoElement {
+    let in_cut = state
+        .playback
+        .cut_index_at(state.playback.current_time())
+        .is_some();
+
+    preview_tool_button(
+        "preview-cut-toggle",
+        assets::ICON_SCISSORS,
+        if in_cut {
+            "Restore removed segment"
+        } else {
+            "Remove segment from playhead"
+        },
+        in_cut,
+        // Existing cuts stay removable even when new ones are unavailable (e.g. stream copy).
+        if in_cut {
+            preview_trim_enabled(state)
+        } else {
+            preview_cut_enabled(state)
+        },
+        state.tooltip_visible_id.as_deref(),
+        super::super::components::TooltipPlacement::Above,
+        state.palette,
+        window,
+        cx,
+    )
+    .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
+        if root.toggle_preview_cut_at_playhead() {
+            cx.notify();
+        }
+    }))
 }
 
 pub(in crate::app) fn preview_timeline_handle(
@@ -454,10 +579,31 @@ pub(in crate::app) fn preview_timeline_handle(
     palette: &'static theme::ThemePalette,
     cx: &Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let (handle_id, label) = match target {
-        TimelineDragTarget::Start => ("preview-timeline-start-handle", "Trim start"),
-        TimelineDragTarget::End => ("preview-timeline-end-handle", "Trim end"),
-        TimelineDragTarget::Scrub => ("preview-timeline-scrub-handle", "Preview position"),
+    let (handle_id, label): (ElementId, SharedString) = match target {
+        TimelineDragTarget::Start => ("preview-timeline-start-handle".into(), "Trim start".into()),
+        TimelineDragTarget::End => ("preview-timeline-end-handle".into(), "Trim end".into()),
+        TimelineDragTarget::Scrub => (
+            "preview-timeline-scrub-handle".into(),
+            "Preview position".into(),
+        ),
+        TimelineDragTarget::CutStart(index) => (
+            ("preview-timeline-cut-start-handle", index).into(),
+            format!("Removed segment {} start", index + 1).into(),
+        ),
+        TimelineDragTarget::CutEnd(index) => (
+            ("preview-timeline-cut-end-handle", index).into(),
+            format!("Removed segment {} end", index + 1).into(),
+        ),
+        TimelineDragTarget::CutMove(index) => (
+            ("preview-timeline-cut-region", index).into(),
+            format!("Removed segment {}", index + 1).into(),
+        ),
+    };
+    // Cut edges sit inside the trim range, so narrower hit areas keep short cuts grabbable.
+    let handle_width = if target.is_cut() {
+        PREVIEW_TIMELINE_HANDLE_WIDTH / 2.0
+    } else {
+        PREVIEW_TIMELINE_HANDLE_WIDTH
     };
 
     let handle = div()
@@ -465,9 +611,9 @@ pub(in crate::app) fn preview_timeline_handle(
         .absolute()
         .top_0()
         .left(relative(fraction))
-        .ml(theme::ui_rem(-(PREVIEW_TIMELINE_HANDLE_WIDTH / 2.0)))
+        .ml(theme::ui_rem(-(handle_width / 2.0)))
         .h(theme::ui_rem(PREVIEW_TIMELINE_CONTROL_HEIGHT))
-        .w(theme::ui_rem(PREVIEW_TIMELINE_HANDLE_WIDTH))
+        .w(theme::ui_rem(handle_width))
         .rounded(theme::ui_rem(theme::RADIUS_SM))
         .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
             cx.stop_propagation();

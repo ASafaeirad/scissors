@@ -1,7 +1,7 @@
 use super::{
     model::{
         AUDIO_CHANNEL_DEFINITIONS, AUDIO_CODEC_DEFINITIONS, AudioQualityRange, ConversionConfig,
-        DEFAULT_AUDIO_BITRATE_MODE, DEFAULT_AUDIO_CHANNELS, DEFAULT_AUDIO_QUALITY,
+        CutSegment, DEFAULT_AUDIO_BITRATE_MODE, DEFAULT_AUDIO_CHANNELS, DEFAULT_AUDIO_QUALITY,
         DEFAULT_AUDIO_VOLUME, DEFAULT_FPS, DEFAULT_GIF_DITHER, DEFAULT_IMAGE_JPEG_HUFFMAN,
         DEFAULT_IMAGE_PNG_PREDICTION, DEFAULT_IMAGE_TIFF_COMPRESSION, DEFAULT_IMAGE_WEBP_PRESET,
         DEFAULT_PIXEL_FORMAT, DEFAULT_RESOLUTION, DEFAULT_VIDEO_BITRATE_MODE,
@@ -392,12 +392,14 @@ pub fn apply_preset(
     let selected_subtitle_tracks = std::mem::take(&mut config.selected_subtitle_tracks);
     let external_subtitle_tracks = std::mem::take(&mut config.external_subtitle_tracks);
     let subtitle_burn_path = config.subtitle_burn_path.take();
+    let cut_segments = std::mem::take(&mut config.cut_segments);
 
     *config = preset.config.clone();
     config.selected_audio_tracks = selected_audio_tracks;
     config.selected_subtitle_tracks = selected_subtitle_tracks;
     config.external_subtitle_tracks = external_subtitle_tracks;
     config.subtitle_burn_path = subtitle_burn_path;
+    config.cut_segments = cut_segments;
     normalize_output_config(config, metadata);
 
     before != *config
@@ -789,6 +791,15 @@ pub fn apply_trim_times(
     changed
 }
 
+pub fn apply_cut_segments(config: &mut ConversionConfig, cut_segments: Vec<CutSegment>) -> bool {
+    if config.cut_segments == cut_segments {
+        return false;
+    }
+
+    config.cut_segments = cut_segments;
+    true
+}
+
 fn normalize_optional_timecode(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -816,6 +827,7 @@ pub fn normalize_output_config(
     if source_kind == SourceKind::Image {
         config.start_time = None;
         config.end_time = None;
+        config.cut_segments.clear();
         config.selected_audio_tracks.clear();
         config.selected_subtitle_tracks.clear();
         reset_subtitle_settings(config);

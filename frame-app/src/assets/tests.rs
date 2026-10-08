@@ -125,6 +125,7 @@ mod frame_assets {
             ICON_SPINNER,
             ICON_SQUARE,
             ICON_TRASH,
+            ICON_SCISSORS,
         ] {
             let loaded = FrameAssets
                 .load(icon)

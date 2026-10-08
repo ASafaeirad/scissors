@@ -240,6 +240,17 @@ pub struct SubtitleTrack {
     pub label: Option<String>,
 }
 
+/// A source time range that is removed from the exported media.
+///
+/// Times use the same timecode format as `start_time`/`end_time` and are
+/// expressed on the source timeline, independent of the trim window.
+#[derive(Debug, Serialize, Deserialize, Default, Clone, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CutSegment {
+    pub start_time: String,
+    pub end_time: String,
+}
+
 /// A sidecar subtitle file that should remain selectable in the exported media.
 #[derive(Debug, Serialize, Deserialize, Default, Clone, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -352,6 +363,8 @@ pub struct ConversionConfig {
     pub preset: String,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
+    #[serde(default)]
+    pub cut_segments: Vec<CutSegment>,
     #[serde(default)]
     pub metadata: MetadataConfig,
     #[serde(default = "default_rotation")]

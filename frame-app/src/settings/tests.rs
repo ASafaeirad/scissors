@@ -952,6 +952,10 @@ mod preset_options {
                 ..ExternalSubtitleTrack::default()
             }],
             subtitle_burn_path: Some("/tmp/burn.ass".to_string()),
+            cut_segments: vec![CutSegment {
+                start_time: "00:00:01.000".to_string(),
+                end_time: "00:00:02.000".to_string(),
+            }],
             ..ConversionConfig::default()
         };
 
@@ -959,6 +963,7 @@ mod preset_options {
 
         assert_eq!(config.external_subtitle_tracks.len(), 1);
         assert_eq!(config.subtitle_burn_path.as_deref(), Some("/tmp/burn.ass"));
+        assert_eq!(config.cut_segments.len(), 1);
     }
 
     #[test]
@@ -971,6 +976,10 @@ mod preset_options {
                 ..ExternalSubtitleTrack::default()
             }],
             subtitle_burn_path: Some("/tmp/burn.ass".to_string()),
+            cut_segments: vec![CutSegment {
+                start_time: "00:00:01.000".to_string(),
+                end_time: "00:00:02.000".to_string(),
+            }],
             ..ConversionConfig::default()
         };
 
@@ -980,6 +989,7 @@ mod preset_options {
         assert!(preset.config.selected_subtitle_tracks.is_empty());
         assert!(preset.config.external_subtitle_tracks.is_empty());
         assert_eq!(preset.config.subtitle_burn_path, None);
+        assert!(preset.config.cut_segments.is_empty());
     }
 }
 

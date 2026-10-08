@@ -840,6 +840,173 @@ mod preview_playback_state {
         assert_close(playback.to_timeline_percent(30.0), 25.0);
     }
 
+    fn cut(start: &str, end: &str) -> crate::settings::CutSegment {
+        crate::settings::CutSegment {
+            start_time: start.to_string(),
+            end_time: end.to_string(),
+        }
+    }
+
+    fn playhead_at(playback: &mut PreviewPlaybackState, time: f64) {
+        let _ = playback.seek_once_to_percent(time / playback.duration());
+    }
+
+    #[test]
+    fn toggle_cut_at_playhead_adds_a_segment_bounded_by_the_next_cut() {
+        let mut playback = playback_with_media(120.0);
+        playback.sync_cut_segments(&[cut("00:00:13.000", "00:00:20.000")]);
+        playhead_at(&mut playback, 10.0);
+
+        let cuts = playback
+            .toggle_cut_at_playhead()
+            .expect("a cut should be added at the playhead");
+
+        // The new 10s-13s cut touches the existing one, so both merge.
+        assert_eq!(cuts, vec![cut("00:00:10.000", "00:00:20.000")]);
+    }
+
+    #[test]
+    fn toggle_cut_at_playhead_uses_a_default_length_in_open_space() {
+        let mut playback = playback_with_media(120.0);
+        playhead_at(&mut playback, 30.0);
+
+        let cuts = playback
+            .toggle_cut_at_playhead()
+            .expect("a cut should be added at the playhead");
+
+        assert_eq!(cuts, vec![cut("00:00:30.000", "00:00:36.000")]);
+        assert_close(playback.output_duration(), 114.0);
+    }
+
+    #[test]
+    fn toggle_cut_at_playhead_removes_the_segment_under_the_playhead() {
+        let mut playback = playback_with_media(120.0);
+        playback.sync_cut_segments(&[
+            cut("00:00:05.000", "00:00:08.000"),
+            cut("00:00:30.000", "00:00:40.000"),
+        ]);
+        playhead_at(&mut playback, 35.0);
+
+        let cuts = playback
+            .toggle_cut_at_playhead()
+            .expect("the covering cut should be removed");
+
+        assert_eq!(cuts, vec![cut("00:00:05.000", "00:00:08.000")]);
+    }
+
+    #[test]
+    fn dragging_a_cut_edge_commits_merged_segments() {
+        let mut playback = playback_with_media(100.0);
+        playback.sync_cut_segments(&[
+            cut("00:00:10.000", "00:00:20.000"),
+            cut("00:00:30.000", "00:00:40.000"),
+        ]);
+
+        assert!(playback.begin_handle_drag(TimelineDragTarget::CutEnd(0)));
+        let update = playback.drag_to_percent(0.35);
+        assert_eq!(update.preview_seek_to, Some(35.0));
+        let end = playback.end_drag();
+
+        assert_eq!(end.trim, None);
+        assert_eq!(end.cuts, Some(vec![cut("00:00:10.000", "00:00:40.000")]));
+    }
+
+    #[test]
+    fn dragging_a_cut_start_cannot_cross_its_end() {
+        let mut playback = playback_with_media(100.0);
+        playback.sync_cut_segments(&[cut("00:00:10.000", "00:00:20.000")]);
+
+        assert!(playback.begin_handle_drag(TimelineDragTarget::CutStart(0)));
+        let _ = playback.drag_to_percent(0.9);
+
+        assert_close(playback.cuts()[0].start, 19.999);
+        assert!(!playback.begin_handle_drag(TimelineDragTarget::CutStart(3)));
+    }
+
+    #[test]
+    fn moving_a_cut_keeps_its_length_and_the_grab_point_under_the_pointer() {
+        let mut playback = playback_with_media(100.0);
+        playback.sync_cut_segments(&[cut("00:00:10.000", "00:00:20.000")]);
+        // Pressing the region seeks the playhead to the grab point.
+        playhead_at(&mut playback, 14.0);
+
+        assert!(playback.begin_handle_drag(TimelineDragTarget::CutMove(0)));
+        let update = playback.drag_to_percent(0.5);
+        assert_eq!(update.preview_seek_to, Some(46.0));
+        let end = playback.end_drag();
+
+        assert_eq!(end.trim, None);
+        assert_eq!(end.cuts, Some(vec![cut("00:00:46.000", "00:00:56.000")]));
+    }
+
+    #[test]
+    fn moving_a_cut_stops_at_the_timeline_bounds() {
+        let mut playback = playback_with_media(100.0);
+        playback.sync_cut_segments(&[cut("00:00:10.000", "00:00:20.000")]);
+        playhead_at(&mut playback, 15.0);
+
+        assert!(playback.begin_handle_drag(TimelineDragTarget::CutMove(0)));
+        let _ = playback.drag_to_percent(1.0);
+        assert_close(playback.cuts()[0].start, 90.0);
+        assert_close(playback.cuts()[0].end, 100.0);
+
+        let _ = playback.drag_to_percent(0.0);
+        assert_close(playback.cuts()[0].start, 0.0);
+        assert_close(playback.cuts()[0].end, 10.0);
+    }
+
+    #[test]
+    fn moving_a_cut_onto_another_merges_them_on_release() {
+        let mut playback = playback_with_media(100.0);
+        playback.sync_cut_segments(&[
+            cut("00:00:10.000", "00:00:20.000"),
+            cut("00:00:50.000", "00:00:60.000"),
+        ]);
+        playhead_at(&mut playback, 10.0);
+
+        assert!(playback.begin_handle_drag(TimelineDragTarget::CutMove(0)));
+        let _ = playback.drag_to_percent(0.45);
+        let end = playback.end_drag();
+
+        assert_eq!(end.cuts, Some(vec![cut("00:00:45.000", "00:01:00.000")]));
+    }
+
+    #[test]
+    fn handle_time_update_skips_removed_segments_while_playing() {
+        let mut playback = playback_with_media(120.0);
+        playback.sync_cut_segments(&[cut("00:00:10.000", "00:00:15.000")]);
+        playback.handle_play();
+
+        let command = playback.handle_time_update(10.02);
+
+        assert_eq!(command, PlaybackMediaCommand::seek(15.0));
+        assert_close(playback.current_time(), 15.0);
+    }
+
+    #[test]
+    fn handle_time_update_stops_when_a_cut_reaches_the_trim_end() {
+        let mut playback = playback_with_media(120.0);
+        playback.sync_initial_values(Some("00:00:02.000"), Some("00:00:20.000"));
+        playback.sync_cut_segments(&[cut("00:00:15.000", "00:00:20.000")]);
+        playback.handle_play();
+
+        let command = playback.handle_time_update(15.5);
+
+        assert_eq!(command, PlaybackMediaCommand::pause_and_seek(2.0));
+    }
+
+    #[test]
+    fn output_duration_only_subtracts_cut_time_inside_the_trim_window() {
+        let mut playback = playback_with_media(120.0);
+        playback.sync_initial_values(Some("00:00:10.000"), Some("00:01:00.000"));
+        playback.sync_cut_segments(&[
+            cut("00:00:05.000", "00:00:15.000"),
+            cut("00:00:55.000", "00:01:10.000"),
+        ]);
+
+        assert_close(playback.output_duration(), 40.0);
+    }
+
     fn playback_with_media(duration: f64) -> PreviewPlaybackState {
         let mut playback = PreviewPlaybackState::new(false);
         playback.sync_media(MediaSnapshot {

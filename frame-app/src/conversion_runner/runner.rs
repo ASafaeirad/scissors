@@ -9,6 +9,7 @@ use std::{
 
 use frame_core::{
     args::{build_ffmpeg_args, build_output_path, validate_task_input},
+    cuts::{output_duration_seconds, removed_seconds},
     error::ConversionError,
     events::ConversionEvent,
     probe::{ffprobe_json_args, parse_ffprobe_stdout},
@@ -245,7 +246,7 @@ fn stream_ffmpeg_stderr(
     let mut buffer = [0_u8; 4096];
     let mut pending = String::new();
     let mut total_duration = None;
-    let expected_duration = expected_duration_seconds(&task.config);
+    let expected_duration = ProgressDuration::from_config(&task.config);
 
     loop {
         let read = stderr.read(&mut buffer).map_err(ConversionError::Io)?;
@@ -279,7 +280,7 @@ fn stream_ffmpeg_stderr(
 fn drain_ffmpeg_segments(
     pending: &mut String,
     task: &ConversionTask,
-    expected_duration: f64,
+    expected_duration: ProgressDuration,
     total_duration: &mut Option<f64>,
     emit: &mut impl FnMut(ConversionEvent),
 ) {
@@ -295,7 +296,7 @@ fn drain_ffmpeg_segments(
 fn handle_ffmpeg_line(
     line: &str,
     task: &ConversionTask,
-    expected_duration: f64,
+    expected_duration: ProgressDuration,
     total_duration: &mut Option<f64>,
     emit: &mut impl FnMut(ConversionEvent),
 ) {
@@ -305,22 +306,27 @@ fn handle_ffmpeg_line(
     }
 }
 
-fn expected_duration_seconds(config: &CoreConversionConfig) -> f64 {
-    let start = config
-        .start_time
-        .as_deref()
-        .and_then(parse_time)
-        .unwrap_or(0.0);
-    let Some(end) = config.end_time.as_deref().and_then(parse_time) else {
-        return 0.0;
-    };
+/// Output length used to turn `FFmpeg` `time=` reports into a percentage.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct ProgressDuration {
+    /// Known output length when the trim end is set; `0.0` when unknown.
+    pub(super) expected: f64,
+    /// Seconds removed by cut segments, subtracted from the probed duration.
+    pub(super) removed: f64,
+}
 
-    (end - start).max(0.0)
+impl ProgressDuration {
+    fn from_config(config: &CoreConversionConfig) -> Self {
+        Self {
+            expected: output_duration_seconds(config).unwrap_or(0.0),
+            removed: removed_seconds(config),
+        }
+    }
 }
 
 pub(super) fn ffmpeg_progress_from_line(
     line: &str,
-    expected_duration: f64,
+    expected_duration: ProgressDuration,
     total_duration: &mut Option<f64>,
 ) -> Option<f64> {
     if let Some(caps) = DURATION_REGEX.captures(line)
@@ -333,10 +339,10 @@ pub(super) fn ffmpeg_progress_from_line(
         .captures(line)
         .and_then(|caps| caps.get(1))
         .and_then(|m| parse_time(m.as_str()))?;
-    let duration = if expected_duration > 0.0 {
-        expected_duration
+    let duration = if expected_duration.expected > 0.0 {
+        expected_duration.expected
     } else {
-        total_duration.unwrap_or(0.0)
+        total_duration.map_or(0.0, |total| total - expected_duration.removed)
     };
 
     (duration > 0.0).then(|| (current_time / duration * 100.0).clamp(0.0, 100.0))

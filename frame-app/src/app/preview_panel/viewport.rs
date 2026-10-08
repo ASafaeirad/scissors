@@ -788,6 +788,7 @@ mod tests {
                 media_kind: PreviewMediaKind::Video,
                 hide_visual_controls: false,
                 trim_disabled: false,
+                cut_available: true,
                 overlay_available: true,
             },
             playback: PreviewPlaybackState::new(false),

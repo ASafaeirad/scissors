@@ -262,10 +262,22 @@ pub fn build_overlay_filter_complex(config: &ConversionConfig) -> String {
     build_overlay_filter_complex_with_filters(config, &filters, VIDEO_OUTPUT_LABEL)
 }
 
+/// Builds the export overlay graph; `post_filters` run on the composited frames.
 #[must_use]
-pub fn build_encode_overlay_filter_complex(config: &ConversionConfig) -> String {
+pub fn build_encode_overlay_filter_complex(
+    config: &ConversionConfig,
+    post_filters: &[String],
+) -> String {
     let filters = build_encode_video_filters(config, true);
-    build_overlay_filter_complex_with_filters(config, &filters, VIDEO_OUTPUT_LABEL)
+    if post_filters.is_empty() {
+        return build_overlay_filter_complex_with_filters(config, &filters, VIDEO_OUTPUT_LABEL);
+    }
+
+    let graph = build_overlay_filter_complex_with_filters(config, &filters, "overlay_out");
+    format!(
+        "{graph};[overlay_out]{}[{VIDEO_OUTPUT_LABEL}]",
+        post_filters.join(",")
+    )
 }
 
 fn build_overlay_filter_complex_with_filters(
@@ -410,6 +422,7 @@ mod tests {
             preset: "medium".to_string(),
             start_time: None,
             end_time: None,
+            cut_segments: Vec::new(),
             metadata: MetadataConfig::default(),
             rotation: "0".to_string(),
             flip_horizontal: false,
@@ -544,7 +557,7 @@ mod tests {
             anchor: "custom".to_string(),
         });
 
-        let filter = build_encode_overlay_filter_complex(&config);
+        let filter = build_encode_overlay_filter_complex(&config, &[]);
 
         assert!(filter.contains("[0:v:0]pad=ceil(iw/2)*2:ceil(ih/2)*2:0:0[base]"));
     }

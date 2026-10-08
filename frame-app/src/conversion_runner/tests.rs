@@ -125,6 +125,10 @@ fn core_config_from_gpui_preserves_active_conversion_fields() {
         },
         start_time: Some("00:00:05.000".to_string()),
         end_time: Some("00:00:15.000".to_string()),
+        cut_segments: vec![crate::settings::CutSegment {
+            start_time: "00:00:08.000".to_string(),
+            end_time: "00:00:09.500".to_string(),
+        }],
         metadata: MetadataConfig {
             mode: MetadataMode::Replace,
             title: Some("Render Title".to_string()),
@@ -219,6 +223,13 @@ fn core_config_from_gpui_preserves_active_conversion_fields() {
     assert_eq!(core.gif_loop, 3);
     assert_eq!(core.start_time.as_deref(), Some("00:00:05.000"));
     assert_eq!(core.end_time.as_deref(), Some("00:00:15.000"));
+    assert_eq!(
+        core.cut_segments,
+        [frame_core::types::CutSegment {
+            start_time: "00:00:08.000".to_string(),
+            end_time: "00:00:09.500".to_string(),
+        }]
+    );
     assert_eq!(core.metadata.service_name.as_deref(), Some("Frame Service"));
     assert_eq!(
         core.metadata.service_provider.as_deref(),
@@ -364,22 +375,51 @@ fn ffmpeg_progress_uses_duration_line_before_time_line() {
     let mut duration = None;
 
     assert_eq!(
-        ffmpeg_progress_from_line("Duration: 00:00:20.00, start: 0.000000", 0.0, &mut duration),
+        ffmpeg_progress_from_line(
+            "Duration: 00:00:20.00, start: 0.000000",
+            ProgressDuration::default(),
+            &mut duration
+        ),
         None
     );
 
-    let progress =
-        ffmpeg_progress_from_line("frame=12 time=00:00:05.00 speed=1x", 0.0, &mut duration);
+    let progress = ffmpeg_progress_from_line(
+        "frame=12 time=00:00:05.00 speed=1x",
+        ProgressDuration::default(),
+        &mut duration,
+    );
 
     assert_eq!(progress, Some(25.0));
+}
+
+#[test]
+fn ffmpeg_progress_subtracts_removed_segments_from_probed_duration() {
+    let mut duration = Some(20.0);
+
+    let progress = ffmpeg_progress_from_line(
+        "frame=12 time=00:00:05.00 speed=1x",
+        ProgressDuration {
+            expected: 0.0,
+            removed: 10.0,
+        },
+        &mut duration,
+    );
+
+    assert_eq!(progress, Some(50.0));
 }
 
 #[test]
 fn ffmpeg_progress_prefers_trim_expected_duration() {
     let mut duration = Some(100.0);
 
-    let progress =
-        ffmpeg_progress_from_line("frame=12 time=00:00:05.00 speed=1x", 10.0, &mut duration);
+    let progress = ffmpeg_progress_from_line(
+        "frame=12 time=00:00:05.00 speed=1x",
+        ProgressDuration {
+            expected: 10.0,
+            removed: 0.0,
+        },
+        &mut duration,
+    );
 
     assert_eq!(progress, Some(50.0));
 }

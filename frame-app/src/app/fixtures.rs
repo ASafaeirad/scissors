@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::settings::{DeinterlaceMode, FilterStrength};
+use crate::settings::{CutSegment, DeinterlaceMode, FilterStrength};
 use frame_updater::{PlatformAssetKey, UpdateAsset};
 use semver::Version;
 
@@ -155,11 +155,19 @@ impl FrameRoot {
     }
     pub(super) fn apply_preview_ready_fixture(&mut self) {
         self.active_view = ActiveView::Workspace;
-        self.file_queue.add_file(FileItem::from_path(
-            "fixture-preview",
-            "/tmp/source_render.mov",
-            1_572_864_000,
-        ));
+        let mut file =
+            FileItem::from_path("fixture-preview", "/tmp/source_render.mov", 1_572_864_000);
+        file.config.cut_segments = vec![
+            CutSegment {
+                start_time: "00:00:12.000".to_string(),
+                end_time: "00:00:21.500".to_string(),
+            },
+            CutSegment {
+                start_time: "00:00:55.000".to_string(),
+                end_time: "00:01:02.000".to_string(),
+            },
+        ];
+        self.file_queue.add_file(file);
         self.source_metadata.mark_ready(
             "fixture-preview".to_string(),
             SourceMetadata {

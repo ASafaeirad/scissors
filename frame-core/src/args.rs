@@ -7,6 +7,10 @@ use crate::codec::{
 use crate::container::{
     TransportStreamProfile, is_transport_stream_container, transport_stream_profile,
 };
+use crate::cuts::{
+    CutRange, build_audio_cut_filters, build_video_cut_filters, output_cut_ranges,
+    output_duration_seconds, validate_cut_segments,
+};
 use crate::error::ConversionError;
 use crate::filters::{
     build_audio_filters, build_encode_overlay_filter_complex, build_encode_video_filters,
@@ -522,10 +526,19 @@ pub fn build_ffmpeg_args(
     let first_external_subtitle_input = 1 + usize::from(has_overlay(config));
     add_external_subtitle_inputs(&mut args, config);
 
+    let cut_ranges = output_cut_ranges(config);
     if let Some(end_str) = &config.end_time
         && !end_str.is_empty()
     {
-        if let Some(start_str) = &config.start_time {
+        if !cut_ranges.is_empty() {
+            // Cuts shorten the output timeline, so `-to` would overshoot the trim end.
+            if let Some(duration) = output_duration_seconds(config)
+                && duration > 0.0
+            {
+                args.push("-t".to_string());
+                args.push(format!("{duration:.3}"));
+            }
+        } else if let Some(start_str) = &config.start_time {
             if start_str.is_empty() {
                 args.push("-to".to_string());
                 args.push(end_str.clone());
@@ -553,6 +566,11 @@ pub fn build_ffmpeg_args(
     let use_overlay = has_overlay(config) && !is_audio_only && !is_gif_output;
     if is_copy_mode(config) {
         validate_stream_copy_compatibility(config, probe)?;
+        if !cut_ranges.is_empty() {
+            return Err(ConversionError::InvalidInput(
+                "Removing segments requires re-encoding".to_string(),
+            ));
+        }
 
         if !is_audio_only {
             args.push("-map".to_string());
@@ -610,7 +628,7 @@ pub fn build_ffmpeg_args(
         add_audio_codec_args(&mut args, config);
     } else if is_video_only && is_gif_output {
         args.push("-filter_complex".to_string());
-        args.push(build_gif_filter_complex(config));
+        args.push(build_gif_filter_complex(config, &cut_ranges));
 
         args.push("-map".to_string());
         args.push("[gif_out]".to_string());
@@ -658,11 +676,13 @@ pub fn build_ffmpeg_args(
             args.push(config.pixel_format.trim().to_string());
         }
 
+        let cut_filters = build_video_cut_filters(&cut_ranges);
         if use_overlay {
             args.push("-filter_complex".to_string());
-            args.push(build_encode_overlay_filter_complex(config));
+            args.push(build_encode_overlay_filter_complex(config, &cut_filters));
         } else {
-            let video_filters = build_encode_video_filters(config, true);
+            let mut video_filters = build_encode_video_filters(config, true);
+            video_filters.extend(cut_filters);
             if !video_filters.is_empty() {
                 args.push("-vf".to_string());
                 args.push(video_filters.join(","));
@@ -705,7 +725,8 @@ pub fn build_ffmpeg_args(
     }
 
     if !is_video_only && !is_image_output && !config.selected_audio_tracks.is_empty() {
-        let audio_filters = build_audio_filters(config);
+        let mut audio_filters = build_audio_cut_filters(&cut_ranges);
+        audio_filters.extend(build_audio_filters(config));
         if !audio_filters.is_empty() {
             args.push("-af".to_string());
             args.push(audio_filters.join(","));
@@ -797,8 +818,9 @@ fn normalize_gif_dither(dither: &str) -> &'static str {
     }
 }
 
-fn build_gif_filter_complex(config: &ConversionConfig) -> String {
+fn build_gif_filter_complex(config: &ConversionConfig, cut_ranges: &[CutRange]) -> String {
     let mut filters = build_video_filters(config, true);
+    filters.extend(build_video_cut_filters(cut_ranges));
     if config.fps != "original" {
         filters.push(format!("fps={}", config.fps));
     }
@@ -1007,6 +1029,28 @@ pub fn validate_task_input(
         return Err(ConversionError::InvalidInput(
             "End time must be greater than start time".to_string(),
         ));
+    }
+
+    validate_cut_segments(config)?;
+    if !output_cut_ranges(config).is_empty() {
+        if is_copy_mode {
+            return Err(ConversionError::InvalidInput(
+                "Removing segments requires re-encoding".to_string(),
+            ));
+        }
+        if is_image_container(&config.container) {
+            return Err(ConversionError::InvalidInput(
+                "Removing segments is not available for image outputs".to_string(),
+            ));
+        }
+        if !config.selected_subtitle_tracks.is_empty()
+            || !config.external_subtitle_tracks.is_empty()
+        {
+            return Err(ConversionError::InvalidInput(
+                "Removing segments cannot keep soft subtitle tracks in sync; burn subtitles in or deselect them"
+                    .to_string(),
+            ));
+        }
     }
 
     if !is_copy_mode && config.resolution == "custom" {
@@ -1393,6 +1437,7 @@ mod tests {
             preset: "medium".to_string(),
             start_time: None,
             end_time: None,
+            cut_segments: Vec::new(),
             metadata: MetadataConfig::default(),
             rotation: "0".to_string(),
             flip_horizontal: false,
@@ -2103,6 +2148,123 @@ mod tests {
 
         let _ = fs::remove_file(path);
         assert!(error.to_string().contains("WebP compression effort"));
+    }
+
+    fn cut(start: &str, end: &str) -> crate::types::CutSegment {
+        crate::types::CutSegment {
+            start_time: start.to_string(),
+            end_time: end.to_string(),
+        }
+    }
+
+    #[test]
+    fn build_ffmpeg_args_removes_cut_segments_from_video_and_audio() {
+        let mut config = sample_config("mp4", "libx264");
+        config.selected_audio_tracks = vec![1];
+        config.cut_segments = vec![cut("00:00:02.000", "00:00:04.000")];
+
+        let args = build_ffmpeg_args("input.mov", "output.mp4", &config, &sample_probe())
+            .expect("cut arguments should build");
+
+        let video_filters = args
+            .windows(2)
+            .find(|window| window[0] == "-vf")
+            .map(|window| window[1].clone())
+            .expect("video filters should be present");
+        assert!(video_filters.ends_with(
+            "select='not(gte(t,2.000)*lt(t,4.000))',setpts='PTS-(clip(T-2.000,0,2.000))/TB'"
+        ));
+        assert!(args_contains_pair(
+            &args,
+            "-af",
+            "aselect='not(gte(t,2.000)*lt(t,4.000))',asetpts=N/SR/TB"
+        ));
+    }
+
+    #[test]
+    fn build_ffmpeg_args_shortens_trim_duration_by_removed_time() {
+        let mut config = sample_config("mp4", "libx264");
+        config.start_time = Some("00:00:10.000".to_string());
+        config.end_time = Some("00:00:30.000".to_string());
+        config.cut_segments = vec![
+            cut("00:00:05.000", "00:00:12.000"),
+            cut("00:00:20.000", "00:00:25.000"),
+        ];
+
+        let args = build_ffmpeg_args("input.mov", "output.mp4", &config, &sample_probe())
+            .expect("trimmed cut arguments should build");
+
+        assert!(args_contains_pair(&args, "-ss", "00:00:10.000"));
+        assert!(args_contains_pair(&args, "-t", "13.000"));
+        assert!(args.iter().any(|arg| {
+            arg.contains("select='not(gte(t,0.000)*lt(t,2.000)+gte(t,10.000)*lt(t,15.000))'")
+        }));
+    }
+
+    #[test]
+    fn build_ffmpeg_args_applies_cuts_after_overlay_composition() {
+        let mut config = sample_config("mp4", "libx264");
+        config.overlay = Some(crate::types::OverlayConfig {
+            enabled: true,
+            path: "logo.png".to_string(),
+            ..crate::types::OverlayConfig::default()
+        });
+        config.cut_segments = vec![cut("00:00:01.000", "00:00:02.000")];
+
+        let args = build_ffmpeg_args("input.mov", "output.mp4", &config, &sample_probe())
+            .expect("overlay cut arguments should build");
+        let graph = args
+            .windows(2)
+            .find(|window| window[0] == "-filter_complex")
+            .map(|window| window[1].clone())
+            .expect("overlay graph should be present");
+
+        assert!(graph.contains("[overlay_out];[overlay_out]select="));
+        assert!(graph.ends_with("/TB'[vout]"));
+    }
+
+    #[test]
+    fn build_ffmpeg_args_removes_cut_segments_from_audio_only_output() {
+        let mut config = sample_config("mp3", "libx264");
+        config.audio_codec = "mp3".to_string();
+        config.selected_audio_tracks = vec![1];
+        config.cut_segments = vec![cut("00:00:01.500", "00:00:03.000")];
+
+        let args = build_ffmpeg_args("input.mov", "output.mp3", &config, &sample_probe())
+            .expect("audio cut arguments should build");
+
+        assert!(!args.iter().any(|arg| arg == "-vf"));
+        assert!(args_contains_pair(
+            &args,
+            "-af",
+            "aselect='not(gte(t,1.500)*lt(t,3.000))',asetpts=N/SR/TB"
+        ));
+    }
+
+    #[test]
+    fn build_ffmpeg_args_rejects_cuts_in_stream_copy_mode() {
+        let mut config = sample_config("mp4", "libx264");
+        config.processing_mode = "copy".to_string();
+        config.cut_segments = vec![cut("00:00:01.000", "00:00:02.000")];
+
+        let error = build_ffmpeg_args("input.mov", "output.mp4", &config, &sample_probe())
+            .expect_err("stream copy cannot drop arbitrary frames");
+
+        assert!(error.to_string().contains("requires re-encoding"));
+    }
+
+    #[test]
+    fn validate_task_input_rejects_cuts_with_soft_subtitles() {
+        let path = temporary_input_file("cut-subtitles");
+        let mut config = sample_config("mkv", "libx264");
+        config.selected_subtitle_tracks = vec![2];
+        config.cut_segments = vec![cut("00:00:01.000", "00:00:02.000")];
+
+        let error = validate_task_input(path.to_string_lossy().as_ref(), &config)
+            .expect_err("soft subtitles would desync after cuts");
+
+        let _ = fs::remove_file(path);
+        assert!(error.to_string().contains("soft subtitle"));
     }
 
     fn args_contains_pair(args: &[String], key: &str, value: &str) -> bool {

@@ -640,6 +640,7 @@ pub struct ConversionConfig {
     pub audio_filters: AudioFiltersConfig,
     pub start_time: Option<String>,
     pub end_time: Option<String>,
+    pub cut_segments: Vec<CutSegment>,
     pub metadata: MetadataConfig,
     pub subtitle_burn_path: Option<String>,
     pub subtitle_font_name: Option<String>,
@@ -701,6 +702,7 @@ impl Default for ConversionConfig {
             audio_filters: AudioFiltersConfig::default(),
             start_time: None,
             end_time: None,
+            cut_segments: Vec::new(),
             metadata: MetadataConfig::default(),
             subtitle_burn_path: None,
             subtitle_font_name: None,
@@ -743,6 +745,14 @@ impl Default for ConversionConfig {
             hw_decode: false,
         }
     }
+}
+
+/// A source time range removed from the export, stored as `HH:MM:SS.mmm` timecodes.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CutSegment {
+    pub start_time: String,
+    pub end_time: String,
 }
 
 /// A sidecar subtitle file embedded as a selectable output track.

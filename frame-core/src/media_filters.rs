@@ -526,6 +526,7 @@ mod tests {
             preset: "medium".to_string(),
             start_time: None,
             end_time: None,
+            cut_segments: Vec::new(),
             metadata: crate::types::MetadataConfig::default(),
             rotation: "0".to_string(),
             flip_horizontal: false,

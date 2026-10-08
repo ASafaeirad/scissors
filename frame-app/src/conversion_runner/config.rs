@@ -89,6 +89,14 @@ pub fn core_config_from_gpui(config: &GpuiConversionConfig) -> CoreConversionCon
         preset: non_empty_or(&config.preset, DEFAULT_PRESET),
         start_time: config.start_time.clone(),
         end_time: config.end_time.clone(),
+        cut_segments: config
+            .cut_segments
+            .iter()
+            .map(|segment| frame_core::types::CutSegment {
+                start_time: segment.start_time.clone(),
+                end_time: segment.end_time.clone(),
+            })
+            .collect(),
         metadata: core_metadata_from_gpui(&config.metadata),
         rotation: config.rotation.clone(),
         flip_horizontal: config.flip_horizontal,

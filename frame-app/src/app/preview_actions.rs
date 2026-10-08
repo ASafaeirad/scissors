@@ -589,6 +589,9 @@ impl FrameRoot {
                 config.start_time.as_deref(),
                 config.end_time.as_deref(),
             );
+            self.preview_ui
+                .playback
+                .sync_cut_segments(&config.cut_segments);
             return;
         }
 
@@ -598,6 +601,9 @@ impl FrameRoot {
         self.preview_ui
             .playback
             .sync_initial_values(config.start_time.as_deref(), config.end_time.as_deref());
+        self.preview_ui
+            .playback
+            .sync_cut_segments(&config.cut_segments);
 
         if let Some(session) = &self.preview_ui.session {
             let snapshot = session.snapshot();
@@ -1684,6 +1690,9 @@ impl FrameRoot {
                 apply_trim_times(config, trim.start_time, trim.end_time)
             });
         }
+        if let Some(cuts) = end.cuts {
+            changed |= self.update_selected_config(|config| apply_cut_segments(config, cuts));
+        }
         if was_trim_drag {
             changed |= self.finish_trim_preview_seek(cx);
         }
@@ -1714,6 +1723,20 @@ impl FrameRoot {
             TimelineDragTarget::Start => self.preview_ui.playback.start_value(),
             TimelineDragTarget::End => self.preview_ui.playback.end_value(),
             TimelineDragTarget::Scrub => self.preview_ui.playback.current_time(),
+            TimelineDragTarget::CutStart(index) => {
+                let Some(cut) = self.preview_ui.playback.cuts().get(index) else {
+                    return false;
+                };
+                cut.start
+            }
+            TimelineDragTarget::CutEnd(index) => {
+                let Some(cut) = self.preview_ui.playback.cuts().get(index) else {
+                    return false;
+                };
+                cut.end
+            }
+            // Regions are pointer-only; their edges carry the keyboard controls.
+            TimelineDragTarget::CutMove(_) => return false,
         };
         let Some(next_time) = timeline_keyboard_time_for_key(current_time, duration, key) else {
             return false;
@@ -1728,6 +1751,25 @@ impl FrameRoot {
 
         self.apply_preview_timeline_drag(target, percent)
             | self.end_preview_timeline_drag_internal(cx)
+    }
+
+    /// Removes the segment under the playhead, or starts a new one there.
+    pub(super) fn toggle_preview_cut_at_playhead(&mut self) -> bool {
+        let playback = &self.preview_ui.playback;
+        let removing = playback.cut_index_at(playback.current_time()).is_some();
+        let allowed = if removing {
+            self.preview_timeline_enabled()
+        } else {
+            self.preview_cut_enabled()
+        };
+        if !allowed {
+            return false;
+        }
+
+        let Some(cuts) = self.preview_ui.playback.toggle_cut_at_playhead() else {
+            return false;
+        };
+        self.update_selected_config(|config| apply_cut_segments(config, cuts))
     }
 
     pub(super) fn toggle_preview_playback_with_context(&mut self, cx: &Context<Self>) -> bool {
@@ -1968,11 +2010,21 @@ impl FrameRoot {
     }
 
     fn preview_timeline_enabled(&self) -> bool {
+        self.selected_preview_control_availability()
+            .is_some_and(|availability| !availability.trim_disabled)
+            && self.preview_ui.playback.duration() > 0.0
+    }
+
+    fn preview_cut_enabled(&self) -> bool {
+        self.selected_preview_control_availability()
+            .is_some_and(|availability| availability.cut_available)
+            && self.preview_ui.playback.duration() > 0.0
+    }
+
+    fn selected_preview_control_availability(&self) -> Option<PreviewControlAvailability> {
         let metadata = self.selected_source_metadata();
-        let Some(config) = self.selected_config() else {
-            return false;
-        };
-        let availability = preview_control_availability(PreviewControlInput {
+        let config = self.selected_config()?;
+        Some(preview_control_availability(PreviewControlInput {
             metadata_status: if metadata.is_some() {
                 PreviewMetadataStatus::Ready
             } else {
@@ -1982,9 +2034,7 @@ impl FrameRoot {
             controls_disabled: self.file_queue.selected_file_locked(),
             processing_mode: config.processing_mode,
             container: Some(config.container.as_str()),
-        });
-
-        !availability.trim_disabled && self.preview_ui.playback.duration() > 0.0
+        }))
     }
     pub(super) fn resolve_selected_settings_tab(&mut self, metadata: Option<&SourceMetadata>) {
         let next_tab = self

@@ -1,12 +1,42 @@
 use super::crop::clamp;
+use crate::settings::CutSegment;
 
 const PLAYBACK_END_EPSILON_SECONDS: f64 = 0.05;
+/// Shortest removable segment; matches the millisecond timecode precision.
+const MIN_CUT_SECONDS: f64 = 0.001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TimelineDragTarget {
     Start,
     End,
     Scrub,
+    /// Start edge of the removed segment at the given index.
+    CutStart(usize),
+    /// End edge of the removed segment at the given index.
+    CutEnd(usize),
+    /// The whole removed segment at the given index, keeping its length.
+    CutMove(usize),
+}
+
+impl TimelineDragTarget {
+    #[must_use]
+    pub const fn is_cut(self) -> bool {
+        matches!(self, Self::CutStart(_) | Self::CutEnd(_) | Self::CutMove(_))
+    }
+}
+
+/// A removed source range in seconds, half-open as `[start, end)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CutRange {
+    pub start: f64,
+    pub end: f64,
+}
+
+impl CutRange {
+    #[must_use]
+    pub fn contains(self, time: f64) -> bool {
+        time >= self.start && time < self.end
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,6 +126,7 @@ pub struct TimelineDragUpdate {
 pub struct TimelineDragEnd {
     pub command: PlaybackMediaCommand,
     pub trim: Option<TrimSelection>,
+    pub cuts: Option<Vec<CutSegment>>,
 }
 
 #[expect(
@@ -111,10 +142,14 @@ pub struct PreviewPlaybackState {
     duration: f64,
     start_value: f64,
     end_value: f64,
+    cuts: Vec<CutRange>,
+    /// Distance from a moved cut's start to the point where it was grabbed.
+    cut_move_offset: f64,
     dragging: Option<TimelineDragTarget>,
     was_playing_before_drag: bool,
     previous_initial_start: Option<String>,
     previous_initial_end: Option<String>,
+    previous_initial_cuts: Vec<CutSegment>,
 }
 
 impl PreviewPlaybackState {
@@ -128,10 +163,13 @@ impl PreviewPlaybackState {
             duration: 0.0,
             start_value: 0.0,
             end_value: 0.0,
+            cuts: Vec::new(),
+            cut_move_offset: 0.0,
             dragging: None,
             was_playing_before_drag: false,
             previous_initial_start: None,
             previous_initial_end: None,
+            previous_initial_cuts: Vec::new(),
         }
     }
 
@@ -163,6 +201,28 @@ impl PreviewPlaybackState {
     #[must_use]
     pub const fn dragging(&self) -> Option<TimelineDragTarget> {
         self.dragging
+    }
+
+    #[must_use]
+    pub fn cuts(&self) -> &[CutRange] {
+        &self.cuts
+    }
+
+    /// Index of the removed segment covering `time`, if any.
+    #[must_use]
+    pub fn cut_index_at(&self, time: f64) -> Option<usize> {
+        self.cuts.iter().position(|cut| cut.contains(time))
+    }
+
+    /// Exported length: the trim window minus the removed time inside it.
+    #[must_use]
+    pub fn output_duration(&self) -> f64 {
+        let removed: f64 = self
+            .cuts
+            .iter()
+            .map(|cut| (cut.end.min(self.end_value) - cut.start.max(self.start_value)).max(0.0))
+            .sum();
+        (self.end_value - self.start_value - removed).max(0.0)
     }
 
     pub const fn set_is_image(&mut self, is_image: bool) {
@@ -201,6 +261,76 @@ impl PreviewPlaybackState {
         } else if initial_end.is_none() && self.duration > 0.0 && self.end_value == 0.0 {
             self.end_value = self.duration;
         }
+    }
+
+    pub fn sync_cut_segments(&mut self, segments: &[CutSegment]) {
+        if self.previous_initial_cuts == segments {
+            return;
+        }
+
+        self.previous_initial_cuts = segments.to_vec();
+        self.cuts = segments
+            .iter()
+            .map(|segment| CutRange {
+                start: parse_time_to_seconds(&segment.start_time),
+                end: parse_time_to_seconds(&segment.end_time),
+            })
+            .filter(|cut| cut.end - cut.start >= MIN_CUT_SECONDS)
+            .collect();
+    }
+
+    /// Removes the segment under the playhead, or adds one starting there.
+    ///
+    /// Returns the normalized segments to persist, or `None` when nothing changed.
+    #[must_use]
+    pub fn toggle_cut_at_playhead(&mut self) -> Option<Vec<CutSegment>> {
+        if self.is_image || !self.has_media || self.duration <= 0.0 {
+            return None;
+        }
+
+        let time = self.current_time;
+        if let Some(index) = self.cut_index_at(time) {
+            self.cuts.remove(index);
+            return Some(self.commit_cut_segments());
+        }
+
+        let next_cut_start = self
+            .cuts
+            .iter()
+            .map(|cut| cut.start)
+            .filter(|start| *start > time)
+            .fold(self.duration, f64::min);
+        let length = (self.duration / 20.0).clamp(1.0, 10.0);
+        let end = (time + length).min(next_cut_start);
+        if end - time < MIN_CUT_SECONDS {
+            return None;
+        }
+
+        self.cuts.push(CutRange { start: time, end });
+        Some(self.commit_cut_segments())
+    }
+
+    /// Sorts and merges the draft cuts and formats them for the config.
+    #[must_use]
+    pub fn commit_cut_segments(&mut self) -> Vec<CutSegment> {
+        self.cuts
+            .sort_by(|left, right| left.start.total_cmp(&right.start));
+        let mut merged: Vec<CutRange> = Vec::with_capacity(self.cuts.len());
+        for cut in self.cuts.drain(..) {
+            match merged.last_mut() {
+                Some(last) if cut.start <= last.end => last.end = last.end.max(cut.end),
+                _ => merged.push(cut),
+            }
+        }
+        self.cuts = merged;
+
+        self.cuts
+            .iter()
+            .map(|cut| CutSegment {
+                start_time: format_time(cut.start),
+                end_time: format_time(cut.end),
+            })
+            .collect()
     }
 
     pub fn sync_from_media(&mut self, snapshot: MediaSnapshot) {
@@ -249,6 +379,20 @@ impl PreviewPlaybackState {
             self.is_playing = false;
             self.current_time = self.start_value;
             return PlaybackMediaCommand::pause_and_seek(self.start_value);
+        }
+
+        // Preview playback mirrors the export by jumping over removed segments.
+        if self.is_playing
+            && let Some(index) = self.cut_index_at(self.current_time)
+        {
+            let resume_at = self.cuts[index].end;
+            if playback_time_reached_end(resume_at, self.end_value) {
+                self.is_playing = false;
+                self.current_time = self.start_value;
+                return PlaybackMediaCommand::pause_and_seek(self.start_value);
+            }
+            self.current_time = resume_at;
+            return PlaybackMediaCommand::seek(resume_at);
         }
 
         PlaybackMediaCommand::none()
@@ -307,9 +451,24 @@ impl PreviewPlaybackState {
         None
     }
 
-    pub const fn begin_handle_drag(&mut self, target: TimelineDragTarget) -> bool {
+    pub fn begin_handle_drag(&mut self, target: TimelineDragTarget) -> bool {
         if self.is_image {
             return false;
+        }
+        if let TimelineDragTarget::CutStart(index)
+        | TimelineDragTarget::CutEnd(index)
+        | TimelineDragTarget::CutMove(index) = target
+            && index >= self.cuts.len()
+        {
+            return false;
+        }
+        // Pressing a cut region seeks the playhead to the press point first,
+        // so the playhead marks where the region was grabbed.
+        if let TimelineDragTarget::CutMove(index) = target {
+            let cut = self.cuts[index];
+            self.cut_move_offset = (self.current_time - cut.start)
+                .max(0.0)
+                .min(cut.end - cut.start);
         }
 
         self.dragging = Some(target);
@@ -390,6 +549,46 @@ impl PreviewPlaybackState {
                     preview_seek_to: Some(self.end_value),
                 }
             }
+            TimelineDragTarget::CutStart(index) | TimelineDragTarget::CutEnd(index) => {
+                let Some(cut) = self.cuts.get_mut(index) else {
+                    return TimelineDragUpdate {
+                        command: PlaybackMediaCommand::none(),
+                        trim: None,
+                        preview_seek_to: None,
+                    };
+                };
+                let edge = if matches!(dragging, TimelineDragTarget::CutStart(_)) {
+                    cut.start = time.min(cut.end - MIN_CUT_SECONDS).max(0.0);
+                    cut.start
+                } else {
+                    cut.end = time.max(cut.start + MIN_CUT_SECONDS).min(self.duration);
+                    cut.end
+                };
+                TimelineDragUpdate {
+                    command: PlaybackMediaCommand::none(),
+                    trim: None,
+                    preview_seek_to: Some(edge),
+                }
+            }
+            TimelineDragTarget::CutMove(index) => {
+                let Some(cut) = self.cuts.get_mut(index) else {
+                    return TimelineDragUpdate {
+                        command: PlaybackMediaCommand::none(),
+                        trim: None,
+                        preview_seek_to: None,
+                    };
+                };
+                let length = cut.end - cut.start;
+                cut.start = (time - self.cut_move_offset)
+                    .min(self.duration - length)
+                    .max(0.0);
+                cut.end = cut.start + length;
+                TimelineDragUpdate {
+                    command: PlaybackMediaCommand::none(),
+                    trim: None,
+                    preview_seek_to: Some(cut.start),
+                }
+            }
         }
     }
 
@@ -404,21 +603,34 @@ impl PreviewPlaybackState {
                     PlaybackMediaCommand::seek(self.current_time)
                 }
             }
-            Some(TimelineDragTarget::Start | TimelineDragTarget::End) => {
-                PlaybackMediaCommand::none()
-            }
-            None => PlaybackMediaCommand::none(),
+            Some(
+                TimelineDragTarget::Start
+                | TimelineDragTarget::End
+                | TimelineDragTarget::CutStart(_)
+                | TimelineDragTarget::CutEnd(_)
+                | TimelineDragTarget::CutMove(_),
+            )
+            | None => PlaybackMediaCommand::none(),
         };
-        let trim = if dragging.is_some_and(|target| target != TimelineDragTarget::Scrub) {
+        let trim = if dragging.is_some_and(|target| {
+            matches!(target, TimelineDragTarget::Start | TimelineDragTarget::End)
+        }) {
             self.commit_trim_values()
         } else {
             None
         };
+        let cuts = dragging
+            .is_some_and(TimelineDragTarget::is_cut)
+            .then(|| self.commit_cut_segments());
 
         self.dragging = None;
         self.was_playing_before_drag = false;
 
-        TimelineDragEnd { command, trim }
+        TimelineDragEnd {
+            command,
+            trim,
+            cuts,
+        }
     }
 
     #[must_use]
