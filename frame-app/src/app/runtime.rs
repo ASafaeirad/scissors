@@ -43,10 +43,14 @@ pub fn init_app(cx: &mut App, name: impl Into<SharedString>) {
         KeyBinding::new("secondary-shift-=", IncreaseUiScale, None),
         KeyBinding::new("secondary--", DecreaseUiScale, None),
         KeyBinding::new("secondary-0", ResetUiScale, None),
+        KeyBinding::new("f12", ToggleFpsMeter, None),
     ]);
     cx.set_menus(vec![Menu {
         name: name.into(),
-        items: vec![MenuItem::action("Quit", Quit)],
+        items: vec![
+            MenuItem::action("Show/hide FPS meter", ToggleFpsMeter),
+            MenuItem::action("Quit", Quit),
+        ],
         disabled: false,
     }]);
     cx.on_window_closed(|cx, _| {

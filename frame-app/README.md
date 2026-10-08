@@ -22,3 +22,10 @@ The app intentionally stays self-contained here: local Frame UI wrappers are bui
   the native bundle.
 
 Build output stays under the workspace `target/` directory and is ignored by `.gitignore`. macOS-specific native-window glue is limited to hiding AppKit's standard titlebar buttons so the custom Frame controls are the only visible traffic lights. Windows icons are embedded by `build.rs`; release packages should be produced through `cargo xtask bundle macos`, `cargo xtask bundle linux`, or `cargo xtask bundle windows` so runtime binaries and desktop metadata are installed together where applicable.
+
+Enable **Show FPS meter** under **Settings > Diagnostics** to toggle UI
+performance diagnostics. You can also press `F12` or choose **Show/hide FPS meter**
+in the app menu. The overlay updates every half second with UI redraw
+FPS, average frame time, and the slowest frame in that sample. It requests
+continuous redraws while enabled and pauses when the window loses focus. These
+numbers measure UI responsiveness, independently of media playback FPS.

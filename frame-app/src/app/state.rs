@@ -91,6 +91,7 @@ impl FrameRoot {
             ),
             appearance: persisted_settings.appearance,
             titlebar_drag: TitlebarDragState::default(),
+            fps_meter: None,
             focus_registry: FrameFocusRegistry::default(),
             file_queue: FileQueue::new(),
             file_list_scroll_handle: UniformListScrollHandle::new(),

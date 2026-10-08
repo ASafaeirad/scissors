@@ -334,6 +334,10 @@ pub(super) fn titlebar_start_button(
 }
 
 #[derive(Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Settings render props carry independent visibility, checkbox, and update availability states."
+)]
 pub(super) struct AppSettingsSheetProps<'a> {
     pub(super) is_open: bool,
     pub(super) current_max_concurrency: usize,
@@ -352,11 +356,13 @@ pub(super) struct AppSettingsSheetProps<'a> {
     pub(super) theme_focuses: AppSettingsSelectFocuses<'a>,
     pub(super) ui_scale_focuses: AppSettingsSelectFocuses<'a>,
     pub(super) auto_update_check: bool,
+    pub(super) show_fps_meter: bool,
     pub(super) update_status: &'a UpdateStatus,
     pub(super) update_install_ready: bool,
     pub(super) value_focus: &'a FocusHandle,
     pub(super) output_directory_focus: &'a FocusHandle,
     pub(super) auto_update_focus: &'a FocusHandle,
+    pub(super) fps_meter_focus: &'a FocusHandle,
     pub(super) check_now_focus: &'a FocusHandle,
     pub(super) download_focus: &'a FocusHandle,
     pub(super) skip_focus: &'a FocusHandle,
@@ -582,6 +588,26 @@ pub(super) fn app_settings_sheet(
                                             .child(error),
                                     )
                                 })
+                                .child(
+                                    settings_section("Diagnostics", palette)
+                                        .child(frame_checkbox_row_with_focus(
+                                            "app-settings-fps-meter",
+                                            "Show FPS meter",
+                                            "Show UI FPS and frame times. Runs continuously while enabled.",
+                                            props.show_fps_meter,
+                                            false,
+                                            props.fps_meter_focus,
+                                            palette,
+                                            cx,
+                                            |root, _event, window, cx| {
+                                                root.toggle_fps_meter(
+                                                    &super::ToggleFpsMeter,
+                                                    window,
+                                                    cx,
+                                                );
+                                            },
+                                        )),
+                                )
                                 .child(app_settings_updates_section(
                                     props.auto_update_check,
                                     props.update_status,

@@ -5,6 +5,7 @@ mod conversion;
 mod file_list_panel;
 mod files;
 mod fixtures;
+mod fps_meter;
 mod input;
 mod logs_panel;
 mod logs_state;
@@ -204,6 +205,7 @@ actions!(
         IncreaseUiScale,
         DecreaseUiScale,
         ResetUiScale,
+        ToggleFpsMeter,
     ]
 );
 
@@ -265,6 +267,7 @@ pub struct FrameRoot {
     active_view: ActiveView,
     appearance: AppearanceSettings,
     titlebar_drag: TitlebarDragState,
+    fps_meter: Option<fps_meter::FpsMeter>,
     focus_registry: FrameFocusRegistry,
     file_queue: FileQueue,
     file_list_scroll_handle: UniformListScrollHandle,

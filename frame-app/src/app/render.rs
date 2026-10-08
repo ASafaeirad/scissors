@@ -555,6 +555,7 @@ impl Render for FrameRoot {
             .on_action(cx.listener(Self::increase_ui_scale))
             .on_action(cx.listener(Self::decrease_ui_scale))
             .on_action(cx.listener(Self::reset_ui_scale))
+            .on_action(cx.listener(Self::toggle_fps_meter))
             .on_key_down(
                 cx.listener(|_root, event: &gpui::KeyDownEvent, window, cx| {
                     handle_tab_navigation(event, window, cx);
@@ -655,6 +656,11 @@ impl Render for FrameRoot {
                 true,
                 cx,
             );
+            let fps_meter_focus = self.ensure_focus(
+                FrameFocusKey::Control("app-settings-fps-meter".to_string()),
+                true,
+                cx,
+            );
             let check_now_enabled = !self.update_ui.status.is_busy();
             let check_now_focus = self.ensure_focus(
                 FrameFocusKey::Control("app-settings-update-check-now".to_string()),
@@ -735,11 +741,13 @@ impl Render for FrameRoot {
                         options: &ui_scale_option_focuses,
                     },
                     auto_update_check: self.auto_update_check,
+                    show_fps_meter: self.fps_meter.is_some(),
                     update_status: &self.update_ui.status,
                     update_install_ready,
                     value_focus: &value_focus,
                     output_directory_focus: &output_directory_focus,
                     auto_update_focus: &auto_update_focus,
+                    fps_meter_focus: &fps_meter_focus,
                     check_now_focus: &check_now_focus,
                     download_focus: &download_focus,
                     skip_focus: &skip_focus,
@@ -791,6 +799,16 @@ impl Render for FrameRoot {
                 window,
                 cx,
             ));
+        }
+
+        if let Some(meter) = self.fps_meter.as_mut() {
+            if window.is_window_active() {
+                meter.record_frame(Instant::now());
+                window.request_animation_frame();
+            } else {
+                meter.reset();
+            }
+            root = root.child(meter.overlay(palette));
         }
 
         self.finish_accessibility_frame(window, cx, Some(&app_root_focus));
