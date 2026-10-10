@@ -137,7 +137,7 @@
 		"flac": ["flac"],
 		"m4a": ["aac", "libfdk_aac", "alac"],
 		"mp4": ["aac", "libfdk_aac", "ac3", "libopus", "mp3", "alac"],
-		"mov": ["*"],
+		"mov": ["aac", "libfdk_aac", "ac3", "mp3", "alac", "pcm_s16le", "mp2"],
 		"mkv": ["*"],
 		"webm": ["libopus", "vorbis"],
 		"mpegts": ["mp2", "aac", "libfdk_aac", "ac3", "mp3", "libopus"],

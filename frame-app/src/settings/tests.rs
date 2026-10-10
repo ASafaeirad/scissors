@@ -1240,7 +1240,7 @@ mod audio_codec_options {
     }
 
     #[test]
-    fn keeps_mov_flac_codec_enabled() {
+    fn mov_disables_codecs_its_muxer_cannot_write() {
         let config = ConversionConfig {
             container: "mov".to_string(),
             ..ConversionConfig::default()
@@ -1248,7 +1248,9 @@ mod audio_codec_options {
 
         let options = audio_codec_options(&config, &encoders(), false);
 
-        assert!(!codec_option(&options, "flac").is_disabled);
+        assert!(codec_option(&options, "flac").is_disabled);
+        assert!(codec_option(&options, "libopus").is_disabled);
+        assert!(!codec_option(&options, "alac").is_disabled);
     }
 
     #[test]
@@ -1281,9 +1283,9 @@ mod audio_codec_options {
             ..ConversionConfig::default()
         };
 
-        assert!(apply_audio_codec(&mut config, "flac"));
+        assert!(apply_audio_codec(&mut config, "alac"));
 
-        assert_eq!(config.audio_codec, "flac");
+        assert_eq!(config.audio_codec, "alac");
     }
 
     #[test]

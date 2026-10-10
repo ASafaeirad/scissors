@@ -425,8 +425,12 @@ mod tests {
     }
 
     #[test]
-    fn mov_accepts_any_audio_codec_like_shared_rules() {
-        assert!(is_audio_codec_allowed("mov", "flac"));
+    fn mov_rejects_audio_codecs_its_muxer_cannot_write() {
+        // FFmpeg's mov muxer only writes Opus and FLAC into MP4.
+        assert!(!is_audio_codec_allowed("mov", "libopus"));
+        assert!(!is_audio_codec_allowed("mov", "flac"));
+        assert!(is_audio_codec_allowed("mov", "aac"));
+        assert!(is_audio_codec_allowed("mov", "pcm_s16le"));
     }
 
     #[test]
