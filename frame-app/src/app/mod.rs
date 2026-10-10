@@ -2,6 +2,7 @@ mod accessibility;
 mod chrome;
 mod components;
 mod conversion;
+mod export_dialog;
 mod file_list_panel;
 mod files;
 mod fixtures;
@@ -127,19 +128,18 @@ use crate::{
         apply_subtitle_position, apply_trim_times, apply_video_bitrate, apply_video_bitrate_mode,
         apply_video_codec, apply_video_preset, apply_videotoolbox_allow_sw, audio_channel_options,
         audio_codec_options, audio_codec_supports_vbr, audio_quality_range, audio_track_options,
-        create_custom_preset, default_presets, fps_options, gif_color_options, gif_dither_options,
-        image_jpeg_huffman_options, image_png_prediction_options, image_tiff_compression_options,
-        image_webp_preset_options, initialize_output_config, is_gif_container,
-        is_hardware_video_codec, is_nvenc_video_codec, is_videotoolbox_video_codec,
-        metadata_field_options, metadata_field_value, metadata_mode_description,
-        metadata_mode_options, mp2_original_channels_are_unsupported, normalize_output_config,
-        normalized_hex_color, output_container_options, output_processing_mode_options,
-        preset_options, remove_external_subtitle_track, resolution_options,
-        resolve_active_settings_tab, sanitize_output_name, scaling_algorithm_options,
-        source_info_sections, subtitle_burn_file_label, subtitle_color_value,
-        subtitle_font_options, subtitle_font_size_options, subtitle_position_options,
-        subtitle_track_options, toggle_audio_track_selection, toggle_subtitle_track_selection,
-        video_codec_options, video_pixel_format_options, video_preset_options,
+        create_custom_preset, default_presets, image_jpeg_huffman_options,
+        image_png_prediction_options, image_tiff_compression_options, image_webp_preset_options,
+        initialize_output_config, is_gif_container, is_hardware_video_codec, is_nvenc_video_codec,
+        is_videotoolbox_video_codec, metadata_field_options, metadata_field_value,
+        metadata_mode_description, metadata_mode_options, mp2_original_channels_are_unsupported,
+        normalize_output_config, normalized_hex_color, output_container_options,
+        output_processing_mode_options, preset_options, remove_external_subtitle_track,
+        resolution_options, resolve_active_settings_tab, sanitize_output_name,
+        scaling_algorithm_options, source_info_sections, subtitle_burn_file_label,
+        subtitle_color_value, subtitle_font_options, subtitle_font_size_options,
+        subtitle_position_options, subtitle_track_options, toggle_audio_track_selection,
+        toggle_subtitle_track_selection, video_codec_options, video_pixel_format_options,
         visible_settings_tabs,
     },
     source_metadata::{
@@ -300,6 +300,7 @@ pub struct FrameRoot {
     /// Set only by the `m3-gallery` visual fixture.
     m3_gallery: Option<m3::M3GalleryState>,
     workspace_ui: workspace::WorkspaceState,
+    export_ui: export_dialog::ExportUiState,
 }
 
 #[derive(Default)]
@@ -808,8 +809,6 @@ struct SettingsRenderState<'a> {
     audio_bitrate_focus: Option<&'a FocusHandle>,
     video_width_focus: Option<&'a FocusHandle>,
     video_height_focus: Option<&'a FocusHandle>,
-    video_bitrate_focus: Option<&'a FocusHandle>,
-    gif_loop_focus: Option<&'a FocusHandle>,
     metadata_focuses: SettingsMetadataInputFocuses<'a>,
     subtitle_focuses: SettingsSubtitleFocuses<'a>,
     external_subtitle_language_focus: Option<&'a FocusHandle>,
@@ -832,14 +831,6 @@ struct SettingsRenderState<'a> {
     subtitle_fonts: &'a [String],
     available_encoders: &'a AvailableEncoders,
     available_filters: &'a AvailableFilters,
-}
-
-#[derive(Clone, Copy)]
-struct SettingsVideoInputFocuses<'a> {
-    width: Option<&'a FocusHandle>,
-    height: Option<&'a FocusHandle>,
-    bitrate: Option<&'a FocusHandle>,
-    gif_loop: Option<&'a FocusHandle>,
 }
 
 #[derive(Clone, Copy)]

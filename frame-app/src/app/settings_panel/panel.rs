@@ -3,13 +3,12 @@ use super::{
     ButtonVariant, ClickEvent, Context, FluentBuilder, FrameRoot, FrameSurface, InteractiveElement,
     IntoElement, PANEL_HEADER_HEIGHT, ParentElement, SETTINGS_PANEL_PADDING,
     SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE, SettingsPresetsTabState, SettingsRenderState,
-    SettingsSubtitlesTabState, SettingsTab, SettingsVideoInputFocuses, SourceKind,
-    StatefulInteractiveElement, Styled, Window, apply_button_motion, button_colors,
-    button_highlight_shadows, button_motion, color, div, frame_tooltip, icon_svg, mix_color,
-    panel_bottom_separator, resolve_active_settings_tab, settings_audio_filters_tab,
-    settings_audio_tab, settings_images_tab, settings_metadata_tab, settings_output_tab,
-    settings_presets_tab, settings_section_label, settings_source_tab, settings_subtitles_tab,
-    settings_tab_icon, settings_video_filters_tab, settings_video_tab, theme,
+    SettingsSubtitlesTabState, SettingsTab, SourceKind, StatefulInteractiveElement, Styled, Window,
+    apply_button_motion, button_colors, button_highlight_shadows, button_motion, color, div,
+    frame_tooltip, icon_svg, mix_color, panel_bottom_separator, resolve_active_settings_tab,
+    settings_audio_filters_tab, settings_audio_tab, settings_images_tab, settings_metadata_tab,
+    settings_output_tab, settings_presets_tab, settings_section_label, settings_source_tab,
+    settings_subtitles_tab, settings_tab_icon, settings_video_filters_tab, theme,
     visible_settings_tabs,
 };
 use crate::settings::source_kind_for;
@@ -212,20 +211,6 @@ pub(in crate::app) fn settings_tab_content(
             window,
             cx,
         )),
-        SettingsTab::Video => content.child(settings_video_tab(
-            settings.config,
-            settings.settings_disabled,
-            settings.available_encoders,
-            SettingsVideoInputFocuses {
-                width: settings.video_width_focus,
-                height: settings.video_height_focus,
-                bitrate: settings.video_bitrate_focus,
-                gif_loop: settings.gif_loop_focus,
-            },
-            palette,
-            window,
-            cx,
-        )),
         SettingsTab::VideoFilters => content.child(settings_video_filters_tab(
             settings.config,
             settings.settings_disabled,
@@ -329,15 +314,15 @@ pub(in crate::app) fn settings_section(
 mod tests {
     use super::*;
 
-    const TABS: &[SettingsTab] = &[SettingsTab::Source, SettingsTab::Output, SettingsTab::Video];
+    const TABS: &[SettingsTab] = &[SettingsTab::Source, SettingsTab::Output, SettingsTab::Audio];
 
     #[test]
     fn settings_tab_for_key_handles_the_navigation_matrix() {
         let cases = [
-            (SettingsTab::Source, "left", Some(SettingsTab::Video)),
-            (SettingsTab::Video, "right", Some(SettingsTab::Source)),
+            (SettingsTab::Source, "left", Some(SettingsTab::Audio)),
+            (SettingsTab::Audio, "right", Some(SettingsTab::Source)),
             (SettingsTab::Output, "home", Some(SettingsTab::Source)),
-            (SettingsTab::Output, "end", Some(SettingsTab::Video)),
+            (SettingsTab::Output, "end", Some(SettingsTab::Audio)),
             (SettingsTab::Output, "space", None),
         ];
 

@@ -3,11 +3,15 @@
 //! It is not a working editor.
 
 use super::{
-    Button, ButtonVariant, Chip, ChipKind, ColorScheme, IconButton, IconButtonVariant, M3Text,
-    NavigationItem, NavigationRail, SegmentedButton, Slider, Switch, Symbol, ToolbarColor,
-    ToolbarVariant, color, div, m3_icon, m3_surface, theme, toolbar,
+    Button, ButtonVariant, Chip, ChipKind, ColorScheme, Dialog, IconButton, IconButtonVariant,
+    LinearProgress, M3Text, NavigationItem, NavigationRail, RadioItem, SegmentedButton, SelectCard,
+    Slider, Switch, Symbol, TextField, ToolbarColor, ToolbarVariant, color, div, m3_icon,
+    m3_surface, theme, toolbar,
 };
-use crate::app::{Context, FrameRoot, ParentElement, StatefulInteractiveElement, Styled, Window};
+use crate::app::{
+    Context, FrameRoot, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled,
+    Window,
+};
 use crate::material::{self, shape, typography};
 use gpui::{prelude::FluentBuilder, relative};
 
@@ -41,6 +45,11 @@ const TOOLS: [(Symbol, &str, &str); 5] = [
 const FILTERS: [&str; 4] = ["All", "Video", "Audio", "Images"];
 const ASPECTS: [&str; 4] = ["Original", "16:9", "9:16", "1:1"];
 const FORMATS: [&str; 3] = ["MP4", "WebM", "GIF"];
+const ENCODERS: [(&str, &str); 3] = [
+    ("H.264", "Plays everywhere"),
+    ("H.265 / HEVC", "Smaller files"),
+    ("AV1", "Smallest, slow"),
+];
 const MEDIA: [(Symbol, &str, &str); 6] = [
     (Symbol::Movie, "recording_2026-09-25_16.30.58.mp4", "0:19"),
     (Symbol::Movie, "screen_demo_v2.mov", "0:24"),
@@ -60,6 +69,7 @@ pub(in crate::app) struct M3GalleryState {
     filter: usize,
     aspect: usize,
     format: usize,
+    encoder: usize,
     muted: bool,
     fade: bool,
     burn_captions: bool,
@@ -184,7 +194,16 @@ impl FrameRoot {
         .gap(theme::ui_rem(16.0))
         .p(theme::ui_rem(20.0))
         .child(header)
-        .child(body)
+        .child(
+            div()
+                .id("m3-tool-panel-body")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .child(body.flex_none()),
+        )
     }
 
     #[expect(
@@ -484,6 +503,10 @@ impl FrameRoot {
             )
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The output panel shows every export-related component for visual review."
+    )]
     fn output_panel(
         state: &M3GalleryState,
         scheme: &'static ColorScheme,
@@ -509,6 +532,88 @@ impl FrameRoot {
                         .show_value_label(true)
                         .build(scheme),
                 ),
+            )
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(2)
+                    .gap(theme::ui_rem(8.0))
+                    .child(
+                        SelectCard::new("m3-card-mp4", "MP4", state.format == 0)
+                            .icon(Symbol::Movie)
+                            .supporting("Share anywhere")
+                            .build(scheme, window, cx)
+                            .on_click(cx.listener(|root, _, _, cx| {
+                                root.update_m3_gallery(cx, |gallery| gallery.format = 0);
+                            })),
+                    )
+                    .child(
+                        SelectCard::new("m3-card-gif", "GIF", state.format == 2)
+                            .icon(Symbol::GifBox)
+                            .supporting("Short loops")
+                            .build(scheme, window, cx)
+                            .on_click(cx.listener(|root, _, _, cx| {
+                                root.update_m3_gallery(cx, |gallery| gallery.format = 2);
+                            })),
+                    ),
+            )
+            .children(ENCODERS.iter().enumerate().map(|(index, (label, hint))| {
+                RadioItem::new(
+                    format!("m3-encoder-{index}"),
+                    *label,
+                    state.encoder == index,
+                )
+                .supporting(*hint)
+                .enabled(index < 2)
+                .build(scheme, window, cx)
+                .on_click(cx.listener(move |root, _, _, cx| {
+                    root.update_m3_gallery(cx, |gallery| gallery.encoder = index);
+                }))
+            }))
+            .child(
+                div().pt(theme::ui_rem(8.0)).child(
+                    TextField::new("m3-file-name", "File name")
+                        .input(div().child("render_final"))
+                        .populated(true)
+                        .suffix(".mp4")
+                        .supporting_text("Saved to Movies")
+                        .container(scheme.surface_container_low)
+                        .build(scheme, window, cx),
+                ),
+            )
+            .child(
+                TextField::new("m3-file-name-empty", "Width")
+                    .error(Some("Use even numbers"))
+                    .container(scheme.surface_container_low)
+                    .build(scheme, window, cx),
+            )
+            .child(LinearProgress::new("m3-progress", "Export progress", 0.42).build(scheme))
+            .child(
+                Dialog::new("m3-dialog", "Discard export?")
+                    .build(scheme)
+                    .p(theme::ui_rem(24.0))
+                    .gap(theme::ui_rem(16.0))
+                    .child(
+                        div()
+                            .m3_type(typography::HEADLINE_SMALL)
+                            .text_color(color(scheme.on_surface))
+                            .child("Discard export?"),
+                    )
+                    .child("The file exported so far will be deleted.")
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap(theme::ui_rem(8.0))
+                            .child(
+                                Button::new("m3-dialog-keep", "Keep", ButtonVariant::Text)
+                                    .build(scheme, window, cx),
+                            )
+                            .child(
+                                Button::new("m3-dialog-discard", "Discard", ButtonVariant::Text)
+                                    .build(scheme, window, cx),
+                            ),
+                    ),
             )
     }
 

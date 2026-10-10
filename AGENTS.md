@@ -8,7 +8,7 @@ should use the M3 tokens and components**, not the legacy Frame ones.
 | Use | Instead of |
 | --- | --- |
 | `crate::material` tokens (`material::scheme(color_theme)`, `typography::*`, `shape::*`, `spacing::*`, `Elevation`, `motion::*`) | `theme::ThemePalette`, `theme::RADIUS_*`, `theme::TEXT_*` |
-| `app::m3` components (`Button`, `IconButton`, `Chip`, `Switch`, `Slider`, `SegmentedButton`, `NavigationRail`, `toolbar`) | `app::components` (`frame_text_button`, `frame_icon_button`, `frame_slider`, …) |
+| `app::m3` components (`Button`, `IconButton`, `Chip`, `Switch`, `Slider`, `SegmentedButton`, `SelectCard`, `Radio`/`RadioItem`, `TextField`, `LinearProgress`, `Dialog`/`scrim`, `NavigationRail`, `toolbar`) | `app::components` (`frame_text_button`, `frame_icon_button`, `frame_slider`, …) |
 | `material::Symbol` (Material Symbols, outlined and filled) | `assets::ICON_*` Hugeicons |
 | `M3Text::m3_type(typography::ROLE)` (Roboto) | `text_size(theme::ui_rem(theme::TEXT_*))` |
 
@@ -33,11 +33,12 @@ should use the M3 tokens and components**, not the legacy Frame ones.
   `Stateful<Div>`; attach `.on_click(cx.listener(...))` to it. Multi-target components take
   `.on_select(cx.listener(|this, index: &usize, window, cx| ...))`.
 - Icon-only controls need an accessible label (`IconButton::new(id, symbol, "Label")`).
-- If a component you need doesn't exist yet (cards, dialogs, menus, text fields, tabs…), add it
+- If a component you need doesn't exist yet (menus, tabs, snackbars…), add it
   to `app::m3` following the existing files: a pure, unit-tested `*_colors` function plus a
   builder. Don't fall back to the legacy components for new UI.
 - Known gaps: GPUI has no letter spacing (tracking tokens are not applied), pressed-corner
-  morphs aren't animated, and `m3::Slider` draws state only (the caller handles input).
+  morphs aren't animated, `m3::Slider` draws state only (the caller handles input), and `m3::TextField` draws decoration
+  only (pass `input::m3_text_input` as its editable child).
 
 ### Verifying UI changes
 

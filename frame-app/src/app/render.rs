@@ -192,9 +192,6 @@ impl Render for FrameRoot {
                     self.ensure_text_input_focus(FrameTextInputKind::VideoCustomWidth, cx);
                 let video_height_focus =
                     self.ensure_text_input_focus(FrameTextInputKind::VideoCustomHeight, cx);
-                let video_bitrate_focus =
-                    self.ensure_text_input_focus(FrameTextInputKind::VideoBitrate, cx);
-                let gif_loop_focus = self.ensure_text_input_focus(FrameTextInputKind::GifLoop, cx);
                 let metadata_title_focus =
                     self.ensure_text_input_focus(FrameTextInputKind::MetadataTitle, cx);
                 let metadata_artist_focus =
@@ -413,8 +410,6 @@ impl Render for FrameRoot {
                     audio_bitrate_focus: Some(&audio_bitrate_focus),
                     video_width_focus: Some(&video_width_focus),
                     video_height_focus: Some(&video_height_focus),
-                    video_bitrate_focus: Some(&video_bitrate_focus),
-                    gif_loop_focus: Some(&gif_loop_focus),
                     metadata_focuses: SettingsMetadataInputFocuses {
                         title: Some(&metadata_title_focus),
                         artist: Some(&metadata_artist_focus),
@@ -513,7 +508,7 @@ impl Render for FrameRoot {
                         runtime_error: preview_runtime_error,
                     },
                     workspace::WorkspaceState {
-                        export_enabled: state.can_start_conversion(),
+                        export_enabled: self.file_queue.selected_file().is_some(),
                         ..self.workspace_ui
                     },
                     window,
@@ -535,7 +530,7 @@ impl Render for FrameRoot {
                     logs,
                     &self.file_queue,
                     workspace::WorkspaceState {
-                        export_enabled: state.can_start_conversion(),
+                        export_enabled: self.file_queue.selected_file().is_some(),
                         ..self.workspace_ui
                     },
                     crate::material::scheme(self.appearance.color_theme),
@@ -775,6 +770,10 @@ impl Render for FrameRoot {
                 window,
                 cx,
             ));
+        }
+
+        if self.export_ui.present {
+            root = root.child(self.render_export_dialog(window, cx));
         }
 
         if self.drag_drop_ui.is_present {

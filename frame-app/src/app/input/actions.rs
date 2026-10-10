@@ -104,7 +104,7 @@ impl FrameRoot {
     pub(in crate::app) fn text_input_value(&self, kind: FrameTextInputKind) -> String {
         match kind {
             FrameTextInputKind::MaxConcurrency => self.settings_ui.max_concurrency_draft.clone(),
-            FrameTextInputKind::OutputName => self
+            FrameTextInputKind::OutputName | FrameTextInputKind::ExportName => self
                 .file_queue
                 .selected_file()
                 .map_or_else(String::new, |file| file.output_name.clone()),
@@ -122,10 +122,6 @@ impl FrameRoot {
                 .selected_file()
                 .and_then(|file| file.config.custom_height.clone())
                 .unwrap_or_default(),
-            FrameTextInputKind::VideoBitrate => self
-                .file_queue
-                .selected_file()
-                .map_or_else(String::new, |file| file.config.video_bitrate.clone()),
             FrameTextInputKind::GifLoop => self
                 .file_queue
                 .selected_file()
@@ -204,7 +200,7 @@ impl FrameRoot {
                 }
                 Some(next)
             }
-            FrameTextInputKind::OutputName => {
+            FrameTextInputKind::OutputName | FrameTextInputKind::ExportName => {
                 if self.file_queue.selected_file_locked() {
                     return None;
                 }
@@ -230,6 +226,7 @@ impl FrameRoot {
                 self.file_queue.selected_file_mut().map(|file| {
                     apply_custom_width(&mut file.config, &next);
                 })?;
+                self.sync_export_linked_dimension(FrameTextInputKind::VideoCustomWidth);
                 Some(next)
             }
             FrameTextInputKind::VideoCustomHeight => {
@@ -240,16 +237,7 @@ impl FrameRoot {
                 self.file_queue.selected_file_mut().map(|file| {
                     apply_custom_height(&mut file.config, &next);
                 })?;
-                Some(next)
-            }
-            FrameTextInputKind::VideoBitrate => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
-                let next = sanitize_number_input(candidate);
-                self.file_queue.selected_file_mut().map(|file| {
-                    apply_video_bitrate(&mut file.config, &next);
-                })?;
+                self.sync_export_linked_dimension(FrameTextInputKind::VideoCustomHeight);
                 Some(next)
             }
             FrameTextInputKind::GifLoop => {

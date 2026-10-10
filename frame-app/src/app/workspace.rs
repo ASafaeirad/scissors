@@ -192,7 +192,7 @@ fn navigation_rail(
         root.active_view = ActiveView::Workspace;
         root.workspace_ui.tool = *index;
         root.settings_ui.active_tab = match index {
-            1 => SettingsTab::Video,
+            1 => SettingsTab::VideoFilters,
             2 => SettingsTab::Audio,
             3 => SettingsTab::Subtitles,
             4 => SettingsTab::Output,
@@ -245,7 +245,9 @@ fn project_header(
                 .enabled(export_enabled)
                 .build(scheme, window, cx)
                 .on_click(cx.listener(|root, _, _, cx| {
-                    root.start_selected_conversions(cx);
+                    if root.open_export_dialog() {
+                        cx.notify();
+                    }
                 })),
         )
 }

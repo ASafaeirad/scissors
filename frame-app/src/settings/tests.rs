@@ -2151,7 +2151,6 @@ mod visible_settings_tabs {
             vec![
                 "source",
                 "output",
-                "video",
                 "video-filters",
                 "audio",
                 "audio-filters",
@@ -2247,7 +2246,7 @@ mod visible_settings_tabs {
             ..SourceMetadata::default()
         };
         let active = resolve_active_settings_tab(
-            SettingsTab::Video,
+            SettingsTab::VideoFilters,
             &ConversionConfig::default(),
             Some(&metadata),
         );

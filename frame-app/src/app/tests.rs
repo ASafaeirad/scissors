@@ -3863,17 +3863,17 @@ mod visual_fixtures {
     }
 
     #[test]
-    fn settings_video_fixture_opens_video_tab() {
+    fn export_dialog_fixture_opens_the_export_dialog() {
         let mut root = FrameRoot::new();
 
-        root.apply_visual_fixture(Some(VisualFixture::SettingsVideo));
+        root.apply_visual_fixture(Some(VisualFixture::ExportDialog));
 
-        assert_eq!(root.settings_ui.active_tab, SettingsTab::Video);
+        assert!(root.export_ui.open);
         assert_eq!(
             root.file_queue
                 .selected_file()
                 .and_then(|file| file.config.custom_width.as_deref()),
-            Some("1920")
+            Some("1280")
         );
     }
 
@@ -4037,8 +4037,6 @@ mod preview_shell {
             audio_bitrate_focus: None,
             video_width_focus: None,
             video_height_focus: None,
-            video_bitrate_focus: None,
-            gif_loop_focus: None,
             metadata_focuses: SettingsMetadataInputFocuses {
                 title: None,
                 artist: None,

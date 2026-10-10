@@ -6,7 +6,27 @@ pub(super) struct FrameTextInputElement {
     placeholder: SharedString,
     disabled: bool,
     focus_handle: FocusHandle,
-    palette: &'static theme::ThemePalette,
+    colors: FrameTextInputColors,
+}
+
+/// Paint colors for the editable text, so Frame and M3 fields can share one input element.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(in crate::app) struct FrameTextInputColors {
+    pub(in crate::app) text: theme::RgbaToken,
+    pub(in crate::app) placeholder: theme::RgbaToken,
+    pub(in crate::app) caret: theme::RgbaToken,
+    pub(in crate::app) selection: theme::RgbaToken,
+}
+
+impl FrameTextInputColors {
+    pub(in crate::app) const fn from_palette(palette: &theme::ThemePalette) -> Self {
+        Self {
+            text: palette.text_primary,
+            placeholder: palette.text_muted,
+            caret: palette.text_primary,
+            selection: palette.accent.with_alpha(0.30),
+        }
+    }
 }
 
 pub(super) struct FrameTextInputPrepaintState {
@@ -89,9 +109,9 @@ impl Element for FrameTextInputElement {
         };
         let mut style = window.text_style();
         style.color = if is_placeholder || self.disabled {
-            color(self.palette.text_muted).into()
+            color(self.colors.placeholder).into()
         } else {
-            color(self.palette.text_primary).into()
+            color(self.colors.text).into()
         };
 
         let run = TextRun {
@@ -137,7 +157,7 @@ impl Element for FrameTextInputElement {
                     point(bounds.left() + cursor_x - scroll_x, text_top),
                     size(px(metrics.caret_width), px(metrics.caret_height)),
                 ),
-                color(self.palette.text_primary),
+                color(self.colors.caret),
             )
         });
         let selection = (!selected_range.is_empty()).then(|| {
@@ -152,7 +172,7 @@ impl Element for FrameTextInputElement {
                         text_top + px(metrics.caret_height),
                     ),
                 ),
-                color(self.palette.accent.with_alpha(0.30)),
+                color(self.colors.selection),
             )
         });
 
@@ -236,10 +256,6 @@ pub(in crate::app) struct FrameTextInputSpec<'a> {
     pub(in crate::app) kind: FrameTextInputKind,
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "The GPUI text input element keeps interaction handlers in one builder for predictable focus behavior."
-)]
 pub(in crate::app) fn frame_text_input(
     spec: FrameTextInputSpec<'_>,
     palette: &'static theme::ThemePalette,
@@ -266,7 +282,7 @@ pub(in crate::app) fn frame_text_input(
         palette.text_primary
     };
 
-    let mut field = div()
+    let field = div()
         .id(id)
         .min_h(theme::ui_rem(SETTINGS_CONTROL_HEIGHT))
         .w_full()
@@ -279,7 +295,58 @@ pub(in crate::app) fn frame_text_input(
         .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
         .text_color(color(label_color))
         .opacity(if disabled { 0.5 } else { 1.0 })
-        .shadow(input_highlight_shadows(palette))
+        .shadow(input_highlight_shadows(palette));
+    let field = text_input_editable(field, spec, FrameTextInputColors::from_palette(palette), cx);
+    let field = if focus.is_some() {
+        field
+    } else {
+        field.child(div().w_full().min_w_0().truncate().child(label))
+    };
+
+    apply_accessible_text_input(field, kind.accessibility_label(), !disabled, value, palette)
+}
+
+/// The bare editable text for an M3 text field (`m3::TextField::input`): no box, padding or
+/// focus ring, just the caret, selection and input handlers. Type styles come from the parent.
+pub(in crate::app) fn m3_text_input(
+    spec: FrameTextInputSpec<'_>,
+    colors: FrameTextInputColors,
+    cx: &Context<FrameRoot>,
+) -> gpui::Stateful<gpui::Div> {
+    let field = div()
+        .id(spec.id)
+        .size_full()
+        .min_w_0()
+        .flex()
+        .items_center();
+    let field = text_input_editable(field, spec, colors, cx);
+    let field = field
+        .role(gpui::Role::TextInput)
+        .aria_label(spec.kind.accessibility_label())
+        .aria_value(spec.value.to_string());
+    if spec.disabled {
+        field.tab_stop(false).aria_disabled(true)
+    } else {
+        field
+    }
+}
+
+/// Adds the key context, editing actions, pointer handlers and the editable element to `field`.
+/// Without a focus handle the field gets handlers but no editable text.
+fn text_input_editable(
+    field: gpui::Stateful<gpui::Div>,
+    spec: FrameTextInputSpec<'_>,
+    colors: FrameTextInputColors,
+    cx: &Context<FrameRoot>,
+) -> gpui::Stateful<gpui::Div> {
+    let FrameTextInputSpec {
+        placeholder,
+        disabled,
+        focus,
+        kind,
+        ..
+    } = spec;
+    let field = field
         .key_context(if kind.is_preview_timecode() {
             FRAME_TIMECODE_TEXT_INPUT_CONTEXT
         } else {
@@ -345,21 +412,18 @@ pub(in crate::app) fn frame_text_input(
                 )
         });
 
-    if let Some(focus) = focus {
-        let focus = focus.clone().tab_stop(!disabled);
-        field = field.track_focus(&focus).child(FrameTextInputElement {
-            owner: cx.entity(),
-            kind,
-            placeholder: SharedString::from(placeholder),
-            disabled,
-            focus_handle: focus,
-            palette,
-        });
-    } else {
-        field = field.child(div().w_full().min_w_0().truncate().child(label));
-    }
-
-    apply_accessible_text_input(field, kind.accessibility_label(), !disabled, value, palette)
+    let Some(focus) = focus else {
+        return field;
+    };
+    let focus = focus.clone().tab_stop(!disabled);
+    field.track_focus(&focus).child(FrameTextInputElement {
+        owner: cx.entity(),
+        kind,
+        placeholder: SharedString::from(placeholder),
+        disabled,
+        focus_handle: focus,
+        colors,
+    })
 }
 
 fn frame_text_input_metrics(root: &FrameRoot) -> FrameTextInputMetrics {

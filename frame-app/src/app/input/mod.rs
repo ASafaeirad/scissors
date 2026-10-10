@@ -7,7 +7,9 @@ mod entity;
 mod runtime;
 mod text;
 
-pub(super) use element::{FrameTextInputSpec, frame_text_input};
+pub(super) use element::{
+    FrameTextInputColors, FrameTextInputSpec, frame_text_input, m3_text_input,
+};
 #[cfg(test)]
 pub(super) use element::{should_capture_text_input_drag, should_handle_text_input};
 pub(super) use runtime::{

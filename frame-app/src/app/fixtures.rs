@@ -67,10 +67,10 @@ impl FrameRoot {
             Some(VisualFixture::SettingsSubtitlesPopover) => {
                 self.apply_settings_subtitles_popover_fixture();
             }
-            Some(VisualFixture::SettingsVideo) => self.apply_settings_video_fixture(),
             Some(VisualFixture::SettingsVideoFilters) => {
                 self.apply_settings_video_filters_fixture();
             }
+            Some(VisualFixture::ExportDialog) => self.apply_export_dialog_fixture(),
             Some(VisualFixture::UpdateAvailable) => self.apply_update_available_fixture(),
             Some(VisualFixture::WorkspaceAudio) => self.apply_workspace_audio_fixture(),
             Some(VisualFixture::WorkspaceEmpty) => self.apply_workspace_empty_fixture(),
@@ -86,7 +86,6 @@ impl FrameRoot {
             Some(VisualFixture::SettingsOutput) => 4,
             Some(
                 VisualFixture::PreviewCrop
-                | VisualFixture::SettingsVideo
                 | VisualFixture::SettingsVideoFilters
                 | VisualFixture::SettingsImages
                 | VisualFixture::SettingsMetadata
@@ -227,16 +226,17 @@ impl FrameRoot {
             file.config.container = "mov".to_string();
         }
     }
-    pub(super) fn apply_settings_video_fixture(&mut self) {
+    pub(super) fn apply_export_dialog_fixture(&mut self) {
         self.apply_preview_ready_fixture();
-        self.settings_ui.active_tab = SettingsTab::Video;
         if let Some(file) = self.file_queue.selected_file_mut() {
             file.config.resolution = "custom".to_string();
-            file.config.custom_width = Some("1920".to_string());
-            file.config.custom_height = Some("1080".to_string());
+            file.config.custom_width = Some("1280".to_string());
+            file.config.custom_height = Some("720".to_string());
             file.config.video_bitrate_mode = "crf".to_string();
             file.config.crf = 18;
         }
+        self.open_export_dialog();
+        self.export_ui.advanced = true;
     }
     pub(super) fn apply_settings_video_filters_fixture(&mut self) {
         self.apply_preview_ready_fixture();

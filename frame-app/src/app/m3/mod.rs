@@ -27,23 +27,33 @@ use gpui::{FocusHandle, Role, SharedString, Svg};
 use std::time::Duration;
 
 mod button;
+mod card;
 mod chip;
+mod dialog;
 mod gallery;
 mod icon_button;
 mod navigation_rail;
+mod progress;
+mod radio;
 mod segmented_button;
 mod slider;
 mod switch;
+mod text_field;
 mod toolbar;
 
 pub(in crate::app) use button::*;
+pub(in crate::app) use card::*;
 pub(in crate::app) use chip::*;
+pub(in crate::app) use dialog::*;
 pub(in crate::app) use gallery::M3GalleryState;
 pub(in crate::app) use icon_button::*;
 pub(in crate::app) use navigation_rail::*;
+pub(in crate::app) use progress::*;
+pub(in crate::app) use radio::*;
 pub(in crate::app) use segmented_button::*;
 pub(in crate::app) use slider::*;
 pub(in crate::app) use switch::*;
+pub(in crate::app) use text_field::*;
 pub(in crate::app) use toolbar::*;
 
 /// Handler for multi-target controls. Receives the selected item's index.
