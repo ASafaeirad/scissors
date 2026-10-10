@@ -10,6 +10,7 @@ mod hotkeys;
 mod input;
 mod logs_panel;
 mod logs_state;
+mod m3;
 mod metadata;
 mod motion;
 mod preview_actions;
@@ -304,6 +305,8 @@ pub struct FrameRoot {
     skipped_update_version: Option<String>,
     last_update_check_at: Option<u64>,
     update_ui: UpdateUiState,
+    /// Set only by the `m3-gallery` visual fixture.
+    m3_gallery: Option<m3::M3GalleryState>,
 }
 
 #[derive(Default)]

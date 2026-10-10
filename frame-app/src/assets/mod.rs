@@ -11,6 +11,8 @@ pub const FRAME_FONT_FAMILY: &str = "Overused Grotesk";
 pub const FRAME_FONT_ALIAS: &str = "OverusedGrotesk";
 pub const FRAME_FONT_REGULAR_PATH: &str = "fonts/OverusedGrotesk-Roman.ttf";
 pub const FRAME_FONT_MEDIUM_PATH: &str = "fonts/OverusedGrotesk-Medium.ttf";
+pub const ROBOTO_REGULAR_PATH: &str = "fonts/Roboto-Regular.ttf";
+pub const ROBOTO_MEDIUM_PATH: &str = "fonts/Roboto-Medium.ttf";
 pub const FRAME_FONT_FEATURE_TAGS: [(&str, u32); 1] = [("kern", 1)];
 pub const FRAME_TABULAR_NUMBER_FONT_FEATURE_TAG: (&str, u32) = ("tnum", 1);
 pub const ICON_FRAME: &str = "icons/frame.svg";
@@ -57,6 +59,8 @@ const FRAME_FONT_REGULAR_BYTES: &[u8] =
     include_bytes!("../../assets/fonts/OverusedGrotesk-Roman.ttf");
 const FRAME_FONT_MEDIUM_BYTES: &[u8] =
     include_bytes!("../../assets/fonts/OverusedGrotesk-Medium.ttf");
+const ROBOTO_REGULAR_BYTES: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
+const ROBOTO_MEDIUM_BYTES: &[u8] = include_bytes!("../../assets/fonts/Roboto-Medium.ttf");
 
 const ARROW_DOWN_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><path d="M12 18.502V5.00195" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/><path d="M18 13.002C18 13.002 13.5811 19.0019 12 19.002C10.4188 19.002 6 13.002 6 13.002" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/></svg>"#;
 const LAYOUT_LIST_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"><path d="M2 11.4C2 10.2417 2.24173 10 3.4 10H20.6C21.7583 10 22 10.2417 22 11.4V12.6C22 13.7583 21.7583 14 20.6 14H3.4C2.24173 14 2 13.7583 2 12.6V11.4Z" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"/><path d="M2 3.4C2 2.24173 2.24173 2 3.4 2H20.6C21.7583 2 22 2.24173 22 3.4V4.6C22 5.75827 21.7583 6 20.6 6H3.4C2.24173 6 2 5.75827 2 4.6V3.4Z" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"/><path d="M2 19.4C2 18.2417 2.24173 18 3.4 18H20.6C21.7583 18 22 18.2417 22 19.4V20.6C22 21.7583 21.7583 22 20.6 22H3.4C2.24173 22 2 21.7583 2 20.6V19.4Z" stroke="currentColor" stroke-linecap="round" stroke-width="1.5"/></svg>"#;
@@ -104,6 +108,8 @@ impl AssetSource for FrameAssets {
         let asset = match path {
             FRAME_FONT_REGULAR_PATH => Cow::Borrowed(FRAME_FONT_REGULAR_BYTES),
             FRAME_FONT_MEDIUM_PATH => Cow::Borrowed(FRAME_FONT_MEDIUM_BYTES),
+            ROBOTO_REGULAR_PATH => Cow::Borrowed(ROBOTO_REGULAR_BYTES),
+            ROBOTO_MEDIUM_PATH => Cow::Borrowed(ROBOTO_MEDIUM_BYTES),
             ICON_FRAME => Cow::Borrowed(FRAME_ICON_SVG.as_bytes()),
             ICON_ARROW_DOWN => Cow::Borrowed(ARROW_DOWN_SVG.as_bytes()),
             ICON_LAYOUT_LIST => Cow::Borrowed(LAYOUT_LIST_SVG.as_bytes()),
@@ -142,7 +148,7 @@ impl AssetSource for FrameAssets {
             ICON_SQUARE => Cow::Borrowed(SQUARE_SVG.as_bytes()),
             ICON_TRASH => Cow::Borrowed(TRASH_SVG.as_bytes()),
             ICON_SCISSORS => Cow::Borrowed(SCISSORS_SVG.as_bytes()),
-            _ => return Ok(None),
+            _ => return Ok(crate::material::icons::load(path).map(Cow::Borrowed)),
         };
 
         Ok(Some(asset))
@@ -153,7 +159,13 @@ impl AssetSource for FrameAssets {
             "fonts" => vec![
                 SharedString::from("OverusedGrotesk-Roman.ttf"),
                 SharedString::from("OverusedGrotesk-Medium.ttf"),
+                SharedString::from("Roboto-Regular.ttf"),
+                SharedString::from("Roboto-Medium.ttf"),
             ],
+            "icons/material" => crate::material::icons::list()
+                .into_iter()
+                .map(SharedString::from)
+                .collect(),
             "icons" => vec![
                 SharedString::from("arrow-down.svg"),
                 SharedString::from("bookmark.svg"),
@@ -200,7 +212,7 @@ impl AssetSource for FrameAssets {
     }
 }
 
-/// Registers bundled Frame fonts with GPUI's text system.
+/// Registers bundled Frame fonts, and the Material 3 typeface, with GPUI's text system.
 ///
 /// # Errors
 ///
@@ -214,6 +226,8 @@ pub fn frame_font_bytes() -> Vec<Cow<'static, [u8]>> {
     vec![
         Cow::Borrowed(FRAME_FONT_REGULAR_BYTES),
         Cow::Borrowed(FRAME_FONT_MEDIUM_BYTES),
+        Cow::Borrowed(ROBOTO_REGULAR_BYTES),
+        Cow::Borrowed(ROBOTO_MEDIUM_BYTES),
     ]
 }
 

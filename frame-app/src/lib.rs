@@ -10,6 +10,7 @@ pub mod conversion_events;
 pub mod conversion_runner;
 pub mod file_filters;
 pub mod file_queue;
+pub mod material;
 pub mod native_dialogs;
 pub mod notifications;
 pub(crate) mod numeric;
@@ -102,6 +103,7 @@ pub enum VisualFixture {
     AppSettingsThemeOpen,
     AppSettingsUiOpen,
     LogsActive,
+    M3Gallery,
     PreviewCrop,
     PreviewReady,
     SettingsAudio,
@@ -129,6 +131,7 @@ pub fn visual_fixture_from_env_value(value: Option<&str>) -> Option<VisualFixtur
         Some("app-settings-theme-open") => Some(VisualFixture::AppSettingsThemeOpen),
         Some("app-settings-ui-open") => Some(VisualFixture::AppSettingsUiOpen),
         Some("logs-active") => Some(VisualFixture::LogsActive),
+        Some("m3-gallery") => Some(VisualFixture::M3Gallery),
         Some("preview-crop") => Some(VisualFixture::PreviewCrop),
         Some("preview-ready") => Some(VisualFixture::PreviewReady),
         Some("settings-audio") => Some(VisualFixture::SettingsAudio),
@@ -438,6 +441,7 @@ mod tests {
                 ),
                 ("app-settings-ui-open", VisualFixture::AppSettingsUiOpen),
                 ("logs-active", VisualFixture::LogsActive),
+                ("m3-gallery", VisualFixture::M3Gallery),
                 ("preview-crop", VisualFixture::PreviewCrop),
                 ("preview-ready", VisualFixture::PreviewReady),
                 ("settings-audio", VisualFixture::SettingsAudio),

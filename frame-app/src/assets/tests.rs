@@ -187,13 +187,20 @@ mod frame_assets {
             [
                 SharedString::from("OverusedGrotesk-Roman.ttf"),
                 SharedString::from("OverusedGrotesk-Medium.ttf"),
+                SharedString::from("Roboto-Regular.ttf"),
+                SharedString::from("Roboto-Medium.ttf"),
             ]
         );
     }
 
     #[test]
     fn load_returns_each_bundled_font_face() {
-        for path in [FRAME_FONT_REGULAR_PATH, FRAME_FONT_MEDIUM_PATH] {
+        for path in [
+            FRAME_FONT_REGULAR_PATH,
+            FRAME_FONT_MEDIUM_PATH,
+            ROBOTO_REGULAR_PATH,
+            ROBOTO_MEDIUM_PATH,
+        ] {
             assert!(
                 FrameAssets
                     .load(path)

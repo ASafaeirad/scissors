@@ -527,6 +527,12 @@ impl Render for FrameRoot {
                 cx,
             )),
         };
+        let content = self.m3_gallery.clone().map_or(content, |gallery| {
+            div()
+                .flex_1()
+                .p(theme::ui_rem(CONTENT_PADDING))
+                .child(self.render_m3_gallery(&gallery, window, cx))
+        });
 
         let shortcut_root_focus = app_root_focus.clone();
         let mut root = div()

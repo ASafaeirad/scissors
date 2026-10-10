@@ -76,6 +76,7 @@ the final GPUI rendering.
 | `app-settings-theme-open` | App settings with the Theme select open | Dark/Light option order, selected checkmark, keyboard focus treatment, popover placement, and equal-width Appearance columns. |
 | `app-settings-ui-open` | App settings with UI scale open at 200% | Scaled geometry and typography, scrollable sheet body, popover placement, and titlebar coexistence. |
 | `logs-active` | Logs tab with an active FFmpeg conversion | Log tab navigation, active file state, plain FFmpeg log rendering, progress line wrapping, monospaced text rendering, and scroll density. |
+| `m3-gallery` | Material 3 component gallery modeled on the video editor timeline design | M3 color roles, Roboto type scale, buttons, icon buttons, chips, switches, sliders, segmented button, navigation rail, and floating toolbar in both themes while migrating screens to `app::m3`. |
 | `preview-ready` | Workspace with a selected ready video source | Preview panel shell, selected video metadata, timeline controls, toolbar visibility, empty frame handling, and source video state. |
 | `preview-crop` | Preview panel with crop mode enabled | Crop aspect bar, crop overlay geometry, crop handles, preview toolbar coexistence, and canvas framing while editing crop bounds. |
 | `settings-source` | Source settings tab with ready video metadata | File information rows, video stream metadata rows, source tab spacing, and selected source summary. |

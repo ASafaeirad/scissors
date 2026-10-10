@@ -51,6 +51,7 @@ impl FrameRoot {
                 self.toggle_app_settings_appearance_popover(AppearancePopover::UiScale);
             }
             Some(VisualFixture::LogsActive) => self.apply_logs_active_fixture(),
+            Some(VisualFixture::M3Gallery) => self.m3_gallery = Some(m3::M3GalleryState::new()),
             Some(VisualFixture::PreviewCrop) => self.apply_preview_crop_fixture(),
             Some(VisualFixture::PreviewReady) => self.apply_preview_ready_fixture(),
             Some(VisualFixture::SettingsAudio) => self.apply_settings_audio_fixture(),
