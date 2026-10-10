@@ -39,6 +39,27 @@ impl CutRange {
     }
 }
 
+/// A kept source range on the timeline, in seconds, with the drag targets of its edges.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimelineClip {
+    pub start: f64,
+    pub end: f64,
+    pub leading: TimelineDragTarget,
+    pub trailing: TimelineDragTarget,
+}
+
+impl TimelineClip {
+    #[must_use]
+    pub fn contains(self, time: f64) -> bool {
+        time >= self.start && time < self.end
+    }
+
+    #[must_use]
+    pub fn duration(self) -> f64 {
+        self.end - self.start
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MediaSnapshot {
     pub current_time: f64,
@@ -223,6 +244,45 @@ impl PreviewPlaybackState {
             .map(|cut| (cut.end.min(self.end_value) - cut.start.max(self.start_value)).max(0.0))
             .sum();
         (self.end_value - self.start_value - removed).max(0.0)
+    }
+
+    /// Kept source ranges inside the trim window, split by the removed segments.
+    ///
+    /// Each clip records which drag target owns its edges, so the timeline can
+    /// present trim and cut edges as clip handles.
+    #[must_use]
+    pub fn clips(&self) -> Vec<TimelineClip> {
+        let mut cuts: Vec<(usize, CutRange)> = self.cuts.iter().copied().enumerate().collect();
+        cuts.sort_by(|left, right| left.1.start.total_cmp(&right.1.start));
+
+        let mut clips = Vec::new();
+        let (mut start, mut leading) = (self.start_value, TimelineDragTarget::Start);
+        for (index, cut) in cuts {
+            if cut.start >= self.end_value {
+                break;
+            }
+            if cut.end <= start {
+                continue;
+            }
+            if cut.start > start {
+                clips.push(TimelineClip {
+                    start,
+                    end: cut.start,
+                    leading,
+                    trailing: TimelineDragTarget::CutStart(index),
+                });
+            }
+            (start, leading) = (cut.end, TimelineDragTarget::CutEnd(index));
+        }
+        if self.end_value > start {
+            clips.push(TimelineClip {
+                start,
+                end: self.end_value,
+                leading,
+                trailing: TimelineDragTarget::End,
+            });
+        }
+        clips
     }
 
     pub const fn set_is_image(&mut self, is_image: bool) {

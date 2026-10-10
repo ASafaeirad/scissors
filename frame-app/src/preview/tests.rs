@@ -1007,6 +1007,80 @@ mod preview_playback_state {
         assert_close(playback.output_duration(), 40.0);
     }
 
+    #[test]
+    fn clips_cover_the_trim_window_when_nothing_is_removed() {
+        let mut playback = playback_with_media(120.0);
+        playback.sync_initial_values(Some("00:00:10.000"), Some("00:01:00.000"));
+
+        assert_eq!(
+            playback.clips(),
+            vec![TimelineClip {
+                start: 10.0,
+                end: 60.0,
+                leading: TimelineDragTarget::Start,
+                trailing: TimelineDragTarget::End,
+            }]
+        );
+    }
+
+    #[test]
+    fn clips_split_at_removed_segments_and_name_their_edges() {
+        let mut playback = playback_with_media(120.0);
+        playback.sync_initial_values(None, None);
+        playback.sync_cut_segments(&[
+            cut("00:00:20.000", "00:00:30.000"),
+            cut("00:01:00.000", "00:01:10.000"),
+        ]);
+
+        let clips = playback.clips();
+
+        assert_eq!(clips.len(), 3);
+        assert_eq!(
+            (clips[0].leading, clips[0].trailing),
+            (TimelineDragTarget::Start, TimelineDragTarget::CutStart(0))
+        );
+        assert_eq!(
+            (clips[1].leading, clips[1].trailing),
+            (
+                TimelineDragTarget::CutEnd(0),
+                TimelineDragTarget::CutStart(1)
+            )
+        );
+        assert_eq!(
+            (clips[2].leading, clips[2].trailing),
+            (TimelineDragTarget::CutEnd(1), TimelineDragTarget::End)
+        );
+        assert_close(clips[1].start, 30.0);
+        assert_close(clips[1].duration(), 30.0);
+    }
+
+    #[test]
+    fn clips_ignore_removed_time_outside_the_trim_window() {
+        let mut playback = playback_with_media(120.0);
+        playback.sync_initial_values(Some("00:00:10.000"), Some("00:01:00.000"));
+        playback.sync_cut_segments(&[
+            cut("00:00:05.000", "00:00:15.000"),
+            cut("00:00:55.000", "00:01:10.000"),
+        ]);
+
+        let clips = playback.clips();
+
+        assert_eq!(clips.len(), 1);
+        assert_close(clips[0].start, 15.0);
+        assert_close(clips[0].end, 55.0);
+        assert_eq!(clips[0].leading, TimelineDragTarget::CutEnd(0));
+        assert_eq!(clips[0].trailing, TimelineDragTarget::CutStart(1));
+        assert_close(
+            clips.iter().map(|clip| clip.duration()).sum(),
+            playback.output_duration(),
+        );
+    }
+
+    #[test]
+    fn clips_are_empty_without_media() {
+        assert!(PreviewPlaybackState::new(false).clips().is_empty());
+    }
+
     fn playback_with_media(duration: f64) -> PreviewPlaybackState {
         let mut playback = PreviewPlaybackState::new(false);
         playback.sync_media(MediaSnapshot {

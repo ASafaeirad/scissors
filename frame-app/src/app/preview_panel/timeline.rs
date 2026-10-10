@@ -84,6 +84,32 @@ impl Element for PreviewTimelineTrackBoundsProbe {
     }
 }
 
+/// One row of the timeline: a labelled lane holding the clips of a single source.
+///
+/// The selected source is the only track today. Additional tracks (overlays,
+/// music) become extra rows that share the ruler and playhead.
+pub(in crate::app) struct PreviewTimelineTrack {
+    pub(in crate::app) label: &'static str,
+    pub(in crate::app) icon: &'static str,
+    pub(in crate::app) clips: Vec<TimelineClip>,
+}
+
+pub(in crate::app) fn preview_timeline_tracks(
+    state: &PreviewShellState,
+) -> Vec<PreviewTimelineTrack> {
+    let label = match state.availability.media_kind {
+        PreviewMediaKind::Audio => "Audio",
+        PreviewMediaKind::Image => "Image",
+        PreviewMediaKind::Video | PreviewMediaKind::Unknown => "Video",
+    };
+
+    vec![PreviewTimelineTrack {
+        label,
+        icon: preview_media_icon(state.availability.media_kind),
+        clips: state.playback.clips(),
+    }]
+}
+
 pub(in crate::app) fn preview_timeline(
     state: &PreviewShellState,
     seek_focus: &FocusHandle,
@@ -91,57 +117,137 @@ pub(in crate::app) fn preview_timeline(
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
+    let tracks = preview_timeline_tracks(state);
 
     div()
         .mt(theme::ui_rem(PREVIEW_TIMELINE_TOP_MARGIN))
-        .px_2()
         .flex()
         .flex_col()
-        .gap_4()
+        .gap_2()
         .child(
             div()
                 .w_full()
+                .min_w_0()
+                .h(theme::ui_rem(PREVIEW_TIMELINE_CONTROL_HEIGHT))
                 .flex()
                 .items_center()
-                .justify_end()
-                .gap_1()
-                .child(preview_cut_button(state, window, cx))
-                .child(preview_play_button(state, window, cx)),
+                .gap_3()
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(theme::ui_rem(theme::TEXT_ROW_BASE_SIZE))
+                        .font_weight(theme::TEXT_WEIGHT_MEDIUM)
+                        .text_color(color(palette.text_primary))
+                        .child(theme::ui_text("Timeline")),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
+                        .text_color(color(palette.text_muted))
+                        .child(theme::ui_text_owned(preview_timeline_info(
+                            &state.playback,
+                            &tracks,
+                        ))),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(preview_cut_button(state, window, cx))
+                        .child(preview_play_button(state, window, cx)),
+                ),
         )
         .child(
             div()
-                .min_w_0()
                 .w_full()
+                .min_w_0()
                 .flex()
-                .flex_col()
-                .gap(theme::ui_rem(6.0))
-                .child(preview_timeline_label("Trim", palette))
-                .child(preview_timeline_track(state, seek_focus, cx)),
+                .gap_3()
+                .child(preview_timeline_track_labels(&tracks, palette))
+                .child(preview_timeline_lanes(state, &tracks, seek_focus, cx)),
         )
+}
+
+/// Describes the clip under the playhead, or how to edit when there is none.
+pub(in crate::app) fn preview_timeline_info(
+    playback: &PreviewPlaybackState,
+    tracks: &[PreviewTimelineTrack],
+) -> String {
+    let clips = tracks
+        .first()
+        .map_or(&[][..], |track| track.clips.as_slice());
+    if clips.is_empty() {
+        return "Select a video or audio source to edit its timeline.".to_string();
+    }
+
+    let time = playback.current_time();
+    clips
+        .iter()
+        .position(|clip| clip.contains(time))
+        .map_or_else(
+            || "Drag clip edges to trim. Press X to remove a segment at the playhead.".to_string(),
+            |index| {
+                let clip = clips[index];
+                format!(
+                    "Clip {} of {} · {} – {}",
+                    index + 1,
+                    clips.len(),
+                    format_timeline_time(clip.start, playback.duration()),
+                    format_timeline_time(clip.end, playback.duration()),
+                )
+            },
+        )
+}
+
+fn preview_timeline_track_labels(
+    tracks: &[PreviewTimelineTrack],
+    palette: &'static theme::ThemePalette,
+) -> gpui::Div {
+    div()
+        .flex_none()
+        .w(theme::ui_rem(PREVIEW_TIMELINE_LABEL_WIDTH))
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(PREVIEW_TIMELINE_ROW_GAP))
+        .child(div().h(theme::ui_rem(PREVIEW_TIMELINE_RULER_HEIGHT)))
+        .children(tracks.iter().map(|track| {
+            div()
+                .h(theme::ui_rem(PREVIEW_TIMELINE_LANE_HEIGHT))
+                .pl_2()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(icon_svg(track.icon, 16.0, color(palette.text_muted)))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
+                        .font_weight(theme::TEXT_WEIGHT_MEDIUM)
+                        .text_color(color(palette.text_primary))
+                        .child(theme::ui_text(track.label)),
+                )
+        }))
 }
 
 pub(in crate::app) fn preview_trim_enabled(state: &PreviewShellState) -> bool {
     !state.availability.trim_disabled && state.duration_seconds > 0.0
 }
 
-pub(in crate::app) fn preview_timeline_label(
-    label: &'static str,
-    palette: &'static theme::ThemePalette,
-) -> gpui::Div {
-    div()
-        .h(theme::ui_rem(12.0))
-        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
-        .font_weight(theme::TEXT_WEIGHT_MEDIUM)
-        .text_color(color(palette.text_muted))
-        .child(theme::ui_text(label))
-}
-
+/// The ruler and track lanes. The whole area scrubs, and every drag on it is
+/// measured against its bounds, so lanes must span its full width.
 #[expect(
     clippy::too_many_lines,
-    reason = "Timeline track composes scrub, trim handles, a11y metadata, and drag/key handling together."
+    reason = "Timeline lanes compose scrub, a11y metadata, and drag/key handling together."
 )]
-pub(in crate::app) fn preview_timeline_track(
+fn preview_timeline_lanes(
     state: &PreviewShellState,
+    tracks: &[PreviewTimelineTrack],
     focus: &FocusHandle,
     cx: &Context<FrameRoot>,
 ) -> impl IntoElement {
@@ -149,30 +255,20 @@ pub(in crate::app) fn preview_timeline_track(
     let enabled = preview_trim_enabled(state);
     let duration = state.playback.duration();
     let current_time = state.playback.current_time();
-    let track_top = centered_offset(PREVIEW_TIMELINE_CONTROL_HEIGHT, PREVIEW_TRACK_HEIGHT);
-    let playhead_top = centered_offset(PREVIEW_TIMELINE_CONTROL_HEIGHT, PREVIEW_PLAYHEAD_HEIGHT);
-    let start_fraction = timeline_fraction_from_percent(
-        state
-            .playback
-            .to_timeline_percent(state.playback.start_value()),
-    );
-    let end_fraction = timeline_fraction_from_percent(
-        state
-            .playback
-            .to_timeline_percent(state.playback.end_value()),
-    );
     let playhead_fraction = timeline_fraction_from_percent(
         state
             .playback
             .to_timeline_percent(state.playback.current_time()),
     );
 
-    let track = div()
+    let lanes = div()
         .id("preview-timeline-track")
         .relative()
-        .h(theme::ui_rem(PREVIEW_TIMELINE_CONTROL_HEIGHT))
-        .w_full()
-        .rounded(theme::ui_rem(theme::RADIUS_SM))
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(PREVIEW_TIMELINE_ROW_GAP))
         .opacity(if enabled { 1.0 } else { 0.5 })
         .when(enabled, gpui::Styled::cursor_pointer)
         .on_mouse_down(
@@ -211,7 +307,7 @@ pub(in crate::app) fn preview_timeline_track(
     let decrement_owner = owner.clone();
 
     super::super::accessibility::apply_accessible_slider_with_focus(
-        track,
+        lanes,
         "Preview position",
         enabled,
         current_time,
@@ -258,96 +354,190 @@ pub(in crate::app) fn preview_timeline_track(
             cx.stop_propagation();
         }),
     )
-    .child(
-        div()
-            .absolute()
-            .left_0()
-            .right_0()
-            .top(theme::ui_rem(track_top))
-            .h(theme::ui_rem(PREVIEW_TRACK_HEIGHT))
-            .rounded(theme::ui_rem(1.5))
-            .bg(color(palette.fill_subtle)),
-    )
-    .child(
-        div()
-            .absolute()
-            .left(relative(start_fraction))
-            .right(relative((1.0 - end_fraction).max(0.0)))
-            .top(theme::ui_rem(track_top))
-            .h(theme::ui_rem(PREVIEW_TRACK_HEIGHT))
-            .rounded(theme::ui_rem(1.0))
-            .bg(color(palette.text_primary)),
-    )
+    .child(preview_timeline_ruler(duration, palette))
     .children(
-        state
-            .playback
-            .cuts()
+        tracks
             .iter()
             .enumerate()
-            .map(|(index, cut)| {
-                preview_timeline_cut_region(state, index, cut, playhead_top, enabled)
-            }),
+            .map(|(index, track)| preview_timeline_lane(state, index, track, enabled, cx)),
     )
     .child(PreviewTimelineTrackBoundsProbe { owner: cx.entity() })
     .child(
         div()
             .absolute()
+            .top_0()
+            .bottom_0()
             .left(relative(playhead_fraction))
-            .ml(px(-0.5))
-            .top(theme::ui_rem(playhead_top))
-            .h(theme::ui_rem(PREVIEW_PLAYHEAD_HEIGHT))
-            .w(px(1.0))
-            .bg(color(palette.text_primary)),
+            .ml(px(-1.0))
+            .w(px(2.0))
+            .bg(color(palette.text_primary))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left(theme::ui_rem(-(PREVIEW_PLAYHEAD_KNOB_SIZE / 2.0)))
+                    .ml(px(1.0))
+                    .size(theme::ui_rem(PREVIEW_PLAYHEAD_KNOB_SIZE))
+                    .rounded_full()
+                    .bg(color(palette.text_primary)),
+            ),
     )
-    .child(preview_timeline_handle(
-        TimelineDragTarget::Start,
-        start_fraction,
-        enabled,
-        state.playback.start_value(),
-        duration,
-        palette,
-        cx,
-    ))
-    .child(preview_timeline_handle(
-        TimelineDragTarget::End,
-        end_fraction,
-        enabled,
-        state.playback.end_value(),
-        duration,
-        palette,
-        cx,
-    ))
-    .children(
-        state
-            .playback
-            .cuts()
-            .iter()
-            .enumerate()
-            .flat_map(|(index, cut)| {
-                [
-                    (TimelineDragTarget::CutStart(index), cut.start),
-                    (TimelineDragTarget::CutEnd(index), cut.end),
-                ]
-            })
-            .map(|(target, value)| {
-                preview_timeline_handle(
-                    target,
-                    timeline_fraction_from_percent(state.playback.to_timeline_percent(value)),
-                    enabled,
-                    value,
-                    duration,
-                    palette,
-                    cx,
-                )
-            }),
-    )
+}
+
+fn preview_timeline_ruler(duration: f64, palette: &'static theme::ThemePalette) -> gpui::Div {
+    div()
+        .relative()
+        .w_full()
+        .h(theme::ui_rem(PREVIEW_TIMELINE_RULER_HEIGHT))
+        .overflow_hidden()
+        .children(timeline_ruler_ticks(duration).into_iter().map(|time| {
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(relative(unit_f64_to_f32(time / duration)))
+                .pl_1()
+                .border_l_1()
+                .border_color(color(palette.border_subtle))
+                .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE - 1.0))
+                .text_color(color(palette.text_muted))
+                .child(format_timeline_ruler_time(time, duration))
+        }))
+}
+
+fn preview_timeline_lane(
+    state: &PreviewShellState,
+    track_index: usize,
+    track: &PreviewTimelineTrack,
+    enabled: bool,
+    cx: &Context<FrameRoot>,
+) -> gpui::Div {
+    let palette = state.palette;
+    let current_time = state.playback.current_time();
+    let active_clip = track
+        .clips
+        .iter()
+        .copied()
+        .find(|clip| clip.contains(current_time));
+    let clip_name = state.selected_file_name.clone().unwrap_or_default();
+
+    // Removed segments and their edges belong to the source on the first track.
+    let edits_source = track_index == 0;
+    let edges: Vec<(TimelineDragTarget, f64)> = if edits_source {
+        [
+            (TimelineDragTarget::Start, state.playback.start_value()),
+            (TimelineDragTarget::End, state.playback.end_value()),
+        ]
+        .into_iter()
+        .chain(
+            state
+                .playback
+                .cuts()
+                .iter()
+                .enumerate()
+                .flat_map(|(index, cut)| {
+                    [
+                        (TimelineDragTarget::CutStart(index), cut.start),
+                        (TimelineDragTarget::CutEnd(index), cut.end),
+                    ]
+                }),
+        )
+        .collect()
+    } else {
+        Vec::new()
+    };
+
+    div()
+        .relative()
+        .w_full()
+        .h(theme::ui_rem(PREVIEW_TIMELINE_LANE_HEIGHT))
+        .rounded(theme::ui_rem(theme::RADIUS_SM))
+        .bg(color(palette.fill_subtle))
+        .children(track.clips.iter().map(|clip| {
+            preview_timeline_clip(
+                state,
+                *clip,
+                Some(*clip) == active_clip,
+                &clip_name,
+                track.icon,
+            )
+        }))
+        .when(edits_source, |lane| {
+            lane.children(
+                state
+                    .playback
+                    .cuts()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, cut)| preview_timeline_cut_region(state, index, cut, enabled)),
+            )
+        })
+        .children(edges.into_iter().map(|(target, value)| {
+            let active =
+                active_clip.is_some_and(|clip| clip.leading == target || clip.trailing == target);
+            preview_timeline_handle(target, value, enabled, active, &state.playback, palette, cx)
+        }))
+}
+
+fn preview_timeline_clip(
+    state: &PreviewShellState,
+    clip: TimelineClip,
+    active: bool,
+    name: &str,
+    icon: &'static str,
+) -> gpui::Div {
+    let palette = state.palette;
+    let start_fraction =
+        timeline_fraction_from_percent(state.playback.to_timeline_percent(clip.start));
+    let end_fraction = timeline_fraction_from_percent(state.playback.to_timeline_percent(clip.end));
+
+    div()
+        .absolute()
+        .top(theme::ui_rem(PREVIEW_TIMELINE_CLIP_INSET))
+        .bottom(theme::ui_rem(PREVIEW_TIMELINE_CLIP_INSET))
+        .left(relative(start_fraction))
+        .right(relative((1.0 - end_fraction).max(0.0)))
+        .overflow_hidden()
+        .rounded(theme::ui_rem(theme::RADIUS_SM))
+        .bg(color(palette.accent.with_alpha(0.22)))
+        .border_color(color(if active {
+            palette.accent
+        } else {
+            palette.accent.with_alpha(0.35)
+        }))
+        .when(active, gpui::Styled::border_2)
+        .when(!active, gpui::Styled::border_1)
+        .px(theme::ui_rem(PREVIEW_TIMELINE_CLIP_HANDLE_WIDTH + 4.0))
+        .flex()
+        .items_center()
+        .gap(theme::ui_rem(6.0))
+        .text_color(color(palette.text_primary))
+        .child(
+            div()
+                .flex_none()
+                .child(icon_svg(icon, 14.0, color(palette.text_primary))),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
+                .font_weight(theme::TEXT_WEIGHT_MEDIUM)
+                .child(name.to_string()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE - 1.0))
+                .text_color(color(palette.text_muted))
+                .child(format_clip_duration(clip.duration())),
+        )
 }
 
 fn preview_timeline_cut_region(
     state: &PreviewShellState,
     index: usize,
     cut: &CutRange,
-    top: f32,
     enabled: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let palette = state.palette;
@@ -355,19 +545,20 @@ fn preview_timeline_cut_region(
         timeline_fraction_from_percent(state.playback.to_timeline_percent(cut.start));
     let end_fraction = timeline_fraction_from_percent(state.playback.to_timeline_percent(cut.end));
 
-    // Mouse down is left to the track so the playhead lands on the grab point,
+    // Mouse down is left to the lanes so the playhead lands on the grab point,
     // which keeps the region anchored under the pointer while it moves.
     let region = div()
         .id(("preview-timeline-cut-region", index))
         .absolute()
         .left(relative(start_fraction))
         .right(relative((1.0 - end_fraction).max(0.0)))
-        .top(theme::ui_rem(top))
-        .h(theme::ui_rem(PREVIEW_PLAYHEAD_HEIGHT))
+        .top(theme::ui_rem(PREVIEW_TIMELINE_CLIP_INSET))
+        .bottom(theme::ui_rem(PREVIEW_TIMELINE_CLIP_INSET))
         .rounded(theme::ui_rem(theme::RADIUS_SM))
         .border_1()
-        .border_color(color(palette.danger))
-        .bg(color(palette.danger.with_alpha(0.3)));
+        .border_dashed()
+        .border_color(color(palette.danger.with_alpha(0.6)))
+        .bg(color(palette.danger.with_alpha(0.12)));
 
     if !enabled {
         return region;
@@ -427,15 +618,28 @@ pub(in crate::app) fn preview_cut_button(
     }))
 }
 
+/// Whether a drag target is the leading (left) edge of the clip it bounds.
+///
+/// Leading grips sit just right of their edge and trailing grips just left,
+/// so both stay inside the clip they resize.
+const fn timeline_edge_is_leading(target: TimelineDragTarget) -> bool {
+    matches!(
+        target,
+        TimelineDragTarget::Start | TimelineDragTarget::CutEnd(_)
+    )
+}
+
 pub(in crate::app) fn preview_timeline_handle(
     target: TimelineDragTarget,
-    fraction: f32,
-    enabled: bool,
     value: f64,
-    duration: f64,
+    enabled: bool,
+    active: bool,
+    playback: &PreviewPlaybackState,
     palette: &'static theme::ThemePalette,
     cx: &Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
+    let duration = playback.duration();
+    let fraction = timeline_fraction_from_percent(playback.to_timeline_percent(value));
     let (handle_id, label): (ElementId, SharedString) = match target {
         TimelineDragTarget::Start => ("preview-timeline-start-handle".into(), "Trim start".into()),
         TimelineDragTarget::End => ("preview-timeline-end-handle".into(), "Trim end".into()),
@@ -456,22 +660,27 @@ pub(in crate::app) fn preview_timeline_handle(
             format!("Removed segment {}", index + 1).into(),
         ),
     };
-    // Cut edges sit inside the trim range, so narrower hit areas keep short cuts grabbable.
-    let handle_width = if target.is_cut() {
-        PREVIEW_TIMELINE_HANDLE_WIDTH / 2.0
+    let width = PREVIEW_TIMELINE_CLIP_HANDLE_WIDTH;
+    let offset = if timeline_edge_is_leading(target) {
+        0.0
     } else {
-        PREVIEW_TIMELINE_HANDLE_WIDTH
+        -width
     };
 
     let handle = div()
         .id(handle_id)
         .absolute()
-        .top_0()
+        .top(theme::ui_rem(PREVIEW_TIMELINE_CLIP_INSET))
+        .bottom(theme::ui_rem(PREVIEW_TIMELINE_CLIP_INSET))
         .left(relative(fraction))
-        .ml(theme::ui_rem(-(handle_width / 2.0)))
-        .h(theme::ui_rem(PREVIEW_TIMELINE_CONTROL_HEIGHT))
-        .w(theme::ui_rem(handle_width))
+        .ml(theme::ui_rem(offset))
+        .w(theme::ui_rem(width))
         .rounded(theme::ui_rem(theme::RADIUS_SM))
+        .when(active, |this| this.bg(color(palette.accent)))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(preview_timeline_handle_grip(active, palette))
         .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
             cx.stop_propagation();
         })
@@ -530,6 +739,89 @@ pub(in crate::app) fn preview_timeline_handle(
     )
 }
 
+fn preview_timeline_handle_grip(active: bool, palette: &'static theme::ThemePalette) -> gpui::Div {
+    div()
+        .w(px(2.0))
+        .h(theme::ui_rem(14.0))
+        .rounded(px(1.0))
+        .bg(if active {
+            preview_selection_line_color()
+        } else {
+            color(palette.text_primary.with_alpha(0.6)).into()
+        })
+}
+
+/// Ruler tick times: the smallest readable step that keeps at most eight ticks.
+///
+/// Ticks in the last few percent are dropped because their label would be clipped.
+pub(in crate::app) fn timeline_ruler_ticks(duration: f64) -> Vec<f64> {
+    const STEPS: [f64; 14] = [
+        0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 3600.0,
+    ];
+    const MAX_TICKS: f64 = 8.0;
+    const LABEL_END_MARGIN: f64 = 0.05;
+
+    if !duration.is_finite() || duration <= 0.0 {
+        return Vec::new();
+    }
+
+    let step = STEPS
+        .into_iter()
+        .find(|step| duration / step <= MAX_TICKS)
+        .unwrap_or_else(|| (duration / MAX_TICKS / 3600.0).ceil() * 3600.0);
+    std::iter::successors(Some(0.0), |time| {
+        Some(time + step).filter(|next| *next < duration * (1.0 - LABEL_END_MARGIN))
+    })
+    .collect()
+}
+
+/// Ruler labels drop the hour for sources under an hour and add tenths for sub-second steps.
+pub(in crate::app) fn format_timeline_ruler_time(seconds: f64, duration: f64) -> String {
+    let whole = seconds.floor();
+    let base = format_timeline_clock(whole, duration);
+    let tenths = ((seconds - whole) * 10.0).round();
+    if tenths > 0.0 {
+        format!("{base}.{tenths:.0}")
+    } else {
+        base
+    }
+}
+
+/// Precise clip boundary time, e.g. `00:05.3` or `1:02:05.3`.
+pub(in crate::app) fn format_timeline_time(seconds: f64, duration: f64) -> String {
+    let tenths_total = (seconds.max(0.0) * 10.0).round();
+    let whole = (tenths_total / 10.0).floor();
+    let tenths = tenths_total - whole * 10.0;
+    format!("{}.{tenths:.0}", format_timeline_clock(whole, duration))
+}
+
+fn format_timeline_clock(whole_seconds: f64, duration: f64) -> String {
+    let hours = (whole_seconds / 3600.0).floor();
+    let minutes = ((whole_seconds % 3600.0) / 60.0).floor();
+    let seconds = whole_seconds % 60.0;
+    if duration >= 3600.0 {
+        format!("{hours:.0}:{minutes:02.0}:{seconds:02.0}")
+    } else {
+        format!("{:02.0}:{seconds:02.0}", hours * 60.0 + minutes)
+    }
+}
+
+/// Compact clip length shown inside a clip, e.g. `4.2 s` or `12:05`.
+pub(in crate::app) fn format_clip_duration(seconds: f64) -> String {
+    if seconds < 60.0 {
+        return format!("{seconds:.1} s");
+    }
+    let whole = seconds.round();
+    let hours = (whole / 3600.0).floor();
+    let minutes = ((whole % 3600.0) / 60.0).floor();
+    let rest = whole % 60.0;
+    if hours > 0.0 {
+        format!("{hours:.0}:{minutes:02.0}:{rest:02.0}")
+    } else {
+        format!("{minutes:.0}:{rest:02.0}")
+    }
+}
+
 pub(in crate::app) fn preview_play_button(
     state: &PreviewShellState,
     window: &mut Window,
@@ -563,10 +855,6 @@ pub(in crate::app) fn preview_play_button(
             cx.notify();
         }
     }))
-}
-
-pub(in crate::app) fn centered_offset(container: f32, child: f32) -> f32 {
-    ((container - child) / 2.0).max(0.0)
 }
 
 pub(in crate::app) fn timeline_fraction_from_percent(percent: f64) -> f32 {

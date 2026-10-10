@@ -14,10 +14,11 @@ use super::preview_actions::{
     preview_overlay_keyboard_delta, preview_runtime_dimensions,
 };
 use super::preview_panel::{
-    centered_offset, preview_crop_visual_rect, preview_presented_frame, preview_scroll_delta_y,
-    preview_shell_state, preview_trim_enabled, preview_visual_controls_visible,
-    timeline_fraction_from_percent, timeline_keyboard_time_for_key,
-    timeline_slider_percent_from_bounds,
+    format_clip_duration, format_timeline_ruler_time, format_timeline_time,
+    preview_crop_visual_rect, preview_presented_frame, preview_scroll_delta_y, preview_shell_state,
+    preview_timeline_info, preview_timeline_tracks, preview_trim_enabled,
+    preview_visual_controls_visible, timeline_fraction_from_percent,
+    timeline_keyboard_time_for_key, timeline_ruler_ticks, timeline_slider_percent_from_bounds,
 };
 use super::primitives::frame_highlight_px;
 use super::settings_panel::{hex_to_subtitle_hsv, subtitle_hsv_to_hex};
@@ -4211,6 +4212,82 @@ mod preview_shell {
     }
 
     #[test]
+    fn timeline_has_one_track_whose_clips_follow_the_removed_segments() {
+        let config = ConversionConfig::default();
+        let metadata = SourceMetadata {
+            media_kind: Some(SourceKind::Audio),
+            duration: Some("00:00:40.000".to_string()),
+            ..SourceMetadata::default()
+        };
+        let settings = settings_state(&config, Some(&metadata), MetadataStatus::Ready);
+        let mut playback = PreviewPlaybackState::new(false);
+        playback.sync_media(MediaSnapshot {
+            current_time: 25.0,
+            duration: 40.0,
+            paused: true,
+        });
+        playback.sync_initial_values(None, None);
+        playback.sync_cut_segments(&[crate::settings::CutSegment {
+            start_time: "00:00:10.000".to_string(),
+            end_time: "00:00:20.000".to_string(),
+        }]);
+
+        let state = preview_shell_state(PreviewShellStateInput {
+            selected_file: None,
+            settings: &settings,
+            crop: crop_state(),
+            overlay: PreviewOverlayRenderState::empty(),
+            canvas: PreviewCanvasRenderState::default(),
+            playback,
+            presentation: PreviewRenderPresentation::default(),
+            render_image: None,
+            runtime_error: None,
+        });
+        let tracks = preview_timeline_tracks(&state);
+
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].label, "Audio");
+        assert_eq!(tracks[0].clips.len(), 2);
+        assert_eq!(
+            preview_timeline_info(&state.playback, &tracks),
+            "Clip 2 of 2 · 00:20.0 – 00:40.0"
+        );
+    }
+
+    #[test]
+    fn timeline_info_explains_editing_when_the_playhead_is_outside_clips() {
+        let mut playback = PreviewPlaybackState::new(false);
+        let tracks = |playback: &PreviewPlaybackState| {
+            vec![super::preview_panel::PreviewTimelineTrack {
+                label: "Video",
+                icon: assets::ICON_FILE_VIDEO,
+                clips: playback.clips(),
+            }]
+        };
+
+        assert_eq!(
+            preview_timeline_info(&playback, &tracks(&playback)),
+            "Select a video or audio source to edit its timeline."
+        );
+
+        playback.sync_media(MediaSnapshot {
+            current_time: 15.0,
+            duration: 40.0,
+            paused: true,
+        });
+        playback.sync_initial_values(None, None);
+        playback.sync_cut_segments(&[crate::settings::CutSegment {
+            start_time: "00:00:10.000".to_string(),
+            end_time: "00:00:20.000".to_string(),
+        }]);
+
+        assert_eq!(
+            preview_timeline_info(&playback, &tracks(&playback)),
+            "Drag clip edges to trim. Press X to remove a segment at the playhead."
+        );
+    }
+
+    #[test]
     fn loading_metadata_keeps_preview_unknown() {
         let config = ConversionConfig::default();
         let metadata = SourceMetadata {
@@ -4237,9 +4314,36 @@ mod preview_shell {
     }
 
     #[test]
-    fn centered_offset_never_returns_negative_values() {
-        assert_eq!(centered_offset(30.0, 6.0), 12.0);
-        assert_eq!(centered_offset(6.0, 30.0), 0.0);
+    fn timeline_ruler_ticks_use_a_readable_step_with_at_most_eight_ticks() {
+        assert_eq!(
+            timeline_ruler_ticks(40.0),
+            vec![0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0]
+        );
+        assert_eq!(
+            timeline_ruler_ticks(3.0),
+            vec![0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+        );
+        assert_eq!(timeline_ruler_ticks(596.0).len(), 5);
+        assert_eq!(timeline_ruler_ticks(90.4).last(), Some(&75.0));
+        assert!(timeline_ruler_ticks(0.0).is_empty());
+        assert!(timeline_ruler_ticks(f64::NAN).is_empty());
+    }
+
+    #[test]
+    fn timeline_times_drop_the_hour_for_short_sources() {
+        assert_eq!(format_timeline_ruler_time(65.0, 120.0), "01:05");
+        assert_eq!(format_timeline_ruler_time(1.5, 3.0), "00:01.5");
+        assert_eq!(format_timeline_ruler_time(3_725.0, 7_200.0), "1:02:05");
+        assert_eq!(format_timeline_time(5.34, 120.0), "00:05.3");
+        assert_eq!(format_timeline_time(59.96, 120.0), "01:00.0");
+        assert_eq!(format_timeline_time(3_725.0, 7_200.0), "1:02:05.0");
+    }
+
+    #[test]
+    fn clip_durations_are_compact() {
+        assert_eq!(format_clip_duration(4.24), "4.2 s");
+        assert_eq!(format_clip_duration(725.0), "12:05");
+        assert_eq!(format_clip_duration(3_725.0), "1:02:05");
     }
 
     #[test]
