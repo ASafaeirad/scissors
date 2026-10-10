@@ -641,6 +641,7 @@ pub fn preset_is_compatible(preset: &PresetDefinition, metadata: Option<&SourceM
 pub fn create_custom_preset(id: String, name: &str, config: &ConversionConfig) -> PresetDefinition {
     let mut preset_config = config.clone();
     // Source-bound selections must not leak into a reusable preset.
+    preset_config.external_audio_tracks.clear();
     preset_config.selected_audio_tracks.clear();
     preset_config.selected_subtitle_tracks.clear();
     preset_config.external_subtitle_tracks.clear();

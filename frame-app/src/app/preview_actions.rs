@@ -896,6 +896,77 @@ impl FrameRoot {
         self.apply_preview_overlay_mode_change(change)
     }
 
+    pub(super) fn prompt_timeline_audio(&self, window: &Window, cx: &Context<Self>) {
+        if self.file_queue.selected_file_locked() {
+            return;
+        }
+        let Some(file_id) = self.file_queue.selected_file().map(|file| file.id.clone()) else {
+            return;
+        };
+        let dialog = crate::native_dialogs::timeline_audio_dialog(window);
+        cx.spawn(async move |this, cx| {
+            let Some(paths) = crate::native_dialogs::pick_source_files(dialog).await else {
+                return;
+            };
+            let tracks = cx
+                .background_spawn(async move {
+                    paths
+                        .into_iter()
+                        .map(|path| {
+                            let path = path.to_string_lossy().to_string();
+                            let metadata = crate::source_metadata::probe_source_metadata(&path)
+                                .map_err(|error| error.to_string())?;
+                            let duration = metadata
+                                .duration
+                                .as_deref()
+                                .and_then(frame_core::utils::parse_time)
+                                .filter(|duration| duration.is_finite() && *duration > 0.0);
+                            if metadata.audio_tracks.is_empty() || duration.is_none() {
+                                return Err(
+                                    "Choose an audio file with a known duration".to_string()
+                                );
+                            }
+                            Ok(frame_core::types::ExternalAudioTrack {
+                                path,
+                                duration_millis: crate::numeric::rounded_f64_to_u64(
+                                    duration.unwrap_or_default() * 1000.0,
+                                ),
+                                ..Default::default()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()
+                })
+                .await;
+            this.update(cx, move |root, cx| {
+                if root
+                    .file_queue
+                    .selected_file()
+                    .is_none_or(|file| file.id != file_id)
+                    || root.file_queue.selected_file_locked()
+                {
+                    return;
+                }
+                match tracks {
+                    Ok(tracks) => {
+                        root.update_selected_config(|config| {
+                            config.processing_mode = crate::settings::ProcessingMode::Reencode;
+                            if !frame_core::media_rules::container_supports_audio(&config.container)
+                            {
+                                crate::settings::apply_output_container(config, "mp4");
+                            }
+                            config.external_audio_tracks.extend(tracks);
+                            true
+                        });
+                    }
+                    Err(error) => root.preview_ui.runtime_error = Some(error),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     pub(super) fn prompt_selected_overlay_image(&self, window: &Window, cx: &Context<Self>) {
         if !self.selected_preview_overlay_controls_enabled() {
             return;
@@ -2217,6 +2288,12 @@ fn preview_visual_hash(config: &ConversionConfig) -> u64 {
 fn preview_audio_hash(config: &ConversionConfig, selected_audio_track: Option<u32>) -> u64 {
     let mut state = DefaultHasher::new();
     selected_audio_track.hash(&mut state);
+    for track in &config.external_audio_tracks {
+        track.path.hash(&mut state);
+        track.duration_millis.hash(&mut state);
+        track.offset_millis.hash(&mut state);
+        track.muted.hash(&mut state);
+    }
     config.audio_volume.hash(&mut state);
     config.audio_normalize.hash(&mut state);
     hash_audio_filters(&config.audio_filters, &mut state);

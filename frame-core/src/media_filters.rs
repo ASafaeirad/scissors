@@ -507,6 +507,7 @@ mod tests {
             audio_normalize: false,
             video_filters: VideoFiltersConfig::default(),
             audio_filters: AudioFiltersConfig::default(),
+            external_audio_tracks: vec![],
             selected_audio_tracks: vec![],
             selected_subtitle_tracks: vec![],
             external_subtitle_tracks: vec![],

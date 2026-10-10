@@ -832,7 +832,9 @@ impl RunningPreviewProcess {
         precise: bool,
         generation: u64,
     ) -> Option<PendingAudioStart> {
-        if config.selected_audio_track.is_some() {
+        if config.selected_audio_track.is_some()
+            || frame_core::audio_timeline::has_external_audio(&config.conversion_config)
+        {
             return match self
                 .spawn_audio_streaming_with_config(config, seconds, precise, false, generation)
             {
@@ -959,7 +961,9 @@ impl RunningPreviewProcess {
         mark_ended_on_eof: bool,
         generation: u64,
     ) -> Result<PendingAudioStart, PreviewEngineError> {
-        if config.selected_audio_track.is_none() {
+        if config.selected_audio_track.is_none()
+            && !frame_core::audio_timeline::has_external_audio(&config.conversion_config)
+        {
             return Ok(PendingAudioStart::OutputDisabled);
         }
 
@@ -1041,7 +1045,10 @@ impl RunningPreviewProcess {
         precise: bool,
         generation: u64,
     ) {
-        if config.selected_audio_track.is_none() || !self.has_visual_stream() {
+        if (config.selected_audio_track.is_none()
+            && !frame_core::audio_timeline::has_external_audio(&config.conversion_config))
+            || !self.has_visual_stream()
+        {
             return;
         }
         if self.pending_audio_start_generation_matches(generation) {
@@ -1841,12 +1848,19 @@ fn preview_audio_plan(
     precise: bool,
     output: AudioOutputSpec,
 ) -> Result<frame_core::preview::PreviewAudioFfmpegPlan, PreviewEngineError> {
-    let selected_track = config.selected_audio_track.ok_or_else(|| {
-        PreviewEngineError::InvalidInput(
-            "Audio preview requires an explicitly selected source track".to_string(),
-        )
-    })?;
+    let selected_track = match config.selected_audio_track {
+        Some(track) => track,
+        None if frame_core::audio_timeline::has_external_audio(&config.conversion_config) => {
+            u32::MAX
+        }
+        None => {
+            return Err(PreviewEngineError::InvalidInput(
+                "Audio preview requires an explicitly selected source track".to_string(),
+            ));
+        }
+    };
     let end_seconds = parsed_time(config.conversion_config.end_time.as_deref())
+        .or(Some(config.duration_seconds))
         .filter(|end_seconds| *end_seconds > seconds);
     build_ffmpeg_preview_audio_args(
         config.path.to_string_lossy().as_ref(),

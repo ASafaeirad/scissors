@@ -24,6 +24,7 @@ pub(in crate::app) struct PreviewShellState {
     pub(in crate::app) tooltip_visible_id: Option<String>,
     pub(in crate::app) palette: &'static theme::ThemePalette,
     pub(in crate::app) selected_file_name: Option<String>,
+    pub(in crate::app) audio_tracks: Vec<frame_core::types::ExternalAudioTrack>,
     pub(in crate::app) metadata_status: PreviewMetadataStatus,
     pub(in crate::app) metadata_error: Option<String>,
     pub(in crate::app) controls_disabled: bool,
@@ -280,6 +281,9 @@ pub(in crate::app) fn preview_shell_state(input: PreviewShellStateInput<'_>) -> 
         tooltip_visible_id: settings.tooltip_visible_id.map(str::to_string),
         palette: settings.palette,
         selected_file_name: selected_file.map(|file| file.name.clone()),
+        audio_tracks: selected_file
+            .map(|file| file.config.external_audio_tracks.clone())
+            .unwrap_or_default(),
         metadata_status,
         metadata_error: settings.metadata_error.map(str::to_string),
         controls_disabled: settings.settings_disabled,

@@ -388,6 +388,7 @@ pub fn apply_preset(
 ) -> bool {
     let before = config.clone();
     // Presets describe output settings; stream indices and subtitle paths belong to the source.
+    let external_audio_tracks = std::mem::take(&mut config.external_audio_tracks);
     let selected_audio_tracks = std::mem::take(&mut config.selected_audio_tracks);
     let selected_subtitle_tracks = std::mem::take(&mut config.selected_subtitle_tracks);
     let external_subtitle_tracks = std::mem::take(&mut config.external_subtitle_tracks);
@@ -395,6 +396,7 @@ pub fn apply_preset(
     let cut_segments = std::mem::take(&mut config.cut_segments);
 
     *config = preset.config.clone();
+    config.external_audio_tracks = external_audio_tracks;
     config.selected_audio_tracks = selected_audio_tracks;
     config.selected_subtitle_tracks = selected_subtitle_tracks;
     config.external_subtitle_tracks = external_subtitle_tracks;

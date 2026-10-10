@@ -178,6 +178,15 @@ fn file_handle_to_path(handle: &FileHandle) -> PathBuf {
     handle.path().to_path_buf()
 }
 
+/// Choose audio clips to place alongside the selected visual source.
+#[must_use]
+pub fn timeline_audio_dialog(parent: &Window) -> AsyncFileDialog {
+    AsyncFileDialog::new()
+        .set_title("Add audio tracks")
+        .add_filter("Audio", AUDIO_FILE_EXTENSIONS)
+        .set_parent(parent)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

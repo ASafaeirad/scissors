@@ -309,6 +309,16 @@ pub struct TransportStreamMetadata {
     pub service_provider: Option<String>,
 }
 
+/// An audio clip placed on the source timeline. Lengths use milliseconds.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ExternalAudioTrack {
+    pub path: String,
+    pub duration_millis: u64,
+    pub offset_millis: u64,
+    pub muted: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[expect(
@@ -337,6 +347,8 @@ pub struct ConversionConfig {
     pub video_filters: VideoFiltersConfig,
     #[serde(default)]
     pub audio_filters: AudioFiltersConfig,
+    #[serde(default)]
+    pub external_audio_tracks: Vec<ExternalAudioTrack>,
     pub selected_audio_tracks: Vec<u32>,
     pub selected_subtitle_tracks: Vec<u32>,
     #[serde(default)]

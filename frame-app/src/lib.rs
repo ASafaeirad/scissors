@@ -107,6 +107,7 @@ pub enum VisualFixture {
     M3Gallery,
     PreviewCrop,
     PreviewReady,
+    PreviewMultitrack,
     SettingsAudio,
     SettingsAudioFilters,
     SettingsImages,
@@ -135,6 +136,7 @@ pub fn visual_fixture_from_env_value(value: Option<&str>) -> Option<VisualFixtur
         Some("m3-gallery") => Some(VisualFixture::M3Gallery),
         Some("preview-crop") => Some(VisualFixture::PreviewCrop),
         Some("preview-ready") => Some(VisualFixture::PreviewReady),
+        Some("preview-multitrack") => Some(VisualFixture::PreviewMultitrack),
         Some("settings-audio") => Some(VisualFixture::SettingsAudio),
         Some("settings-audio-filters") => Some(VisualFixture::SettingsAudioFilters),
         Some("settings-images") => Some(VisualFixture::SettingsImages),
@@ -445,6 +447,7 @@ mod tests {
                 ("m3-gallery", VisualFixture::M3Gallery),
                 ("preview-crop", VisualFixture::PreviewCrop),
                 ("preview-ready", VisualFixture::PreviewReady),
+                ("preview-multitrack", VisualFixture::PreviewMultitrack),
                 ("settings-audio", VisualFixture::SettingsAudio),
                 (
                     "settings-audio-filters",

@@ -174,26 +174,47 @@ pub fn build_ffmpeg_preview_audio_args(
             args.push("-noaccurate_seek".to_string());
         }
     }
-    if options.realtime {
+    if options.realtime && !crate::audio_timeline::has_external_audio(config) {
         args.push("-readrate".to_string());
         args.push("1".to_string());
     }
     args.push("-i".to_string());
     args.push(input.to_string());
 
+    if crate::audio_timeline::has_external_audio(config) {
+        crate::audio_timeline::add_inputs(&mut args, config);
+    }
     if let Some(duration) = audio_preview_duration(options) {
         args.push("-t".to_string());
         args.push(format_seconds(duration));
     }
 
+    if crate::audio_timeline::has_external_audio(config) {
+        let duration = audio_preview_duration(options).unwrap_or(3600.0);
+        let tracks: Vec<u32> = config
+            .selected_audio_tracks
+            .iter()
+            .copied()
+            .filter(|track| *track == options.selected_track)
+            .collect();
+        let mut graph =
+            crate::audio_timeline::mix_graph(config, 1, &tracks, options.start_seconds, duration);
+        if options.realtime {
+            // Pace the mixed output, including generated silence before delayed clips.
+            graph = graph.replace("[frame_audio_out]", ",arealtime[frame_audio_out]");
+        }
+        crate::audio_timeline::add_graph(&mut args, graph);
+    }
     args.push("-vn".to_string());
     args.push("-sn".to_string());
     args.push("-dn".to_string());
-    args.push("-map".to_string());
-    args.push(format!("0:{}", options.selected_track));
+    if !crate::audio_timeline::has_external_audio(config) {
+        args.push("-map".to_string());
+        args.push(format!("0:{}", options.selected_track));
+    }
 
     let audio_filters = build_audio_filters(config);
-    if !audio_filters.is_empty() {
+    if !crate::audio_timeline::has_external_audio(config) && !audio_filters.is_empty() {
         args.push("-af".to_string());
         args.push(audio_filters.join(","));
     }
@@ -531,6 +552,7 @@ mod tests {
             audio_normalize: false,
             video_filters: crate::types::VideoFiltersConfig::default(),
             audio_filters: crate::types::AudioFiltersConfig::default(),
+            external_audio_tracks: vec![],
             selected_audio_tracks: vec![],
             selected_subtitle_tracks: vec![],
             external_subtitle_tracks: vec![],

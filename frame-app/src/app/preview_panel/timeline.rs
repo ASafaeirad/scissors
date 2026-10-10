@@ -4,6 +4,12 @@ use crate::material::{self, Symbol, shape, typography};
 use crate::numeric::unit_f64_to_f32;
 use crate::preview::CutRange;
 
+#[derive(Clone, Debug)]
+struct PreviewTimelineAudioDrag {
+    index: usize,
+    grab_x: std::rc::Rc<std::cell::Cell<Pixels>>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PreviewTimelineDrag {
     target: TimelineDragTarget,
@@ -88,11 +94,10 @@ impl Element for PreviewTimelineTrackBoundsProbe {
 
 /// One row of the timeline: a labelled lane holding the clips of a single source.
 ///
-/// The selected source is the only track today. Additional tracks (overlays,
-/// music) become extra rows that share the ruler and playhead.
+/// Audio clips share the source ruler and playhead.
 pub(in crate::app) struct PreviewTimelineTrack {
     pub(in crate::app) label: &'static str,
-    pub(in crate::app) icon: &'static str,
+    pub(in crate::app) icon: Symbol,
     pub(in crate::app) clips: Vec<TimelineClip>,
 }
 
@@ -105,18 +110,37 @@ pub(in crate::app) fn preview_timeline_tracks(
         PreviewMediaKind::Video | PreviewMediaKind::Unknown => "Video",
     };
 
-    vec![PreviewTimelineTrack {
+    let mut tracks = vec![PreviewTimelineTrack {
         label,
-        icon: preview_media_icon(state.availability.media_kind),
+        icon: match state.availability.media_kind {
+            PreviewMediaKind::Audio => Symbol::MusicNote,
+            PreviewMediaKind::Image => Symbol::Image,
+            _ => Symbol::VideoFile,
+        },
         clips: state.playback.clips(),
-    }]
+    }];
+    tracks.extend(state.audio_tracks.iter().map(|track| {
+        let start = std::time::Duration::from_millis(track.offset_millis).as_secs_f64();
+        let end = start + std::time::Duration::from_millis(track.duration_millis).as_secs_f64();
+        PreviewTimelineTrack {
+            label: "Audio",
+            icon: Symbol::MusicNote,
+            clips: vec![TimelineClip {
+                start,
+                end: end.min(state.playback.duration()),
+                leading: TimelineDragTarget::Start,
+                trailing: TimelineDragTarget::End,
+            }],
+        }
+    }));
+    tracks
 }
 
 pub(in crate::app) fn preview_timeline(
     state: &PreviewShellState,
     seek_focus: &FocusHandle,
-    _window: &mut Window,
-    cx: &Context<FrameRoot>,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
     let scheme = timeline_scheme(palette);
@@ -158,6 +182,16 @@ pub(in crate::app) fn preview_timeline(
                                 .unwrap_or("No media selected"),
                             preview_timeline_info(&state.playback, &tracks)
                         )),
+                )
+                .child(
+                    m3::Button::new("timeline-add-audio", "Add audio", m3::ButtonVariant::Tonal)
+                        .size(m3::ButtonSize::ExtraSmall)
+                        .icon(Symbol::Add)
+                        .enabled(!state.controls_disabled && state.duration_seconds > 0.0)
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(|root, _, window, cx| {
+                            root.prompt_timeline_audio(window, cx);
+                        })),
                 ),
         )
         .child(
@@ -166,7 +200,7 @@ pub(in crate::app) fn preview_timeline(
                 .min_w_0()
                 .flex()
                 .gap_3()
-                .child(preview_timeline_track_labels(&tracks, palette))
+                .child(preview_timeline_track_labels(&tracks, state, window, cx))
                 .child(preview_timeline_lanes(state, &tracks, seek_focus, cx)),
         )
 }
@@ -204,17 +238,23 @@ pub(in crate::app) fn preview_timeline_info(
 
 fn preview_timeline_track_labels(
     tracks: &[PreviewTimelineTrack],
-    palette: &'static theme::ThemePalette,
+    state: &PreviewShellState,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = timeline_scheme(palette);
+    let scheme = timeline_scheme(state.palette);
     div()
         .flex_none()
-        .w(theme::ui_rem(PREVIEW_TIMELINE_LABEL_WIDTH))
+        .w(theme::ui_rem(if state.audio_tracks.is_empty() {
+            PREVIEW_TIMELINE_LABEL_WIDTH
+        } else {
+            176.0
+        }))
         .flex()
         .flex_col()
         .gap(theme::ui_rem(PREVIEW_TIMELINE_ROW_GAP))
         .child(div().h(theme::ui_rem(PREVIEW_TIMELINE_RULER_HEIGHT)))
-        .children(tracks.iter().map(|track| {
+        .children(tracks.iter().enumerate().map(|(index, track)| {
             div()
                 .h(theme::ui_rem(PREVIEW_TIMELINE_LANE_HEIGHT))
                 .pl_2()
@@ -222,7 +262,7 @@ fn preview_timeline_track_labels(
                 .items_center()
                 .gap_2()
                 .child(m3::m3_icon(
-                    timeline_symbol(track.icon),
+                    track.icon,
                     false,
                     20.0,
                     color(scheme.on_surface_variant),
@@ -235,6 +275,59 @@ fn preview_timeline_track_labels(
                         .text_color(color(scheme.on_surface))
                         .child(theme::ui_text(track.label)),
                 )
+                .when(index > 0, |row| {
+                    let audio_index = index - 1;
+                    let muted = state.audio_tracks[audio_index].muted;
+                    row.child(
+                        m3::IconButton::new(
+                            format!("audio-mute-{index}"),
+                            if muted {
+                                Symbol::VolumeOff
+                            } else {
+                                Symbol::VolumeUp
+                            },
+                            if muted {
+                                "Unmute audio track"
+                            } else {
+                                "Mute audio track"
+                            },
+                        )
+                        .size(m3::IconButtonSize::ExtraSmall)
+                        .enabled(!state.controls_disabled)
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(move |root, _, _, cx| {
+                            root.update_selected_config(|config| {
+                                let Some(track) = config.external_audio_tracks.get_mut(audio_index)
+                                else {
+                                    return false;
+                                };
+                                track.muted = !track.muted;
+                                true
+                            });
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        m3::IconButton::new(
+                            format!("audio-remove-{index}"),
+                            Symbol::Delete,
+                            "Remove audio track",
+                        )
+                        .size(m3::IconButtonSize::ExtraSmall)
+                        .enabled(!state.controls_disabled)
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(move |root, _, _, cx| {
+                            root.update_selected_config(|config| {
+                                if audio_index >= config.external_audio_tracks.len() {
+                                    return false;
+                                }
+                                config.external_audio_tracks.remove(audio_index);
+                                true
+                            });
+                            cx.notify();
+                        })),
+                    )
+                })
         }))
 }
 
@@ -291,6 +384,30 @@ fn preview_timeline_lanes(
                 |_drag, _position, _window, cx| cx.new(|_| PreviewTimelineDragPreview),
             )
         })
+        .on_drag_move(cx.listener(
+            move |root, event: &DragMoveEvent<PreviewTimelineAudioDrag>, _, cx| {
+                let drag = event.drag(cx).clone();
+                let width = f64::from(f32::from(event.bounds.size.width));
+                if width <= 0.0 {
+                    return;
+                }
+                let x = event.event.position.x - event.bounds.origin.x - drag.grab_x.get();
+                let offset = (f64::from(f32::from(x)) / width * duration * 1000.0)
+                    .clamp(0.0, duration.mul_add(1000.0, -1.0).max(0.0));
+                let offset = crate::numeric::rounded_f64_to_u64(offset);
+                root.update_selected_config(|config| {
+                    let Some(track) = config.external_audio_tracks.get_mut(drag.index) else {
+                        return false;
+                    };
+                    if track.offset_millis == offset {
+                        return false;
+                    }
+                    track.offset_millis = offset;
+                    true
+                });
+                cx.notify();
+            },
+        ))
         .on_drag_move(cx.listener(
             |root, event: &DragMoveEvent<PreviewTimelineDrag>, _window, cx| {
                 let drag = *event.drag(cx);
@@ -425,7 +542,14 @@ fn preview_timeline_lane(
         .iter()
         .copied()
         .find(|clip| clip.contains(current_time));
-    let clip_name = state.selected_file_name.clone().unwrap_or_default();
+    let clip_name = track_index
+        .checked_sub(1)
+        .and_then(|index| state.audio_tracks.get(index))
+        .and_then(|track| std::path::Path::new(&track.path).file_name())
+        .map_or_else(
+            || state.selected_file_name.clone().unwrap_or_default(),
+            |name| name.to_string_lossy().into_owned(),
+        );
 
     // Removed segments and their edges belong to the source on the first track.
     let edits_source = track_index == 0;
@@ -459,13 +583,33 @@ fn preview_timeline_lane(
         .h(theme::ui_rem(PREVIEW_TIMELINE_LANE_HEIGHT))
         .rounded(theme::ui_rem(shape::CORNER_SMALL))
         .bg(color(scheme.surface_container))
-        .children(track.clips.iter().map(|clip| {
+        .opacity(
+            if track_index > 0 && state.audio_tracks[track_index - 1].muted {
+                0.4
+            } else {
+                1.0
+            },
+        )
+        .children(track.clips.iter().enumerate().map(|(clip_index, clip)| {
             preview_timeline_clip(
                 state,
                 *clip,
                 Some(*clip) == active_clip,
                 &clip_name,
                 track.icon,
+            )
+            .id(format!("timeline-clip-{track_index}-{clip_index}"))
+            .when(
+                track_index > 0 && enabled && !state.controls_disabled,
+                |clip| {
+                    preview_audio_clip(
+                        clip,
+                        track_index - 1,
+                        state.playback.duration(),
+                        &clip_name,
+                        cx,
+                    )
+                },
             )
         }))
         .when(edits_source, |lane| {
@@ -485,12 +629,60 @@ fn preview_timeline_lane(
         }))
 }
 
+fn preview_audio_clip(
+    clip: gpui::Stateful<gpui::Div>,
+    audio_index: usize,
+    duration: f64,
+    clip_name: &str,
+    cx: &Context<FrameRoot>,
+) -> gpui::Stateful<gpui::Div> {
+    let duration_millis = crate::numeric::rounded_f64_to_u64(duration * 1000.0);
+    clip.cursor_grab()
+        .focusable()
+        .tab_stop(true)
+        .aria_label(format!(
+            "Audio clip {clip_name}. Use left and right arrows to move."
+        ))
+        .on_key_down(cx.listener(move |root, event: &gpui::KeyDownEvent, _, cx| {
+            let forward = match event.keystroke.key.as_str() {
+                "left" => false,
+                "right" => true,
+                _ => return,
+            };
+            root.update_selected_config(|config| {
+                let Some(track) = config.external_audio_tracks.get_mut(audio_index) else {
+                    return false;
+                };
+                track.offset_millis = if forward {
+                    track.offset_millis.saturating_add(100)
+                } else {
+                    track.offset_millis.saturating_sub(100)
+                }
+                .min(duration_millis.saturating_sub(1));
+                true
+            });
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_drag(
+            PreviewTimelineAudioDrag {
+                index: audio_index,
+                grab_x: std::rc::Rc::new(std::cell::Cell::new(px(0.0))),
+            },
+            |drag, position, _, cx| {
+                drag.grab_x.set(position.x);
+                cx.new(|_| PreviewTimelineDragPreview)
+            },
+        )
+}
+
 fn preview_timeline_clip(
     state: &PreviewShellState,
     clip: TimelineClip,
     active: bool,
     name: &str,
-    icon: &'static str,
+    icon: Symbol,
 ) -> gpui::Div {
     let palette = state.palette;
     let scheme = timeline_scheme(palette);
@@ -520,7 +712,7 @@ fn preview_timeline_clip(
         .gap(theme::ui_rem(6.0))
         .text_color(color(scheme.on_primary_container))
         .child(div().flex_none().child(m3::m3_icon(
-            timeline_symbol(icon),
+            icon,
             false,
             16.0,
             color(scheme.on_primary_container),
@@ -906,14 +1098,4 @@ fn timeline_scheme(palette: &theme::ThemePalette) -> &'static material::ColorSch
     } else {
         ColorTheme::Dark
     })
-}
-
-fn timeline_symbol(icon: &str) -> Symbol {
-    if icon == assets::ICON_MUSIC {
-        Symbol::MusicNote
-    } else if icon == assets::ICON_FILE_IMAGE {
-        Symbol::Image
-    } else {
-        Symbol::Movie
-    }
 }

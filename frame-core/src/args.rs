@@ -499,6 +499,13 @@ pub fn build_ffmpeg_args(
     config: &ConversionConfig,
     probe: &ProbeMetadata,
 ) -> Result<Vec<String>, ConversionError> {
+    let external_audio = crate::audio_timeline::has_external_audio(config);
+    if external_audio && (!container_supports_audio(&config.container) || is_copy_mode(config)) {
+        return Err(ConversionError::InvalidInput(
+            "Added audio requires re-encoding to an audio-capable container, such as MP4"
+                .to_string(),
+        ));
+    }
     let mut args = Vec::new();
 
     // Hardware decode acceleration (must be before -i)
@@ -523,7 +530,9 @@ pub fn build_ffmpeg_args(
         args.push(overlay.path.clone());
     }
 
-    let first_external_subtitle_input = 1 + usize::from(has_overlay(config));
+    let first_audio_input = 1 + usize::from(has_overlay(config));
+    crate::audio_timeline::add_inputs(&mut args, config);
+    let first_external_subtitle_input = first_audio_input + config.external_audio_tracks.len();
     add_external_subtitle_inputs(&mut args, config);
 
     let cut_ranges = output_cut_ranges(config);
@@ -618,12 +627,14 @@ pub fn build_ffmpeg_args(
         args.push("-vn".to_string());
 
         let audio_tracks = collect_selected_audio_tracks(config, probe)?;
-        if audio_tracks.is_empty() {
+        if audio_tracks.is_empty() && !external_audio {
             return Err(ConversionError::InvalidInput(
                 "Select at least one audio track for an audio-only output".to_string(),
             ));
         }
-        add_track_maps(&mut args, &audio_tracks, |track| track.index);
+        if !external_audio {
+            add_track_maps(&mut args, &audio_tracks, |track| track.index);
+        }
 
         add_audio_codec_args(&mut args, config);
     } else if is_video_only && is_gif_output {
@@ -698,9 +709,11 @@ pub fn build_ffmpeg_args(
         });
 
         let audio_tracks = collect_selected_audio_tracks(config, probe)?;
-        add_track_maps(&mut args, &audio_tracks, |track| track.index);
+        if !external_audio {
+            add_track_maps(&mut args, &audio_tracks, |track| track.index);
+        }
 
-        if audio_tracks.is_empty() {
+        if audio_tracks.is_empty() && !external_audio {
             args.push("-an".to_string());
         } else {
             add_audio_codec_args(&mut args, config);
@@ -724,7 +737,48 @@ pub fn build_ffmpeg_args(
         }
     }
 
-    if !is_video_only && !is_image_output && !config.selected_audio_tracks.is_empty() {
+    if external_audio {
+        let start = config
+            .start_time
+            .as_deref()
+            .and_then(parse_time)
+            .unwrap_or(0.0);
+        let end = config
+            .end_time
+            .as_deref()
+            .and_then(parse_time)
+            .or_else(|| probe.duration.as_deref().and_then(parse_time))
+            .ok_or_else(|| {
+                ConversionError::InvalidInput("Added audio requires a source duration".to_string())
+            })?;
+        let duration = end - start;
+        if !duration.is_finite() || duration <= 0.0 {
+            return Err(ConversionError::InvalidInput(
+                "Audio timeline duration must be positive".to_string(),
+            ));
+        }
+        collect_selected_audio_tracks(config, probe)?;
+        let mut graph = crate::audio_timeline::mix_graph(
+            config,
+            first_audio_input,
+            &config.selected_audio_tracks,
+            start,
+            duration,
+        );
+        let cuts = build_audio_cut_filters(&cut_ranges);
+        if !cuts.is_empty() {
+            graph = graph.replace(
+                "[frame_audio_out]",
+                &format!(",{}[frame_audio_out]", cuts.join(",")),
+            );
+        }
+        crate::audio_timeline::add_graph(&mut args, graph);
+    }
+    if !external_audio
+        && !is_video_only
+        && !is_image_output
+        && !config.selected_audio_tracks.is_empty()
+    {
         let mut audio_filters = build_audio_cut_filters(&cut_ranges);
         audio_filters.extend(build_audio_filters(config));
         if !audio_filters.is_empty() {
@@ -947,6 +1001,22 @@ pub fn validate_task_input(
         )));
     }
 
+    if crate::audio_timeline::has_external_audio(config)
+        && (!container_supports_audio(&config.container) || is_copy_mode(config))
+    {
+        return Err(ConversionError::InvalidInput(
+            "Added audio requires re-encoding to an audio-capable container, such as MP4"
+                .to_string(),
+        ));
+    }
+    for track in &config.external_audio_tracks {
+        if !Path::new(&track.path).is_file() || track.duration_millis == 0 {
+            return Err(ConversionError::InvalidInput(format!(
+                "Audio clip is missing or has no duration: {}",
+                track.path
+            )));
+        }
+    }
     let start_time = config
         .start_time
         .as_deref()
@@ -1418,6 +1488,7 @@ mod tests {
             audio_normalize: false,
             video_filters: crate::types::VideoFiltersConfig::default(),
             audio_filters: crate::types::AudioFiltersConfig::default(),
+            external_audio_tracks: vec![],
             selected_audio_tracks: vec![],
             selected_subtitle_tracks: vec![],
             external_subtitle_tracks: vec![],
@@ -1475,6 +1546,22 @@ mod tests {
                 ..AudioTrack::default()
             }],
             ..ProbeMetadata::default()
+        }
+    }
+
+    #[test]
+    fn added_audio_rejects_silent_containers_and_copy_mode() {
+        for (container, mode) in [("gif", "reencode"), ("mp4", "copy")] {
+            let mut config = sample_config(container, "libx264");
+            config.processing_mode = mode.to_string();
+            config
+                .external_audio_tracks
+                .push(crate::types::ExternalAudioTrack {
+                    path: "music.wav".to_string(),
+                    duration_millis: 1000,
+                    ..Default::default()
+                });
+            assert!(build_ffmpeg_args("source.gif", "out.mp4", &config, &sample_probe()).is_err());
         }
     }
 

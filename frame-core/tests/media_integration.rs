@@ -121,6 +121,181 @@ impl Drop for Sandbox {
 
 #[test]
 #[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One generated timeline checks export, seeking, pacing, mute and source audio against the same clip positions."
+)]
+fn gif_audio_timeline_exports_and_previews_aligned_sound() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("gif_audio_timeline")?;
+    let gif = sandbox.path("source.gif");
+    let audio = sandbox.path("music.wav");
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=160x90:rate=10:duration=3",
+            "-y",
+            &path_arg(&gif),
+        ]),
+    )?;
+    generate_audio_source(&tools, &audio)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.selected_audio_tracks.clear();
+    config.start_time = Some("0.5".to_string());
+    config.end_time = Some("2.5".to_string());
+    config.cut_segments = vec![frame_core::types::CutSegment {
+        start_time: "1.5".to_string(),
+        end_time: "2.0".to_string(),
+    }];
+    config.external_audio_tracks = vec![
+        frame_core::types::ExternalAudioTrack {
+            path: path_arg(&audio),
+            duration_millis: 1000,
+            offset_millis: 1000,
+            muted: false,
+        },
+        frame_core::types::ExternalAudioTrack {
+            path: path_arg(&audio),
+            duration_millis: 1000,
+            offset_millis: 0,
+            muted: true,
+        },
+    ];
+    let output = sandbox.path("with_sound.mp4");
+    convert(&tools, &gif, &output, &config)?;
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.audio_tracks.len(), 1);
+    assert!(metadata.video_stream_index.is_some());
+    let duration = metadata
+        .duration
+        .as_deref()
+        .and_then(frame_core::utils::parse_time)
+        .unwrap_or_default();
+    assert!((duration - 1.5).abs() < 0.15, "output duration: {duration}");
+    let pcm = run_tool_output(
+        &tools.ffmpeg,
+        &args(&[
+            "-i",
+            &path_arg(&output),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ]),
+    )?;
+    let samples = pcm_samples(&pcm);
+    assert!(sample_energy(&samples, 4800, 19200) < 0.001);
+    assert!(sample_energy(&samples, 28800, 43200) > 0.01);
+    assert!(sample_energy(&samples, 52800, 67200) < 0.001);
+
+    let plan = frame_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&gif),
+        &config,
+        &frame_core::preview::PreviewAudioFfmpegOptions {
+            start_seconds: 1.25,
+            end_seconds: Some(2.5),
+            sample_rate: 48000,
+            channels: 1,
+            realtime: false,
+            precise_seek: true,
+            selected_track: u32::MAX,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let preview = pcm_samples(&run_tool_output(&tools.ffmpeg, &plan.args)?);
+    assert_eq!(preview.len(), 60_000);
+    assert!(sample_energy(&preview, 4800, 19200) > 0.01);
+    assert!(sample_energy(&preview, 43200, 57600) < 0.001);
+
+    let realtime = frame_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&gif),
+        &config,
+        &frame_core::preview::PreviewAudioFfmpegOptions {
+            start_seconds: 0.0,
+            end_seconds: Some(0.4),
+            sample_rate: 48000,
+            channels: 1,
+            realtime: true,
+            precise_seek: true,
+            selected_track: u32::MAX,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let started = std::time::Instant::now();
+    let silence = pcm_samples(&run_tool_output(&tools.ffmpeg, &realtime.args)?);
+    assert_eq!(silence.len(), 19_200);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(250));
+    assert!(sample_energy(&silence, 0, silence.len()) < 0.001);
+
+    // A second audible lane contributes sound after the first lane finishes.
+    config.external_audio_tracks[1].muted = false;
+    config.external_audio_tracks[1].offset_millis = 2250;
+    let output = sandbox.path("two_tracks.mp4");
+    convert(&tools, &gif, &output, &config)?;
+    let pcm = pcm_samples(&run_tool_output(
+        &tools.ffmpeg,
+        &args(&[
+            "-i",
+            &path_arg(&output),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ]),
+    )?);
+    assert!(sample_energy(&pcm, 62400, 69600) > 0.01);
+    let video = sandbox.path("source_with_audio.mp4");
+    generate_h264_aac_source(&tools, &video, 3.0, 160, 90)?;
+    let probe = probe_media(&tools, &video)?;
+    config.selected_audio_tracks = vec![probe.audio_tracks[0].index];
+    let output = sandbox.path("source_and_added_audio.mp4");
+    convert(&tools, &video, &output, &config)?;
+    let pcm = pcm_samples(&run_tool_output(
+        &tools.ffmpeg,
+        &args(&[
+            "-i",
+            &path_arg(&output),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ]),
+    )?);
+    assert!(sample_energy(&pcm, 4800, 19200) > 0.01);
+    Ok(())
+}
+
+fn pcm_samples(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
+}
+
+fn sample_energy(samples: &[f32], start: usize, end: usize) -> f32 {
+    samples[start..end]
+        .iter()
+        .map(|value| value.abs())
+        .fold(0.0, f32::max)
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
 fn transport_stream_reencode_matrix_should_write_packets_streams_and_service_metadata() -> TestResult
 {
     let tools = Toolchain::discover()?;
@@ -1593,6 +1768,7 @@ fn base_config(container: &str, video_codec: &str) -> ConversionConfig {
         audio_normalize: false,
         video_filters: frame_core::types::VideoFiltersConfig::default(),
         audio_filters: frame_core::types::AudioFiltersConfig::default(),
+        external_audio_tracks: Vec::new(),
         selected_audio_tracks: Vec::new(),
         selected_subtitle_tracks: Vec::new(),
         external_subtitle_tracks: Vec::new(),

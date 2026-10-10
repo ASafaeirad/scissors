@@ -54,6 +54,24 @@ impl FrameRoot {
             Some(VisualFixture::M3Gallery) => self.m3_gallery = Some(m3::M3GalleryState::new()),
             Some(VisualFixture::PreviewCrop) => self.apply_preview_crop_fixture(),
             Some(VisualFixture::PreviewReady) => self.apply_preview_ready_fixture(),
+            Some(VisualFixture::PreviewMultitrack) => {
+                self.apply_preview_ready_fixture();
+                if let Some(file) = self.file_queue.selected_file_mut() {
+                    file.config.external_audio_tracks = vec![
+                        frame_core::types::ExternalAudioTrack {
+                            path: "/tmp/lofi_background.mp3".to_string(),
+                            duration_millis: 90_400,
+                            ..Default::default()
+                        },
+                        frame_core::types::ExternalAudioTrack {
+                            path: "/tmp/voice_over.wav".to_string(),
+                            duration_millis: 30_000,
+                            offset_millis: 25_000,
+                            muted: true,
+                        },
+                    ];
+                }
+            }
             Some(VisualFixture::SettingsAudio) => self.apply_settings_audio_fixture(),
             Some(VisualFixture::SettingsAudioFilters) => {
                 self.apply_settings_audio_filters_fixture();

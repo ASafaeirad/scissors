@@ -504,7 +504,11 @@ pub(super) fn output_duration_seconds(config: &ConversionConfig, source_duration
 pub(super) fn exports_audio(config: &ConversionConfig, metadata: Option<&SourceMetadata>) -> bool {
     container_supports_audio(&config.container)
         && metadata.is_none_or(|metadata| {
-            !metadata.audio_tracks.is_empty() && !config.selected_audio_tracks.is_empty()
+            (!metadata.audio_tracks.is_empty() && !config.selected_audio_tracks.is_empty())
+                || config
+                    .external_audio_tracks
+                    .iter()
+                    .any(|track| !track.muted)
         })
 }
 

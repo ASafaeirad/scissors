@@ -3702,6 +3702,26 @@ mod visual_fixtures {
     }
 
     #[test]
+    fn multitrack_fixture_keeps_audio_offsets_and_mute_state() {
+        let mut root = FrameRoot::new();
+        root.apply_visual_fixture(Some(VisualFixture::PreviewMultitrack));
+        let tracks = &root
+            .file_queue
+            .selected_file()
+            .unwrap()
+            .config
+            .external_audio_tracks;
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0].offset_millis, 0);
+        assert_eq!(tracks[1].offset_millis, 25_000);
+        assert!(tracks[1].muted);
+        let core = crate::conversion_runner::core_config_from_gpui(
+            &root.file_queue.selected_file().unwrap().config,
+        );
+        assert_eq!(&core.external_audio_tracks, tracks);
+    }
+
+    #[test]
     fn preview_crop_fixture_enters_crop_mode() {
         let mut root = FrameRoot::new();
 
@@ -4258,7 +4278,7 @@ mod preview_shell {
         let tracks = |playback: &PreviewPlaybackState| {
             vec![super::preview_panel::PreviewTimelineTrack {
                 label: "Video",
-                icon: assets::ICON_FILE_VIDEO,
+                icon: crate::material::Symbol::VideoFile,
                 clips: playback.clips(),
             }]
         };
