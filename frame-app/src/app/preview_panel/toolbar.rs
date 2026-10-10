@@ -1,15 +1,15 @@
 use super::super::components::{FrameTooltip, TooltipPlacement};
 use super::{
-    ButtonVariant, ClickEvent, Context, FlipAxis, FluentBuilder, FrameRoot, InteractiveElement,
-    PREVIEW_TOOLBAR_BUTTON_SIZE, PREVIEW_TOOLBAR_ICON_SIZE, PREVIEW_TOOLBAR_OFFSET, ParentElement,
-    PreviewCanvasZoomDirection, PreviewShellState, PreviewToolFocuses, StatefulInteractiveElement,
-    Styled, Window, animated_button_colors, apply_accessible_button,
-    apply_accessible_button_with_focus, apply_accessible_toggle_button, apply_button_motion,
-    assets, button_colors, button_highlight_shadows, card_surface_shadows, color, div, icon_svg,
+    ClickEvent, Context, FlipAxis, FrameRoot, InteractiveElement, PREVIEW_TOOLBAR_OFFSET,
+    ParentElement, PreviewCanvasZoomDirection, PreviewShellState, PreviewToolFocuses,
+    StatefulInteractiveElement, Styled, Window, assets, color, div,
     preview_visual_controls_enabled, relative, theme,
 };
+use crate::app::m3;
+use crate::material::{self, Symbol, shape};
 use gpui::FocusHandle;
 
+const M3_TOOL_BUTTON_SIZE: f32 = 40.0;
 const PREVIEW_TOOLBAR_PADDING: f32 = 4.0;
 const PREVIEW_TOOLBAR_GAP: f32 = 8.0;
 const PREVIEW_TOOLBAR_VERTICAL_SEPARATOR_HEIGHT: f32 = 18.0;
@@ -19,7 +19,7 @@ const PREVIEW_TOOLBAR_GAP_COUNT: f32 = 4.0;
 
 pub(in crate::app) const fn preview_toolbar_height() -> f32 {
     (PREVIEW_TOOLBAR_PADDING * 2.0)
-        + (PREVIEW_TOOLBAR_BUTTON_SIZE * PREVIEW_TOOLBAR_BUTTON_COUNT)
+        + (M3_TOOL_BUTTON_SIZE * PREVIEW_TOOLBAR_BUTTON_COUNT)
         + (PREVIEW_TOOLBAR_GAP * PREVIEW_TOOLBAR_GAP_COUNT)
 }
 
@@ -38,6 +38,7 @@ pub(in crate::app) fn preview_toolbar(
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
+    let scheme = toolbar_scheme(palette);
     let transform_enabled = preview_visual_controls_enabled(state);
     let crop_enabled = transform_enabled && state.crop.has_crop_dimensions;
     let overlay_enabled = transform_enabled && state.availability.overlay_available;
@@ -50,10 +51,9 @@ pub(in crate::app) fn preview_toolbar(
         .flex()
         .flex_col()
         .gap(theme::ui_rem(PREVIEW_TOOLBAR_GAP))
-        .rounded(theme::ui_rem(theme::RADIUS_MD))
-        .bg(color(palette.surface))
+        .rounded(theme::ui_rem(shape::CORNER_EXTRA_LARGE))
+        .bg(color(scheme.surface_container))
         .p(theme::ui_rem(PREVIEW_TOOLBAR_PADDING))
-        .shadow(card_surface_shadows(palette))
         .child(
             preview_tool_button(
                 "preview-tool-rotate",
@@ -159,6 +159,7 @@ pub(in crate::app) fn preview_zoom_toolbar(
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
+    let scheme = toolbar_scheme(palette);
     let enabled = preview_visual_controls_enabled(state);
 
     div()
@@ -167,10 +168,9 @@ pub(in crate::app) fn preview_zoom_toolbar(
         .bottom(theme::ui_rem(PREVIEW_TOOLBAR_OFFSET))
         .flex()
         .gap_2()
-        .rounded(theme::ui_rem(theme::RADIUS_MD))
-        .bg(color(palette.surface))
+        .rounded(theme::ui_rem(shape::CORNER_EXTRA_LARGE))
+        .bg(color(scheme.surface_container))
         .p(theme::ui_rem(4.0))
-        .shadow(card_surface_shadows(palette))
         .child(
             preview_tool_button(
                 "preview-zoom-out",
@@ -301,68 +301,47 @@ fn preview_tool_button_inner(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let variant = if selected {
-        ButtonVariant::Default
-    } else {
-        ButtonVariant::Ghost
-    };
     let button_id = id.into();
     let label = label.into();
-    let colors = button_colors(variant, selected, enabled, palette);
-    let animated = animated_button_colors(button_id.clone(), colors, window, cx);
-    let background = animated.background;
-    let foreground = animated.foreground;
-    let motion = animated.motion;
-
-    let button = div()
-        .id(format!("{button_id}-visual"))
-        .w(theme::ui_rem(PREVIEW_TOOLBAR_BUTTON_SIZE))
-        .h(theme::ui_rem(PREVIEW_TOOLBAR_BUTTON_SIZE))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(theme::ui_rem(theme::RADIUS_SM))
-        .bg(background)
-        .text_color(foreground)
-        .opacity(colors.opacity)
-        .when(selected, |this| {
-            this.shadow(button_highlight_shadows(palette))
-        })
-        .when(!enabled, gpui::Styled::cursor_not_allowed)
-        .when(enabled, |this| {
-            this.hover(gpui::Styled::cursor_pointer)
-                .active(move |style| {
-                    style
-                        .bg(color(colors.active_background))
-                        .text_color(color(colors.hover_foreground))
-                })
-        })
-        .child(icon_svg(icon, PREVIEW_TOOLBAR_ICON_SIZE, foreground));
-
+    let symbol = match icon {
+        assets::ICON_ROTATE_CW => Symbol::Rotate90DegreesCw,
+        assets::ICON_FLIP_HORIZONTAL | assets::ICON_FLIP_VERTICAL => Symbol::Flip,
+        assets::ICON_CROP => Symbol::Crop,
+        assets::ICON_FILE_IMAGE => Symbol::AddPhotoAlternate,
+        assets::ICON_MINUS => Symbol::ZoomOut,
+        assets::ICON_PLUS => Symbol::ZoomIn,
+        _ => Symbol::MoreVert,
+    };
+    let mut button = m3::IconButton::new(format!("{button_id}-visual"), symbol, label.clone())
+        .toggle(selected)
+        .enabled(enabled);
+    if let Some(focus) = focus {
+        button = button.focus(focus);
+    }
     let button = div()
         .id(button_id.clone())
-        .rounded(theme::ui_rem(theme::RADIUS_SM))
-        .child(apply_button_motion(button, motion, enabled));
-
-    let button = if let Some(focus) = focus {
-        let button =
-            apply_accessible_button_with_focus(button, label.clone(), enabled, focus, palette);
-        if selected {
-            button.aria_toggled(gpui::Toggled::True)
-        } else {
+        .role(gpui::Role::Button)
+        .aria_label(label.clone())
+        .aria_disabled(!enabled)
+        .child(
             button
-        }
-    } else if selected {
-        apply_accessible_toggle_button(button, label.clone(), enabled, true, palette)
-    } else {
-        apply_accessible_button(button, label.clone(), enabled, palette)
-    };
+                .build(toolbar_scheme(palette), window, cx)
+                .tab_stop(false),
+        );
     FrameTooltip {
         hovered: tooltip_visible_id == Some(button_id.as_str()),
         id: button_id,
         label,
         placement: tooltip_placement,
-        anchor_size: PREVIEW_TOOLBAR_BUTTON_SIZE,
+        anchor_size: M3_TOOL_BUTTON_SIZE,
     }
     .for_control(button, focus, enabled, palette, window, cx)
+}
+
+fn toolbar_scheme(palette: &theme::ThemePalette) -> &'static material::ColorScheme {
+    material::scheme(if palette.is_light() {
+        crate::appearance::ColorTheme::Light
+    } else {
+        crate::appearance::ColorTheme::Dark
+    })
 }

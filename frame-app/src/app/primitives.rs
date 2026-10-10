@@ -359,22 +359,6 @@ fn light_control_depth_shadows(palette: &theme::ThemePalette, inset: bool) -> Ve
     ]
 }
 
-pub(super) fn vertical_separator(height: f32, palette: &theme::ThemePalette) -> gpui::Div {
-    if palette.is_light() {
-        div()
-            .h(theme::ui_rem(height))
-            .w(px(frame_highlight_px()))
-            .bg(color(palette.border_subtle))
-    } else {
-        div()
-            .flex()
-            .h(theme::ui_rem(height))
-            .w(px(2.0))
-            .child(div().h_full().w(px(1.0)).bg(color(palette.canvas)))
-            .child(div().h_full().w(px(1.0)).bg(color(palette.fill_subtle)))
-    }
-}
-
 pub(super) fn panel_bottom_separator(palette: &theme::ThemePalette) -> gpui::Div {
     let separator = div().absolute().left_0().right_0().bottom_0();
 

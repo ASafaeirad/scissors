@@ -1,4 +1,6 @@
 use super::*;
+use crate::app::m3::{self, M3Text};
+use crate::material::{self, Symbol, shape, typography};
 use crate::numeric::unit_f64_to_f32;
 use crate::preview::CutRange;
 
@@ -113,14 +115,16 @@ pub(in crate::app) fn preview_timeline_tracks(
 pub(in crate::app) fn preview_timeline(
     state: &PreviewShellState,
     seek_focus: &FocusHandle,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
+    _window: &mut Window,
+    cx: &Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
+    let scheme = timeline_scheme(palette);
     let tracks = preview_timeline_tracks(state);
 
-    div()
-        .mt(theme::ui_rem(PREVIEW_TIMELINE_TOP_MARGIN))
+    m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
+        .flex_none()
+        .p(theme::ui_rem(16.0))
         .flex()
         .flex_col()
         .gap_2()
@@ -135,9 +139,8 @@ pub(in crate::app) fn preview_timeline(
                 .child(
                     div()
                         .flex_none()
-                        .text_size(theme::ui_rem(theme::TEXT_ROW_BASE_SIZE))
-                        .font_weight(theme::TEXT_WEIGHT_MEDIUM)
-                        .text_color(color(palette.text_primary))
+                        .m3_type(typography::TITLE_SMALL)
+                        .text_color(color(scheme.on_surface))
                         .child(theme::ui_text("Timeline")),
                 )
                 .child(
@@ -145,21 +148,16 @@ pub(in crate::app) fn preview_timeline(
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
-                        .text_color(color(palette.text_muted))
-                        .child(theme::ui_text_owned(preview_timeline_info(
-                            &state.playback,
-                            &tracks,
-                        ))),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(preview_cut_button(state, window, cx))
-                        .child(preview_play_button(state, window, cx)),
+                        .m3_type(typography::BODY_SMALL)
+                        .text_color(color(scheme.on_surface_variant))
+                        .child(format!(
+                            "{} · {}",
+                            state
+                                .selected_file_name
+                                .as_deref()
+                                .unwrap_or("No media selected"),
+                            preview_timeline_info(&state.playback, &tracks)
+                        )),
                 ),
         )
         .child(
@@ -208,6 +206,7 @@ fn preview_timeline_track_labels(
     tracks: &[PreviewTimelineTrack],
     palette: &'static theme::ThemePalette,
 ) -> gpui::Div {
+    let scheme = timeline_scheme(palette);
     div()
         .flex_none()
         .w(theme::ui_rem(PREVIEW_TIMELINE_LABEL_WIDTH))
@@ -222,14 +221,18 @@ fn preview_timeline_track_labels(
                 .flex()
                 .items_center()
                 .gap_2()
-                .child(icon_svg(track.icon, 16.0, color(palette.text_muted)))
+                .child(m3::m3_icon(
+                    timeline_symbol(track.icon),
+                    false,
+                    20.0,
+                    color(scheme.on_surface_variant),
+                ))
                 .child(
                     div()
                         .min_w_0()
                         .truncate()
-                        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
-                        .font_weight(theme::TEXT_WEIGHT_MEDIUM)
-                        .text_color(color(palette.text_primary))
+                        .m3_type(typography::LABEL_LARGE)
+                        .text_color(color(scheme.on_surface))
                         .child(theme::ui_text(track.label)),
                 )
         }))
@@ -252,6 +255,7 @@ fn preview_timeline_lanes(
     cx: &Context<FrameRoot>,
 ) -> impl IntoElement {
     let palette = state.palette;
+    let scheme = timeline_scheme(palette);
     let enabled = preview_trim_enabled(state);
     let duration = state.playback.duration();
     let current_time = state.playback.current_time();
@@ -370,7 +374,7 @@ fn preview_timeline_lanes(
             .left(relative(playhead_fraction))
             .ml(px(-1.0))
             .w(px(2.0))
-            .bg(color(palette.text_primary))
+            .bg(color(scheme.on_surface))
             .child(
                 div()
                     .absolute()
@@ -379,12 +383,13 @@ fn preview_timeline_lanes(
                     .ml(px(1.0))
                     .size(theme::ui_rem(PREVIEW_PLAYHEAD_KNOB_SIZE))
                     .rounded_full()
-                    .bg(color(palette.text_primary)),
+                    .bg(color(scheme.on_surface)),
             ),
     )
 }
 
 fn preview_timeline_ruler(duration: f64, palette: &'static theme::ThemePalette) -> gpui::Div {
+    let scheme = timeline_scheme(palette);
     div()
         .relative()
         .w_full()
@@ -398,9 +403,9 @@ fn preview_timeline_ruler(duration: f64, palette: &'static theme::ThemePalette) 
                 .left(relative(unit_f64_to_f32(time / duration)))
                 .pl_1()
                 .border_l_1()
-                .border_color(color(palette.border_subtle))
-                .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE - 1.0))
-                .text_color(color(palette.text_muted))
+                .border_color(color(scheme.outline_variant))
+                .m3_type(typography::BODY_SMALL)
+                .text_color(color(scheme.on_surface_variant))
                 .child(format_timeline_ruler_time(time, duration))
         }))
 }
@@ -413,6 +418,7 @@ fn preview_timeline_lane(
     cx: &Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
+    let scheme = timeline_scheme(palette);
     let current_time = state.playback.current_time();
     let active_clip = track
         .clips
@@ -451,8 +457,8 @@ fn preview_timeline_lane(
         .relative()
         .w_full()
         .h(theme::ui_rem(PREVIEW_TIMELINE_LANE_HEIGHT))
-        .rounded(theme::ui_rem(theme::RADIUS_SM))
-        .bg(color(palette.fill_subtle))
+        .rounded(theme::ui_rem(shape::CORNER_SMALL))
+        .bg(color(scheme.surface_container))
         .children(track.clips.iter().map(|clip| {
             preview_timeline_clip(
                 state,
@@ -487,6 +493,7 @@ fn preview_timeline_clip(
     icon: &'static str,
 ) -> gpui::Div {
     let palette = state.palette;
+    let scheme = timeline_scheme(palette);
     let start_fraction =
         timeline_fraction_from_percent(state.playback.to_timeline_percent(clip.start));
     let end_fraction = timeline_fraction_from_percent(state.playback.to_timeline_percent(clip.end));
@@ -498,12 +505,12 @@ fn preview_timeline_clip(
         .left(relative(start_fraction))
         .right(relative((1.0 - end_fraction).max(0.0)))
         .overflow_hidden()
-        .rounded(theme::ui_rem(theme::RADIUS_SM))
-        .bg(color(palette.accent.with_alpha(0.22)))
+        .rounded(theme::ui_rem(shape::CORNER_SMALL))
+        .bg(color(scheme.primary_container))
         .border_color(color(if active {
-            palette.accent
+            scheme.primary
         } else {
-            palette.accent.with_alpha(0.35)
+            scheme.outline_variant
         }))
         .when(active, gpui::Styled::border_2)
         .when(!active, gpui::Styled::border_1)
@@ -511,25 +518,25 @@ fn preview_timeline_clip(
         .flex()
         .items_center()
         .gap(theme::ui_rem(6.0))
-        .text_color(color(palette.text_primary))
-        .child(
-            div()
-                .flex_none()
-                .child(icon_svg(icon, 14.0, color(palette.text_primary))),
-        )
+        .text_color(color(scheme.on_primary_container))
+        .child(div().flex_none().child(m3::m3_icon(
+            timeline_symbol(icon),
+            false,
+            16.0,
+            color(scheme.on_primary_container),
+        )))
         .child(
             div()
                 .min_w_0()
                 .truncate()
-                .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
-                .font_weight(theme::TEXT_WEIGHT_MEDIUM)
+                .m3_type(typography::LABEL_MEDIUM)
                 .child(name.to_string()),
         )
         .child(
             div()
                 .flex_none()
-                .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE - 1.0))
-                .text_color(color(palette.text_muted))
+                .m3_type(typography::BODY_SMALL)
+                .text_color(color(scheme.on_primary_container))
                 .child(format_clip_duration(clip.duration())),
         )
 }
@@ -541,6 +548,7 @@ fn preview_timeline_cut_region(
     enabled: bool,
 ) -> gpui::Stateful<gpui::Div> {
     let palette = state.palette;
+    let scheme = timeline_scheme(palette);
     let start_fraction =
         timeline_fraction_from_percent(state.playback.to_timeline_percent(cut.start));
     let end_fraction = timeline_fraction_from_percent(state.playback.to_timeline_percent(cut.end));
@@ -554,11 +562,11 @@ fn preview_timeline_cut_region(
         .right(relative((1.0 - end_fraction).max(0.0)))
         .top(theme::ui_rem(PREVIEW_TIMELINE_CLIP_INSET))
         .bottom(theme::ui_rem(PREVIEW_TIMELINE_CLIP_INSET))
-        .rounded(theme::ui_rem(theme::RADIUS_SM))
+        .rounded(theme::ui_rem(shape::CORNER_SMALL))
         .border_1()
         .border_dashed()
-        .border_color(color(palette.danger.with_alpha(0.6)))
-        .bg(color(palette.danger.with_alpha(0.12)));
+        .border_color(color(scheme.error.with_alpha(0.6)))
+        .bg(color(scheme.error.with_alpha(0.12)));
 
     if !enabled {
         return region;
@@ -590,27 +598,18 @@ pub(in crate::app) fn preview_cut_button(
         .cut_index_at(state.playback.current_time())
         .is_some();
 
-    preview_tool_button(
+    m3::Button::new(
         "preview-cut-toggle",
-        assets::ICON_SCISSORS,
-        if in_cut {
-            "Restore removed segment"
-        } else {
-            "Remove segment from playhead"
-        },
-        in_cut,
-        // Existing cuts stay removable even when new ones are unavailable (e.g. stream copy).
-        if in_cut {
-            preview_trim_enabled(state)
-        } else {
-            preview_cut_enabled(state)
-        },
-        state.tooltip_visible_id.as_deref(),
-        super::super::components::TooltipPlacement::Above,
-        state.palette,
-        window,
-        cx,
+        if in_cut { "Restore" } else { "Remove segment" },
+        m3::ButtonVariant::Tonal,
     )
+    .icon(Symbol::ContentCut)
+    .enabled(if in_cut {
+        preview_trim_enabled(state)
+    } else {
+        preview_cut_enabled(state)
+    })
+    .build(timeline_scheme(state.palette), window, cx)
     .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
         if root.toggle_preview_cut_at_playhead() {
             cx.notify();
@@ -638,6 +637,7 @@ pub(in crate::app) fn preview_timeline_handle(
     palette: &'static theme::ThemePalette,
     cx: &Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
+    let scheme = timeline_scheme(palette);
     let duration = playback.duration();
     let fraction = timeline_fraction_from_percent(playback.to_timeline_percent(value));
     let (handle_id, label): (ElementId, SharedString) = match target {
@@ -675,8 +675,8 @@ pub(in crate::app) fn preview_timeline_handle(
         .left(relative(fraction))
         .ml(theme::ui_rem(offset))
         .w(theme::ui_rem(width))
-        .rounded(theme::ui_rem(theme::RADIUS_SM))
-        .when(active, |this| this.bg(color(palette.accent)))
+        .rounded(theme::ui_rem(shape::CORNER_SMALL))
+        .when(active, |this| this.bg(color(scheme.primary)))
         .flex()
         .items_center()
         .justify_center()
@@ -740,14 +740,15 @@ pub(in crate::app) fn preview_timeline_handle(
 }
 
 fn preview_timeline_handle_grip(active: bool, palette: &'static theme::ThemePalette) -> gpui::Div {
+    let scheme = timeline_scheme(palette);
     div()
         .w(px(2.0))
         .h(theme::ui_rem(14.0))
         .rounded(px(1.0))
         .bg(if active {
-            preview_selection_line_color()
+            color(scheme.on_primary)
         } else {
-            color(palette.text_primary.with_alpha(0.6)).into()
+            color(scheme.on_surface.with_alpha(0.6))
         })
 }
 
@@ -828,28 +829,22 @@ pub(in crate::app) fn preview_play_button(
     cx: &mut Context<FrameRoot>,
 ) -> impl IntoElement {
     let enabled = preview_trim_enabled(state);
-    let icon = if state.playback.is_playing() {
-        assets::ICON_PAUSE
-    } else {
-        assets::ICON_PLAY
-    };
-
-    preview_tool_button(
+    m3::IconButton::new(
         "preview-playback-toggle",
-        icon,
+        if state.playback.is_playing() {
+            Symbol::Pause
+        } else {
+            Symbol::PlayArrow
+        },
         if state.playback.is_playing() {
             "Pause preview"
         } else {
             "Play preview"
         },
-        false,
-        enabled,
-        state.tooltip_visible_id.as_deref(),
-        super::super::components::TooltipPlacement::Above,
-        state.palette,
-        window,
-        cx,
     )
+    .variant(m3::IconButtonVariant::Filled)
+    .enabled(enabled)
+    .build(timeline_scheme(state.palette), window, cx)
     .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
         if root.toggle_preview_playback_with_context(cx) {
             cx.notify();
@@ -903,4 +898,22 @@ pub(in crate::app) fn timeline_keyboard_key_is_handled(key: &str) -> bool {
         key,
         "left" | "down" | "right" | "up" | "pageup" | "pagedown" | "home" | "end"
     )
+}
+
+fn timeline_scheme(palette: &theme::ThemePalette) -> &'static material::ColorScheme {
+    material::scheme(if palette.is_light() {
+        ColorTheme::Light
+    } else {
+        ColorTheme::Dark
+    })
+}
+
+fn timeline_symbol(icon: &str) -> Symbol {
+    if icon == assets::ICON_MUSIC {
+        Symbol::MusicNote
+    } else if icon == assets::ICON_FILE_IMAGE {
+        Symbol::Image
+    } else {
+        Symbol::Movie
+    }
 }

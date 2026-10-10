@@ -127,6 +127,7 @@ impl FrameRoot {
             last_update_check_at: persisted_settings.last_update_check_at,
             update_ui: UpdateUiState::default(),
             m3_gallery: None,
+            workspace_ui: workspace::WorkspaceState::default(),
         };
 
         root.apply_visual_fixture(visual_fixture_from_env_value(

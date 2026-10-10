@@ -1772,6 +1772,23 @@ impl FrameRoot {
         self.update_selected_config(|config| apply_cut_segments(config, cuts))
     }
 
+    pub(super) fn skip_preview_seconds(&mut self, seconds: f64, cx: &Context<Self>) -> bool {
+        if !self.preview_timeline_enabled() {
+            return false;
+        }
+        let duration = self.preview_ui.playback.duration();
+        if duration <= 0.0 {
+            return false;
+        }
+        let time = (self.preview_ui.playback.current_time() + seconds).clamp(0.0, duration);
+        self.cancel_trim_preview_seek();
+        let command = self
+            .preview_ui
+            .playback
+            .seek_once_to_percent(time / duration);
+        self.apply_preview_media_command(command, true, Some(cx))
+    }
+
     pub(super) fn toggle_preview_playback_with_context(&mut self, cx: &Context<Self>) -> bool {
         self.toggle_preview_playback_internal(Some(cx))
     }

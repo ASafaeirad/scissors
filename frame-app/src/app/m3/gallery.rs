@@ -41,11 +41,13 @@ const TOOLS: [(Symbol, &str, &str); 5] = [
 const FILTERS: [&str; 4] = ["All", "Video", "Audio", "Images"];
 const ASPECTS: [&str; 4] = ["Original", "16:9", "9:16", "1:1"];
 const FORMATS: [&str; 3] = ["MP4", "WebM", "GIF"];
-const MEDIA: [(Symbol, &str, &str); 4] = [
-    (Symbol::Movie, "recording_16.30.58.mp4", "0:19"),
+const MEDIA: [(Symbol, &str, &str); 6] = [
+    (Symbol::Movie, "recording_2026-09-25_16.30.58.mp4", "0:19"),
     (Symbol::Movie, "screen_demo_v2.mov", "0:24"),
     (Symbol::MusicNote, "lofi_background.mp3", "2:10"),
+    (Symbol::MusicNote, "voiceover_take3.wav", "0:22"),
     (Symbol::GifBox, "logo_spin.gif", "GIF"),
+    (Symbol::Image, "title_card.png", "Image"),
 ];
 
 #[derive(Clone, Debug, Default)]
@@ -185,6 +187,10 @@ impl FrameRoot {
         .child(body)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The gallery renders media cards and library controls together for visual review."
+    )]
     fn library_panel(
         state: &M3GalleryState,
         scheme: &'static ColorScheme,
@@ -206,6 +212,12 @@ impl FrameRoot {
         let media: Vec<_> = MEDIA
             .iter()
             .enumerate()
+            .filter(|(_, (icon, _, _))| match state.filter {
+                1 => *icon == Symbol::Movie,
+                2 => *icon == Symbol::MusicNote,
+                3 => matches!(icon, Symbol::GifBox | Symbol::Image),
+                _ => true,
+            })
             .map(|(index, (icon, name, badge))| {
                 div()
                     .flex()
@@ -268,10 +280,11 @@ impl FrameRoot {
             .flex_col()
             .gap(theme::ui_rem(16.0))
             .child(
-                Button::new("m3-import", "Import media", ButtonVariant::Tonal)
-                    .icon(Symbol::Upload)
-                    .build(scheme, window, cx)
-                    .w_full(),
+                div().flex().child(
+                    Button::new("m3-import", "Import media", ButtonVariant::Tonal)
+                        .icon(Symbol::Upload)
+                        .build(scheme, window, cx),
+                ),
             )
             .child(
                 div()
@@ -286,6 +299,30 @@ impl FrameRoot {
                     .grid_cols(2)
                     .gap(theme::ui_rem(12.0))
                     .children(media),
+            )
+            .child(
+                div()
+                    .border_1()
+                    .border_dashed()
+                    .border_color(color(scheme.outline))
+                    .rounded(theme::ui_rem(shape::CORNER_LARGE))
+                    .p(theme::ui_rem(16.0))
+                    .flex()
+                    .items_center()
+                    .gap(theme::ui_rem(12.0))
+                    .text_color(color(scheme.on_surface_variant))
+                    .child(m3_icon(
+                        Symbol::Upload,
+                        false,
+                        24.0,
+                        color(scheme.on_surface_variant),
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child("Drop video, audio, images or GIFs here"),
+                    ),
             )
     }
 
@@ -511,7 +548,7 @@ impl FrameRoot {
                     .px(theme::ui_rem(12.0))
                     .m3_type(typography::TITLE_SMALL)
                     .whitespace_nowrap()
-                    .child("00:06.4 / 00:24.0"),
+                    .child("00:06.4 / 00:40.0"),
             )
             .child(
                 Button::new("m3-split", "Split", ButtonVariant::Tonal)
@@ -574,6 +611,10 @@ impl FrameRoot {
         )
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The gallery keeps the ruler, track toggles, lanes, and playhead in layout order."
+    )]
     fn timeline(
         state: &M3GalleryState,
         scheme: &'static ColorScheme,
@@ -585,21 +626,21 @@ impl FrameRoot {
                 "Video",
                 Symbol::Movie,
                 false,
-                [(0.0, 0.3), (0.3, 0.3)],
+                [(0.0, 0.3), (0.3, 0.3), (0.6, 0.4)],
                 (scheme.primary_container, scheme.on_primary_container),
             ),
             (
                 "Overlay",
                 Symbol::Layers,
                 false,
-                [(0.0, 0.075), (0.45, 0.1)],
+                [(0.0, 0.075), (0.45, 0.1), (0.0, 0.0)],
                 (scheme.tertiary_container, scheme.on_tertiary_container),
             ),
             (
                 "Music",
                 Symbol::MusicNote,
                 true,
-                [(0.0, 0.6), (0.6, 0.0)],
+                [(0.0, 0.6), (0.0, 0.0), (0.0, 0.0)],
                 (scheme.secondary_container, scheme.on_secondary_container),
             ),
         ];
@@ -664,7 +705,62 @@ impl FrameRoot {
         .px(theme::ui_rem(16.0))
         .pb(theme::ui_rem(16.0))
         .child(timeline_header(scheme, window, cx))
-        .children(rows)
+        .child(
+            div()
+                .relative()
+                .child(
+                    div()
+                        .ml(theme::ui_rem(148.0))
+                        .h(theme::ui_rem(28.0))
+                        .relative()
+                        .children((0_u8..8).map(|index| {
+                            div()
+                                .absolute()
+                                .left(relative(f32::from(index) / 8.0))
+                                .top_0()
+                                .bottom_0()
+                                .border_l_1()
+                                .border_color(color(scheme.outline_variant))
+                                .pl(theme::ui_rem(4.0))
+                                .m3_type(typography::BODY_SMALL)
+                                .text_color(color(scheme.on_surface_variant))
+                                .child(format!("00:{:02}", index * 5))
+                        })),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(theme::ui_rem(6.0))
+                        .children(rows),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .left(theme::ui_rem(148.0))
+                        .right_0()
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(relative(0.16))
+                                .w(theme::ui_rem(1.0))
+                                .bg(color(scheme.on_surface))
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .top_0()
+                                        .left(theme::ui_rem(-5.5))
+                                        .size(theme::ui_rem(12.0))
+                                        .rounded_full()
+                                        .bg(color(scheme.on_surface)),
+                                ),
+                        ),
+                ),
+        )
     }
 }
 
@@ -694,7 +790,7 @@ fn top_bar(
                     div()
                         .m3_type(typography::BODY_SMALL)
                         .text_color(color(scheme.on_surface_variant))
-                        .child("3 tracks · 6 media · 00:24.0"),
+                        .child("3 tracks · 6 media · 00:40.0"),
                 ),
         )
         .child(div().flex_1())
@@ -722,7 +818,7 @@ fn timeline_header(
             div()
                 .m3_type(typography::BODY_SMALL)
                 .text_color(color(scheme.on_surface_variant))
-                .child("recording_16.30.58.mp4 · 00:00.0 – 00:12.0"),
+                .child("recording_2026-09-25_16.30.58.mp4 · 00:00.0 – 00:12.0"),
         )
         .child(div().flex_1())
         .child(
@@ -737,13 +833,27 @@ fn track_lane(
     (fill, on_fill): (crate::theme::RgbaToken, crate::theme::RgbaToken),
     icon: Symbol,
     name: &'static str,
-    clips: [(f32, f32); 2],
+    clips: [(f32, f32); 3],
     hidden: bool,
 ) -> gpui::Div {
     let clips = clips
         .into_iter()
-        .filter(|(_, width)| *width > 0.0)
-        .map(|(left, width)| {
+        .enumerate()
+        .filter(|(_, (_, width))| *width > 0.0)
+        .map(|(index, (left, width))| {
+            let selected = name == "Video" && index == 0;
+            let label = match (name, index) {
+                ("Video", 0) => "recording_2026-09-25_16.30.58.mp4",
+                ("Video", _) => "screen_demo_v2.mov",
+                ("Overlay", 0) => "title_card.png",
+                ("Overlay", _) => "logo_spin.gif",
+                _ => "lofi_background.mp3",
+            };
+            let clip_icon = match (name, index) {
+                ("Overlay", 0) => Symbol::Image,
+                ("Overlay", _) => Symbol::GifBox,
+                _ => icon,
+            };
             m3_surface(fill, shape::CORNER_SMALL)
                 .absolute()
                 .top(theme::ui_rem(4.0))
@@ -756,12 +866,54 @@ fn track_lane(
                 .px(theme::ui_rem(16.0))
                 .overflow_hidden()
                 .text_color(color(on_fill))
-                .child(m3_icon(icon, false, 16.0, color(on_fill)))
+                .when(selected, |clip| {
+                    clip.border_2().border_color(color(scheme.primary))
+                })
+                .child(
+                    div()
+                        .absolute()
+                        .left(theme::ui_rem(4.0))
+                        .w(theme::ui_rem(2.0))
+                        .h(theme::ui_rem(16.0))
+                        .bg(color(on_fill)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .right(theme::ui_rem(4.0))
+                        .w(theme::ui_rem(2.0))
+                        .h(theme::ui_rem(16.0))
+                        .bg(color(on_fill)),
+                )
+                .when(name == "Music", |clip| {
+                    clip.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .px(theme::ui_rem(24.0))
+                            .flex()
+                            .items_center()
+                            .gap(theme::ui_rem(2.0))
+                            .children((0_u16..40).map(|bar| {
+                                div()
+                                    .flex_1()
+                                    .h(theme::ui_rem(8.0 + f32::from((bar * 7) % 23)))
+                                    .bg(color(on_fill.with_alpha(0.28)))
+                            })),
+                    )
+                })
+                .child(m3_icon(clip_icon, false, 16.0, color(on_fill)))
                 .child(
                     div()
                         .m3_type(typography::LABEL_MEDIUM)
                         .truncate()
-                        .child(name),
+                        .child(label),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .m3_type(typography::BODY_SMALL)
+                        .child(format!("{:.1} s", width * 40.0)),
                 )
         });
     m3_surface(scheme.surface_container, shape::CORNER_SMALL)

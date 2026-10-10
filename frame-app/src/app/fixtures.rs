@@ -80,6 +80,22 @@ impl FrameRoot {
             }
             None => {}
         }
+        self.workspace_ui.tool = match fixture {
+            Some(VisualFixture::SettingsAudio | VisualFixture::SettingsAudioFilters) => 2,
+            Some(VisualFixture::SettingsSubtitles | VisualFixture::SettingsSubtitlesPopover) => 3,
+            Some(VisualFixture::SettingsOutput) => 4,
+            Some(
+                VisualFixture::PreviewCrop
+                | VisualFixture::SettingsVideo
+                | VisualFixture::SettingsVideoFilters
+                | VisualFixture::SettingsImages
+                | VisualFixture::SettingsMetadata
+                | VisualFixture::SettingsPresets
+                | VisualFixture::SettingsSource,
+            ) => 1,
+            Some(VisualFixture::WorkspaceLargeQueue) => 5,
+            _ => 0,
+        };
     }
 
     pub(super) fn apply_update_available_fixture(&mut self) {

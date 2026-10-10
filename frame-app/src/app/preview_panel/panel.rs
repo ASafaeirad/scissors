@@ -1,4 +1,6 @@
 use super::*;
+use crate::app::m3::{self, M3Text};
+use crate::material::{self, shape, typography};
 use crate::numeric::{f64_to_u32, u32_to_f32};
 
 #[expect(
@@ -162,7 +164,6 @@ pub(in crate::app) fn preview_panel(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let palette = settings.palette;
     let state = preview_shell_state(PreviewShellStateInput {
         selected_file: file_queue.selected_file(),
         settings,
@@ -175,13 +176,80 @@ pub(in crate::app) fn preview_panel(
         runtime_error: props.runtime_error,
     });
 
+    let scheme = material::scheme(if state.palette.is_light() {
+        ColorTheme::Light
+    } else {
+        ColorTheme::Dark
+    });
     div()
         .flex()
         .flex_col()
-        .overflow_hidden()
-        .card_surface(palette)
-        .p(theme::ui_rem(PREVIEW_PANEL_PADDING))
-        .child(preview_viewport(&state, props.viewport_focuses, window, cx))
+        .min_h_0()
+        .gap(theme::ui_rem(12.0))
+        .child(
+            m3::m3_surface(scheme.surface_container_lowest, shape::CORNER_EXTRA_LARGE)
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .items_center()
+                .p(theme::ui_rem(20.0))
+                .gap(theme::ui_rem(8.0))
+                .child(preview_viewport(&state, props.viewport_focuses, window, cx))
+                .child(
+                    m3::toolbar(
+                        m3::ToolbarVariant::Floating,
+                        m3::ToolbarColor::Standard,
+                        scheme,
+                    )
+                    .child(
+                        m3::IconButton::new(
+                            "preview-back-five",
+                            material::Symbol::Replay5,
+                            "Back 5 seconds",
+                        )
+                        .enabled(preview_trim_enabled(&state))
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(|root, _, _, cx| {
+                            if root.skip_preview_seconds(-5.0, cx) {
+                                cx.notify();
+                            }
+                        })),
+                    )
+                    .child(preview_play_button(&state, window, cx))
+                    .child(
+                        m3::IconButton::new(
+                            "preview-forward-five",
+                            material::Symbol::Forward5,
+                            "Forward 5 seconds",
+                        )
+                        .enabled(preview_trim_enabled(&state))
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(|root, _, _, cx| {
+                            if root.skip_preview_seconds(5.0, cx) {
+                                cx.notify();
+                            }
+                        })),
+                    )
+                    .child(
+                        div()
+                            .px(theme::ui_rem(12.0))
+                            .m3_type(typography::TITLE_SMALL)
+                            .child(format!(
+                                "{} / {}",
+                                format_timeline_time(
+                                    state.playback.current_time(),
+                                    state.duration_seconds
+                                ),
+                                format_timeline_time(
+                                    state.duration_seconds,
+                                    state.duration_seconds
+                                )
+                            )),
+                    )
+                    .child(preview_cut_button(&state, window, cx)),
+                ),
+        )
         .child(preview_timeline(&state, props.seek_focus, window, cx))
 }
 

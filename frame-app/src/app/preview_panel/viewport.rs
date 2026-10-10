@@ -292,6 +292,11 @@ pub(in crate::app) fn preview_viewport(
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
     let palette = state.palette;
+    let scheme = crate::material::scheme(if state.palette.is_light() {
+        ColorTheme::Light
+    } else {
+        ColorTheme::Dark
+    });
     let pan_enabled = preview_canvas_pan_enabled(state);
     let mut viewport = div()
         .id("preview-viewport")
@@ -303,9 +308,8 @@ pub(in crate::app) fn preview_viewport(
         .items_center()
         .justify_center()
         .overflow_hidden()
-        .rounded(theme::ui_rem(theme::RADIUS_MD))
-        .bg(color(palette.canvas))
-        .shadow(input_highlight_shadows(palette))
+        .rounded(theme::ui_rem(crate::material::shape::CORNER_MEDIUM))
+        .bg(color(scheme.surface_container_high))
         .track_focus(focuses.viewport)
         .tab_stop(pan_enabled)
         .child(preview_viewport_content(state, cx));
@@ -337,7 +341,7 @@ pub(in crate::app) fn preview_viewport(
 
     if state.render_image.is_some() && state.media.is_some() {
         viewport = viewport.child(PreviewViewportRoundedClip {
-            color: color(palette.surface),
+            color: color(scheme.surface_container_lowest),
         });
     }
 

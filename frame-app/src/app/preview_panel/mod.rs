@@ -9,8 +9,8 @@ use super::{
         frame_slider_handle,
     },
     primitives::{
-        ButtonVariant, FrameSurface, animated_button_colors, apply_button_motion, button_colors,
-        button_highlight_shadows, card_surface_shadows, color, icon_svg, input_highlight_shadows,
+        ButtonVariant, animated_button_colors, apply_button_motion, button_colors,
+        button_highlight_shadows, card_surface_shadows, color, icon_svg,
     },
 };
 

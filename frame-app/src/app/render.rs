@@ -170,7 +170,7 @@ impl Render for FrameRoot {
         if overlay_toolbar_active && !overlay_toolbar_panel_focus.contains_focused(window, cx) {
             overlay_toolbar_first_focus.focus(window, cx);
         }
-        let content = div().flex_1().p(theme::ui_rem(CONTENT_PADDING));
+        let content = div().flex_1().min_h_0();
         let active_content_view = if state.file_count == 0 {
             None
         } else {
@@ -512,20 +512,37 @@ impl Render for FrameRoot {
                         render_image: preview_render_image,
                         runtime_error: preview_runtime_error,
                     },
+                    workspace::WorkspaceState {
+                        export_enabled: state.can_start_conversion(),
+                        ..self.workspace_ui
+                    },
                     window,
                     cx,
                 ))
             }
-            Some(ActiveView::Logs) => content.child(logs_view(
-                &self.file_queue,
-                &self.conversion_events,
-                &self.logs_scroll_handle,
-                self.logs_follow_tail,
-                self.copied_log_file_id.as_deref(),
-                palette,
-                window,
-                cx,
-            )),
+            Some(ActiveView::Logs) => {
+                let logs = logs_view(
+                    &self.file_queue,
+                    &self.conversion_events,
+                    &self.logs_scroll_handle,
+                    self.logs_follow_tail,
+                    self.copied_log_file_id.as_deref(),
+                    palette,
+                    window,
+                    cx,
+                );
+                content.child(workspace::logs_workspace_view(
+                    logs,
+                    &self.file_queue,
+                    workspace::WorkspaceState {
+                        export_enabled: state.can_start_conversion(),
+                        ..self.workspace_ui
+                    },
+                    crate::material::scheme(self.appearance.color_theme),
+                    window,
+                    cx,
+                ))
+            }
         };
         let content = self.m3_gallery.clone().map_or(content, |gallery| {
             div()
@@ -591,7 +608,6 @@ impl Render for FrameRoot {
                     }
                 },
             ))
-            .child(titlebar(state, palette, window, cx))
             .child(content)
             .child(FileDropLifecycleProbe { owner: cx.entity() });
 
