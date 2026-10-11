@@ -3,6 +3,95 @@ use super::m3::{self, M3Text};
 use super::*;
 use crate::material::{self, Symbol, shape, typography};
 
+/// The visible time range is UI state, independent of the exported project duration.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct TimelineView {
+    start: f64,
+    span: f64,
+}
+
+impl TimelineView {
+    pub(super) const fn fit(duration: f64) -> Self {
+        Self {
+            start: 0.0,
+            span: duration.max(1.0),
+        }
+    }
+
+    fn fraction(self, time: f64) -> f32 {
+        crate::numeric::f64_to_f32((time - self.start) / self.span)
+    }
+
+    const fn time(self, fraction: f64) -> f64 {
+        fraction.mul_add(self.span, self.start).max(0.0)
+    }
+
+    fn zoom(&mut self, factor: f64) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        self.span = (self.span / factor).clamp(0.1, 86400.0 * 7.0);
+    }
+}
+
+impl FrameRoot {
+    pub(super) fn project_timeline_view(&self) -> TimelineView {
+        self.preview_ui
+            .project_timeline_view
+            .unwrap_or_else(|| TimelineView::fit(self.project_duration()))
+    }
+
+    fn zoom_project_timeline(&mut self, factor: f64) {
+        let mut view = self.project_timeline_view();
+        view.zoom(factor);
+        self.preview_ui.project_timeline_view = Some(view);
+    }
+
+    fn scroll_project_timeline(&mut self, event: &ScrollWheelEvent) -> bool {
+        let delta = event.delta.pixel_delta(px(20.0));
+        if event.modifiers.control {
+            self.zoom_project_timeline((f64::from(delta.y.as_f32()) * 0.01).exp());
+        } else {
+            // Linux and Windows already convert Shift+wheel to an X delta.
+            // Use Y only when the platform leaves the wheel on its original axis.
+            let horizontal = if delta.x == px(0.0) && event.modifiers.shift {
+                delta.y
+            } else {
+                delta.x
+            };
+            if horizontal == px(0.0) {
+                return false;
+            }
+            let Some(bounds) = self.preview_ui.timeline_track_bounds else {
+                return false;
+            };
+            let mut view = self.project_timeline_view();
+            let fraction =
+                f64::from(horizontal.as_f32()) / f64::from(bounds.size.width.as_f32().max(1.0));
+            view.start = fraction.mul_add(-view.span, view.start).max(0.0);
+            self.preview_ui.project_timeline_view = Some(view);
+        }
+        true
+    }
+
+    fn seek_project_timeline(&mut self, position: Point<Pixels>, cx: &Context<Self>) -> bool {
+        let Some(bounds) = self.preview_ui.timeline_track_bounds else {
+            return false;
+        };
+        let fraction = timeline_slider_percent_from_bounds(position, bounds);
+        let time = self.project_timeline_view().time(fraction);
+        let position = point(
+            bounds.left()
+                + bounds.size.width
+                    * crate::numeric::unit_f64_to_f32(
+                        time / self.preview_ui.playback.duration().max(f64::EPSILON),
+                    ),
+            position.y,
+        );
+        self.commit_preview_timeline_seek_at_position_with_context(position, cx)
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct LibrarySourceDrag(pub(super) String);
 
@@ -10,7 +99,7 @@ pub(super) struct LibrarySourceDrag(pub(super) String);
 struct ClipDrag {
     id: String,
     grab_x: std::rc::Rc<std::cell::Cell<Pixels>>,
-    duration: f64,
+    view: TimelineView,
 }
 
 #[derive(Clone)]
@@ -19,7 +108,7 @@ struct ClipTrimDrag {
     start: bool,
     initial_start: f64,
     initial_offset: u64,
-    duration: f64,
+    view: TimelineView,
 }
 
 pub(super) struct MediaDragPreview;
@@ -37,9 +126,14 @@ pub(super) struct ProjectTimelineState {
     pub(super) selected: Option<String>,
     pub(super) duration: f64,
     pub(super) current: f64,
+    pub(super) view: TimelineView,
     pub(super) enabled: bool,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "The panel composes its viewport input, accessible ruler, and track rows."
+)]
 pub(super) fn project_timeline(
     state: &ProjectTimelineState,
     focus: &FocusHandle,
@@ -60,7 +154,7 @@ pub(super) fn project_timeline(
     let current = *current;
     let enabled = *enabled;
     let duration = state.duration.max(1.0);
-    let count = clips.len();
+    let view = state.view;
     m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
         .id("project-timeline")
         .flex_none()
@@ -69,31 +163,161 @@ pub(super) fn project_timeline(
         .max_h(theme::ui_rem(320.0))
         .overflow_y_scroll()
         .p(theme::ui_rem(16.0))
-        .flex().flex_col().gap(theme::ui_rem(8.0))
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(8.0))
+        .text_color(color(scheme.on_surface))
+        .on_pinch(cx.listener(|root, event: &PinchEvent, _, cx| {
+            root.zoom_project_timeline(1.0 + f64::from(event.delta));
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _, cx| {
+            if root.scroll_project_timeline(event) {
+                cx.stop_propagation();
+                cx.notify();
+            }
+        }))
         .on_drop(cx.listener(|root, source: &LibrarySourceDrag, _, cx| {
             cx.stop_propagation();
-            if root.add_library_clip(&source.0) { cx.notify(); }
+            if root.add_library_clip(&source.0) {
+                cx.notify();
+            }
         }))
-        .child(div().w_full().min_w_0().flex().items_center().gap(theme::ui_rem(12.0))
-            .child(div().m3_type(typography::TITLE_SMALL).child("Project timeline"))
-            .child(div().flex_1().min_w_0().truncate().m3_type(typography::BODY_SMALL).text_color(color(scheme.on_surface_variant))
-                .child(format!("{count} tracks • Drag media here. Select a track to edit its properties."))))
-        .child(div().id("project-ruler").track_focus(focus).tab_stop(true).role(gpui::Role::Slider).aria_label("Project playhead").aria_numeric_value(current).aria_min_numeric_value(0.0).aria_max_numeric_value(duration).aria_value(current.to_string())
+        .child(project_timeline_toolbar(state, window, cx))
+        .child(
+            div()
+                .id("project-ruler")
+                .track_focus(focus)
+                .tab_stop(true)
+                .role(gpui::Role::Slider)
+                .aria_label("Project playhead")
+                .aria_numeric_value(current)
+                .aria_min_numeric_value(0.0)
+                .aria_max_numeric_value(duration)
+                .aria_value(current.to_string())
                 .on_key_down(cx.listener(|root, event: &gpui::KeyDownEvent, _, cx| {
-                    if root.adjust_preview_timeline_from_keyboard_with_context(TimelineDragTarget::Scrub, &event.keystroke.key, cx) { cx.stop_propagation(); cx.notify(); }
-                })).h(theme::ui_rem(24.0)).ml(theme::ui_rem(212.0))
-            .relative().cursor_pointer()
-            .on_mouse_down(MouseButton::Left, cx.listener(move |root, event: &MouseDownEvent, _, cx| {
-                if root.commit_preview_timeline_seek_at_position_with_context(event.position, cx) { cx.notify(); }
-            }))
-            .child(super::preview_panel::timeline::PreviewTimelineTrackBoundsProbe { owner: cx.entity() })
-            .children((0_u8..=4).map(|step| div().absolute().left(relative(f32::from(step) / 4.0)).m3_type(typography::LABEL_SMALL)
-                .text_color(color(scheme.on_surface_variant)).child(format!("{:.1}s", f64::from(step) * duration / 4.0)))))
-        .when(clips.is_empty(), |panel| panel.child(div().p(theme::ui_rem(24.0)).text_color(color(scheme.on_surface_variant)).child("Add sources from the library to start editing.")))
+                    if root.adjust_preview_timeline_from_keyboard_with_context(
+                        TimelineDragTarget::Scrub,
+                        &event.keystroke.key,
+                        cx,
+                    ) {
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                }))
+                .h(theme::ui_rem(24.0))
+                .ml(theme::ui_rem(212.0))
+                .relative()
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |root, event: &MouseDownEvent, _, cx| {
+                        if root.seek_project_timeline(event.position, cx) {
+                            cx.notify();
+                        }
+                    }),
+                )
+                .child(
+                    super::preview_panel::timeline::PreviewTimelineTrackBoundsProbe {
+                        owner: cx.entity(),
+                    },
+                )
+                .children((0_u8..=4).map(|step| {
+                    div()
+                        .absolute()
+                        .when(step < 4, |tick| tick.left(relative(f32::from(step) / 4.0)))
+                        .when(step == 4, gpui::Styled::right_0)
+                        .m3_type(typography::LABEL_SMALL)
+                        .text_color(color(scheme.on_surface_variant))
+                        .child(format!("{:.1}s", view.time(f64::from(step) / 4.0)))
+                })),
+        )
+        .when(clips.is_empty(), |panel| {
+            panel.child(
+                div()
+                    .p(theme::ui_rem(24.0))
+                    .text_color(color(scheme.on_surface_variant))
+                    .child("Add sources from the library to start editing."),
+            )
+        })
         .children(clips.iter().zip(sources).filter_map(|(placement, source)| {
             let file = files.iter().find(|file| file.id == placement.id)?;
-            Some(track_row(placement, source, file, selected.as_deref() == Some(&placement.id), duration, current, enabled, scheme, window, cx))
+            Some(track_row(
+                placement,
+                source,
+                file,
+                selected.as_deref() == Some(&placement.id),
+                view,
+                current,
+                enabled,
+                scheme,
+                window,
+                cx,
+            ))
         }))
+}
+
+fn project_timeline_toolbar(
+    state: &ProjectTimelineState,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    let scheme = state.scheme;
+    let count = state.clips.len();
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(theme::ui_rem(12.0))
+        .child(
+            div()
+                .m3_type(typography::TITLE_SMALL)
+                .child("Project timeline"),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .m3_type(typography::BODY_SMALL)
+                .text_color(color(scheme.on_surface_variant))
+                .child(format!(
+                    "{count} tracks • Ctrl+wheel or pinch to zoom. Shift+wheel to pan."
+                )),
+        )
+        .children(
+            [
+                (
+                    "timeline-zoom-out",
+                    Symbol::ZoomOut,
+                    "Zoom out timeline",
+                    0.8,
+                ),
+                ("timeline-zoom-in", Symbol::ZoomIn, "Zoom in timeline", 1.25),
+            ]
+            .into_iter()
+            .map(|(id, symbol, label, factor)| {
+                m3::IconButton::new(id, symbol, label)
+                    .size(m3::IconButtonSize::ExtraSmall)
+                    .build(scheme, window, cx)
+                    .on_click(cx.listener(move |root, _, _, cx| {
+                        root.zoom_project_timeline(factor);
+                        cx.notify();
+                    }))
+            }),
+        )
+        .child(
+            m3::Button::new("timeline-fit", "Fit", m3::ButtonVariant::Text)
+                .size(m3::ButtonSize::ExtraSmall)
+                .build(scheme, window, cx)
+                .on_click(cx.listener(|root, _, _, cx| {
+                    root.preview_ui.project_timeline_view =
+                        Some(TimelineView::fit(root.project_duration()));
+                    cx.notify();
+                })),
+        )
 }
 
 #[expect(
@@ -109,7 +333,7 @@ fn track_row(
     source: &frame_core::types::TimelineSource,
     file: &FileItem,
     selected: bool,
-    duration: f64,
+    view: TimelineView,
     current: f64,
     enabled: bool,
     scheme: &'static material::ColorScheme,
@@ -223,15 +447,13 @@ fn track_row(
                 .min_w_0()
                 .h(theme::ui_rem(40.0))
                 .relative()
+                .overflow_hidden()
                 .rounded(theme::ui_rem(shape::CORNER_SMALL))
                 .bg(color(scheme.surface_container_highest))
                 .cursor_pointer()
                 .on_click(cx.listener(|root, event: &gpui::ClickEvent, _, cx| {
                     if let gpui::ClickEvent::Mouse(event) = event
-                        && root.commit_preview_timeline_seek_at_position_with_context(
-                            event.up.position,
-                            cx,
-                        )
+                        && root.seek_project_timeline(event.up.position, cx)
                     {
                         cx.notify();
                     }
@@ -244,8 +466,8 @@ fn track_row(
                             return;
                         }
                         let x = event.event.position.x - event.bounds.origin.x - drag.grab_x.get();
-                        let offset =
-                            (f64::from(x.as_f32()) / width * drag.duration * 1000.0).max(0.0);
+                        let offset = drag.view.time(f64::from(x.as_f32()) / width) * 1000.0;
+                        root.preview_ui.project_timeline_view = Some(drag.view);
                         if root
                             .move_project_clip(&drag.id, crate::numeric::rounded_f64_to_u64(offset))
                         {
@@ -260,10 +482,11 @@ fn track_row(
                         if width <= 0.0 {
                             return;
                         }
-                        let time =
+                        let time = drag.view.time(
                             f64::from((event.event.position.x - event.bounds.origin.x).as_f32())
-                                / width
-                                * drag.duration;
+                                / width,
+                        );
+                        root.preview_ui.project_timeline_view = Some(drag.view);
                         root.trim_project_clip(
                             &drag.id,
                             drag.start,
@@ -280,8 +503,8 @@ fn track_row(
                         .absolute()
                         .top_0()
                         .bottom_0()
-                        .left(relative(crate::numeric::unit_f64_to_f32(start / duration)))
-                        .w(relative(crate::numeric::unit_f64_to_f32(length / duration)))
+                        .left(relative(view.fraction(start)))
+                        .w(relative(crate::numeric::f64_to_f32(length / view.span)))
                         .min_w(theme::ui_rem(16.0))
                         .rounded(theme::ui_rem(shape::CORNER_SMALL))
                         .bg(color(if selected {
@@ -345,7 +568,7 @@ fn track_row(
                                 ClipDrag {
                                     id: id.clone(),
                                     grab_x: grab.clone(),
-                                    duration,
+                                    view,
                                 },
                                 move |drag, position, _, cx| {
                                     drag.grab_x.set(position.x);
@@ -375,7 +598,7 @@ fn track_row(
                                         ClipTrimDrag {
                                             id: id.clone(),
                                             start,
-                                            duration,
+                                            view,
                                             initial_offset: placement.offset_millis,
                                             initial_start: file
                                                 .config
@@ -394,9 +617,7 @@ fn track_row(
                         .top_0()
                         .bottom_0()
                         .w(theme::ui_rem(2.0))
-                        .left(relative(crate::numeric::unit_f64_to_f32(
-                            current / duration,
-                        )))
+                        .left(relative(view.fraction(current)))
                         .bg(color(scheme.on_surface)),
                 ),
         )
@@ -418,6 +639,74 @@ mod tests {
                 let state = root.project_render_state().unwrap();
                 project_timeline(&state.timeline, &self.focus, window, cx)
             })
+        }
+    }
+
+    #[test]
+    fn shift_scroll_pans_with_original_and_platform_converted_axes() {
+        let mut root = FrameRoot::new();
+        let view = TimelineView {
+            start: 10.0,
+            span: 20.0,
+        };
+        root.preview_ui.timeline_track_bounds = Some(Bounds::new(
+            point(px(0.0), px(0.0)),
+            size(px(200.0), px(24.0)),
+        ));
+        for delta in [
+            gpui::ScrollDelta::Pixels(point(px(0.0), px(-20.0))),
+            gpui::ScrollDelta::Pixels(point(px(-20.0), px(0.0))),
+            gpui::ScrollDelta::Lines(point(0.0, -1.0)),
+            gpui::ScrollDelta::Lines(point(-1.0, 0.0)),
+        ] {
+            root.preview_ui.project_timeline_view = Some(view);
+            assert!(root.scroll_project_timeline(&ScrollWheelEvent {
+                delta,
+                modifiers: Modifiers {
+                    shift: true,
+                    ..Modifiers::default()
+                },
+                ..ScrollWheelEvent::default()
+            }));
+            assert_eq!(
+                root.project_timeline_view(),
+                TimelineView {
+                    start: 12.0,
+                    span: 20.0
+                }
+            );
+        }
+        root.preview_ui.project_timeline_view = Some(view);
+        assert!(!root.scroll_project_timeline(&ScrollWheelEvent {
+            delta: gpui::ScrollDelta::Lines(point(0.0, -1.0)),
+            ..ScrollWheelEvent::default()
+        }));
+        assert_eq!(root.project_timeline_view(), view);
+    }
+
+    #[test]
+    fn zoom_keeps_visible_start_fixed_and_limits_invalid_gestures() {
+        for start in [0.0, 30.0] {
+            let original = TimelineView { start, span: 100.0 };
+            let mut view = original;
+            view.zoom(4.0);
+            assert_eq!(view, TimelineView { start, span: 25.0 });
+            view.zoom(0.25);
+            assert_eq!(view, original);
+            for factor in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+                view.zoom(factor);
+                assert_eq!(view, original);
+            }
+            view.zoom(1e9);
+            assert_eq!(view, TimelineView { start, span: 0.1 });
+            view.zoom(1e-9);
+            assert_eq!(
+                view,
+                TimelineView {
+                    start,
+                    span: 604_800.0
+                }
+            );
         }
     }
 
@@ -459,7 +748,10 @@ mod tests {
             );
             let time = root.read_with(cx, |root, _| root.preview_ui.playback.current_time());
             assert!(
-                f64::from(fraction).mul_add(-8.0, time).abs() < 0.01,
+                f64::from(fraction)
+                    .mul_add(-root.read_with(cx, |root, _| root.project_duration()), time)
+                    .abs()
+                    < 0.01,
                 "playhead was {time}"
             );
         }
@@ -476,6 +768,180 @@ mod tests {
                     .collect::<Vec<_>>(),
                 original
             );
+        });
+    }
+
+    #[test]
+    fn dragging_and_trimming_use_the_panned_zoom_scale() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|_, cx| {
+            let root = cx.new(|_| {
+                let mut root = FrameRoot::new();
+                root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                root.preview_ui.project_timeline_view = Some(TimelineView {
+                    start: 2.0,
+                    span: 8.0,
+                });
+                root
+            });
+            TimelineTestView {
+                root,
+                focus: cx.focus_handle(),
+            }
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let bounds = root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
+        let id = root.read_with(cx, |root, _| root.project.clips[0].id.clone());
+        let start = point(
+            bounds.left() + bounds.size.width * 0.125,
+            bounds.bottom() + px(28.0),
+        );
+        // GPUI starts the drag after crossing its threshold and captures that grab point.
+        let end = point(start.x + px(8.0) + bounds.size.width * 0.125, start.y);
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            point(start.x + px(8.0), start.y),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        root.read_with(cx, |root, _| {
+            assert!(
+                root.project.clips[0].offset_millis.abs_diff(1000) <= 1,
+                "offset {}",
+                root.project.clips[0].offset_millis
+            );
+            assert_eq!(
+                root.project_timeline_view(),
+                TimelineView {
+                    start: 2.0,
+                    span: 8.0
+                }
+            );
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        let start = point(bounds.left() + bounds.size.width * 0.375 - px(3.0), end.y);
+        let end = point(bounds.left() + bounds.size.width * 0.25, end.y);
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            point(start.x + px(8.0), start.y),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        root.read_with(cx, |root, _| {
+            let trim_end = root
+                .file_queue
+                .file_by_id(&id)
+                .unwrap()
+                .config
+                .end_time
+                .as_deref()
+                .map_or(0.0, parse_time_to_seconds);
+            assert!((trim_end - 3.0).abs() < 0.01, "trim end was {trim_end}");
+            assert_eq!(
+                root.project_timeline_view(),
+                TimelineView {
+                    start: 2.0,
+                    span: 8.0
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn wheel_pinch_and_pan_preserve_output_and_seek_visible_time() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|_, cx| {
+            let root = cx.new(|_| {
+                let mut root = FrameRoot::new();
+                root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                root.preview_ui.playback =
+                    preview_playback_state(PreviewMediaKind::Video, 8.0, None, None);
+                root
+            });
+            TimelineTestView {
+                root,
+                focus: cx.focus_handle(),
+            }
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let bounds = root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
+        let original = root.read_with(cx, |root, _| {
+            root.project
+                .clips
+                .iter()
+                .map(|clip| clip.offset_millis)
+                .collect::<Vec<_>>()
+        });
+        let output = root.read_with(cx, |root, _| root.project_config().unwrap().end_time);
+        let duration = root.read_with(cx, |root, _| root.project_duration());
+        let initial_view = TimelineView {
+            start: 1.0,
+            span: duration,
+        };
+        root.update(cx, |root, _| {
+            root.preview_ui.project_timeline_view = Some(initial_view);
+        });
+        let position = bounds.center();
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: gpui::ScrollDelta::Lines(point(0.0, 1.0)),
+            modifiers: Modifiers {
+                control: true,
+                ..Modifiers::default()
+            },
+            ..ScrollWheelEvent::default()
+        });
+        let wheel_view = root.read_with(cx, |root, _| root.project_timeline_view());
+        assert!(wheel_view.span < duration);
+        assert!((wheel_view.start - initial_view.start).abs() < f64::EPSILON);
+        cx.simulate_event(PinchEvent {
+            position: point(bounds.left() + bounds.size.width * 0.75, position.y),
+            delta: 1.0,
+            ..PinchEvent::default()
+        });
+        let pinch_view = root.read_with(cx, |root, _| root.project_timeline_view());
+        assert!((pinch_view.span - wheel_view.span / 2.0).abs() < 0.001);
+        assert!((pinch_view.start - initial_view.start).abs() < f64::EPSILON);
+        cx.simulate_click(position, Modifiers::default());
+        root.read_with(cx, |root, _| {
+            assert!(
+                (root.preview_ui.playback.current_time() - pinch_view.time(0.5)).abs() < 0.01,
+                "actual {}, expected {}, bounds {:?}",
+                root.preview_ui.playback.current_time(),
+                pinch_view.time(0.5),
+                root.preview_ui.timeline_track_bounds
+            );
+            assert!((root.project_duration() - (duration)).abs() < f64::EPSILON);
+            assert_eq!(root.project_config().unwrap().end_time, output);
+            assert_eq!(
+                root.project
+                    .clips
+                    .iter()
+                    .map(|clip| clip.offset_millis)
+                    .collect::<Vec<_>>(),
+                original
+            );
+        });
+        cx.simulate_event(ScrollWheelEvent {
+            position,
+            delta: gpui::ScrollDelta::Pixels(point(px(-100.0), px(0.0))),
+            ..ScrollWheelEvent::default()
+        });
+        let panned_view = root.read_with(cx, |root, _| root.project_timeline_view());
+        assert!(panned_view.start > pinch_view.start);
+        assert!((panned_view.span - (pinch_view.span)).abs() < f64::EPSILON);
+        root.update(cx, |root, _| {
+            let id = root.project.clips[0].id.clone();
+            assert!(root.move_project_clip(&id, 20_000));
+            assert_eq!(root.project_timeline_view(), panned_view);
         });
     }
 }

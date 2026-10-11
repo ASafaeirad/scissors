@@ -57,6 +57,7 @@ impl FrameRoot {
                 files: self.file_queue.files().to_vec(),
                 selected: self.file_queue.selected_file_id().map(str::to_string),
                 duration: self.project_duration(),
+                view: self.project_timeline_view(),
                 current: self.preview_ui.playback.current_time(),
                 enabled: !self.is_processing,
             },

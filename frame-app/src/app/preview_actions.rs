@@ -1766,11 +1766,12 @@ impl FrameRoot {
         true
     }
 
-    pub(in crate::app) const fn set_preview_timeline_track_bounds(
-        &mut self,
-        bounds: Bounds<Pixels>,
-    ) {
+    pub(in crate::app) fn set_preview_timeline_track_bounds(&mut self, bounds: Bounds<Pixels>) {
         self.preview_ui.timeline_track_bounds = Some(bounds);
+        // Fit the first project layout once, then preserve the scale while clips change.
+        if !self.project.clips.is_empty() && self.preview_ui.project_timeline_view.is_none() {
+            self.preview_ui.project_timeline_view = Some(self.project_timeline_view());
+        }
     }
 
     #[cfg(test)]
