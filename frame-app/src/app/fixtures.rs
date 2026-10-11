@@ -104,7 +104,8 @@ impl FrameRoot {
             Some(VisualFixture::SettingsSubtitles | VisualFixture::SettingsSubtitlesPopover) => 3,
             Some(VisualFixture::SettingsOutput) => 4,
             Some(
-                VisualFixture::PreviewCrop
+                VisualFixture::ProjectTimeline
+                | VisualFixture::PreviewCrop
                 | VisualFixture::SettingsVideoFilters
                 | VisualFixture::SettingsImages
                 | VisualFixture::SettingsMetadata
@@ -157,7 +158,9 @@ impl FrameRoot {
             },
         );
         self.add_library_clip("library-audio");
-        self.workspace_ui.tool = 0;
+        let id = self.project.clips[1].id.clone();
+        self.set_project_clip_speed(&id, 2.0);
+        self.select_project_clip(&id);
     }
 
     pub(super) fn apply_update_available_fixture(&mut self) {

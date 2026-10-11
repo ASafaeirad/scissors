@@ -322,6 +322,7 @@ fn project_timeline_exports_sequence_and_previews_the_same_frames_and_audio() ->
             offset_millis: 0,
             duration_millis: 2000,
             muted: false,
+            speed: 1.0,
             config: Box::new(clip_config.clone()),
         },
         TimelineSource {
@@ -330,6 +331,7 @@ fn project_timeline_exports_sequence_and_previews_the_same_frames_and_audio() ->
             offset_millis: 1000,
             duration_millis: 2000,
             muted: false,
+            speed: 1.0,
             config: Box::new(clip_config.clone()),
         },
     ];
@@ -341,6 +343,7 @@ fn project_timeline_exports_sequence_and_previews_the_same_frames_and_audio() ->
         offset_millis: 500,
         duration_millis: 2000,
         muted: false,
+        speed: 1.0,
         config: Box::new(clip_config),
     });
     let output = sandbox.path("project.mp4");
@@ -445,6 +448,59 @@ fn sample_energy(samples: &[f32], start: usize, end: usize) -> f32 {
         .iter()
         .map(|value| value.abs())
         .fold(0.0, f32::max)
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn project_track_speed_changes_export_duration_and_keeps_audio() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("project_speed")?;
+    let input = sandbox.path("source.mp4");
+    generate_h264_aac_source(&tools, &input, 2.0, 64, 48)?;
+    let source_track = probe_media(&tools, &input)?.audio_tracks[0].index;
+    for speed in [0.5, 2.0, 20.0] {
+        let mut config = video_config("mp4", "libx264", "aac");
+        config.selected_audio_tracks = vec![source_track];
+        config.timeline_sources = vec![frame_core::types::TimelineSource {
+            path: path_arg(&input),
+            kind: "video".to_string(),
+            offset_millis: 0,
+            duration_millis: 2000,
+            muted: false,
+            speed,
+            config: Box::new(config.clone()),
+        }];
+        let output = sandbox.path(&format!("speed-{speed}.mp4"));
+        convert(&tools, &input, &output, &config)?;
+        let probe = probe_media(&tools, &output)?;
+        let duration = probe
+            .duration
+            .as_deref()
+            .and_then(frame_core::utils::parse_time)
+            .unwrap_or_default();
+        assert!(
+            (duration - 2.0 / speed).abs() < 0.1,
+            "speed={speed}, duration={duration}"
+        );
+        assert_eq!(probe.audio_tracks.len(), 1);
+        let pcm = pcm_samples(&run_tool_output(
+            &tools.ffmpeg,
+            &args(&[
+                "-i",
+                &path_arg(&output),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "48000",
+                "-f",
+                "f32le",
+                "pipe:1",
+            ]),
+        )?);
+        assert!(sample_energy(&pcm, 0, pcm.len()) > 0.01, "speed={speed}");
+    }
+    Ok(())
 }
 
 #[test]

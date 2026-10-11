@@ -18,6 +18,7 @@ pub(super) struct ClipPlacement {
     pub(super) offset_millis: u64,
     pub(super) kind: SourceKind,
     pub(super) muted: bool,
+    pub(super) speed: f64,
 }
 
 pub(super) struct ProjectRenderState {
@@ -203,6 +204,7 @@ impl FrameRoot {
             offset_millis,
             kind,
             muted: false,
+            speed: 1.0,
         });
         true
     }
@@ -252,6 +254,7 @@ impl FrameRoot {
                         } * 1000.0,
                     ),
                     muted: placement.muted,
+                    speed: placement.speed,
                     config: Box::new(core_config_from_gpui(&file.config)),
                 })
             })
@@ -287,6 +290,7 @@ impl FrameRoot {
             preview_duration_seconds(Some(metadata))
         };
         let offset = std::time::Duration::from_millis(initial_offset).as_secs_f64();
+        let speed = placement.speed;
         let Some(file) = self.file_queue.file_by_id_mut(id) else {
             return false;
         };
@@ -301,18 +305,38 @@ impl FrameRoot {
             .as_deref()
             .map_or(duration, parse_time_to_seconds);
         if leading {
-            let lower = (initial_start - offset).max(0.0);
-            let next =
-                (initial_start + project_time - offset).clamp(lower, (trim_end - 0.05).max(lower));
+            let lower = offset.mul_add(-speed, initial_start).max(0.0);
+            let next = (project_time - offset)
+                .mul_add(speed, initial_start)
+                .clamp(lower, (trim_end - 0.05).max(lower));
             file.config.start_time = Some(format_time(next));
             self.project.clips[index].offset_millis = crate::numeric::rounded_f64_to_u64(
-                (offset + next - initial_start).max(0.0) * 1000.0,
+                (offset + (next - initial_start) / speed).max(0.0) * 1000.0,
             );
         } else {
-            let next = (trim_start + project_time - offset)
+            let next = (project_time - offset)
+                .mul_add(speed, trim_start)
                 .clamp(trim_start + 0.05, duration.max(trim_start + 0.05));
             file.config.end_time = Some(format_time(next));
         }
+        true
+    }
+
+    pub(super) fn set_project_clip_speed(&mut self, id: &str, speed: f64) -> bool {
+        if self.is_processing
+            || self.update_installation_in_progress()
+            || !speed.is_finite()
+            || !(0.5..=20.0).contains(&speed)
+        {
+            return false;
+        }
+        let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) else {
+            return false;
+        };
+        if (clip.speed - speed).abs() < f64::EPSILON {
+            return false;
+        }
+        clip.speed = speed;
         true
     }
 
@@ -411,6 +435,50 @@ mod tests {
         assert!(root.move_project_clip(&second, 15_000));
         assert!((root.project_duration() - 25.0).abs() < f64::EPSILON);
         assert_eq!(root.project.clips[0].offset_millis, 0);
+    }
+
+    #[test]
+    fn speed_is_independent_and_changes_project_preview_and_export() {
+        let mut root = project();
+        root.add_library_clip("source");
+        root.add_library_clip("source");
+        let first = root.project.clips[0].id.clone();
+        let second = root.project.clips[1].id.clone();
+        assert!(root.set_project_clip_speed(&second, 0.5));
+        assert!((root.project_sources()[0].speed - 1.0).abs() < f64::EPSILON);
+        assert!((root.project_sources()[1].speed - 0.5).abs() < f64::EPSILON);
+        assert!((root.project_duration() - 30.0).abs() < f64::EPSILON);
+        assert!(
+            (root.project_config().unwrap().timeline_sources[1].speed - 0.5).abs() < f64::EPSILON
+        );
+        assert!(root.set_project_clip_speed(&second, 20.0));
+        assert!((root.project_duration() - 10.5).abs() < f64::EPSILON);
+        assert!(!root.set_project_clip_speed(&first, 20.1));
+        assert!(!root.set_project_clip_speed(&first, f64::NAN));
+        root.is_processing = true;
+        assert!(!root.set_project_clip_speed(&first, 2.0));
+    }
+
+    #[test]
+    fn trimming_a_fast_track_uses_source_time_and_keeps_its_trailing_edge() {
+        let mut root = project();
+        root.add_library_clip("source");
+        let id = root.project.clips[0].id.clone();
+        root.set_project_clip_speed(&id, 2.0);
+        assert!(root.trim_project_clip(&id, true, 1.0, 0.0, 0));
+        assert_eq!(root.project.clips[0].offset_millis, 1_000);
+        assert_eq!(
+            root.file_queue
+                .file_by_id(&id)
+                .unwrap()
+                .config
+                .start_time
+                .as_deref(),
+            Some("00:00:02.000")
+        );
+        assert!((root.project_duration() - 5.0).abs() < f64::EPSILON);
+        assert!(root.trim_project_clip(&id, false, 4.0, 2.0, 1_000));
+        assert!((root.project_duration() - 4.0).abs() < f64::EPSILON);
     }
 
     #[test]

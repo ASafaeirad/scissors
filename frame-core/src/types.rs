@@ -318,7 +318,14 @@ pub struct TimelineSource {
     pub offset_millis: u64,
     pub duration_millis: u64,
     pub muted: bool,
+    /// Playback rate, where 1.0 is normal speed.
+    #[serde(default = "normal_playback_speed")]
+    pub speed: f64,
     pub config: Box<ConversionConfig>,
+}
+
+const fn normal_playback_speed() -> f64 {
+    1.0
 }
 
 /// An audio clip placed on the source timeline. Lengths use milliseconds.

@@ -24,7 +24,7 @@ pub fn clip_duration_millis(clip: &TimelineSource) -> u64 {
                 .and_then(parse_time)
                 .unwrap_or(0.0)
     });
-    std::time::Duration::from_secs_f64(seconds.max(0.0))
+    std::time::Duration::from_secs_f64((seconds / clip.speed).max(0.0))
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
@@ -56,6 +56,11 @@ pub fn validate(config: &ConversionConfig) -> Result<(), ConversionError> {
         ));
     }
     for clip in &config.timeline_sources {
+        if !clip.speed.is_finite() || !(0.5..=20.0).contains(&clip.speed) {
+            return Err(ConversionError::InvalidInput(
+                "Track speed must be between 0.5x and 20x".to_string(),
+            ));
+        }
         if !std::path::Path::new(&clip.path).is_file() || clip.duration_millis == 0 {
             return Err(ConversionError::InvalidInput(format!(
                 "Project source is missing or has no duration: {}",
@@ -151,7 +156,7 @@ fn clip_span(clip: &TimelineSource, start: f64, end: f64) -> Option<ClipSpan> {
     let skip = (start - offset).max(0.0);
     // Cuts before the window still consume source time.
     let cuts = output_cut_ranges(config);
-    let mut source = skip;
+    let mut source = skip * clip.speed;
     for cut in &cuts {
         if cut.start > source {
             break;
@@ -268,8 +273,11 @@ pub fn add_graph(args: &mut Vec<String>, clips: &[TimelineSource], window: &Rend
             if !has_overlay(config) {
                 let mut clip_filters = build_video_filters(config, false);
                 // Burned subtitles keep the timing they had without the seek.
-                apply_preview_subtitle_timebase(&mut clip_filters, span.skip);
+                apply_preview_subtitle_timebase(&mut clip_filters, span.skip * clip.speed);
                 filters.extend(clip_filters);
+            }
+            if (clip.speed - 1.0).abs() > f64::EPSILON {
+                filters.push(format!("setpts=(PTS-STARTPTS)/{:.6}", clip.speed));
             }
             filters.extend([
                 format!("scale={width}:{height}:force_original_aspect_ratio=decrease"),
@@ -302,6 +310,7 @@ pub fn add_graph(args: &mut Vec<String>, clips: &[TimelineSource], window: &Rend
                 ];
                 filters.extend(build_audio_cut_filters(&span.cuts));
                 filters.extend(build_audio_filters(config));
+                filters.extend(speed_audio_filters(clip.speed));
                 filters.extend([
                     "aresample=48000".to_string(),
                     "aformat=sample_fmts=fltp:channel_layouts=stereo".to_string(),
@@ -338,6 +347,22 @@ pub fn add_graph(args: &mut Vec<String>, clips: &[TimelineSource], window: &Rend
         ));
     }
     args.extend(["-filter_complex".to_string(), chains.join(";")]);
+}
+
+/// Keep each tempo stage within 0.5..=2 to preserve audio quality at high rates.
+fn speed_audio_filters(mut speed: f64) -> Vec<String> {
+    let mut filters = Vec::new();
+    loop {
+        if speed <= 2.0 {
+            break;
+        }
+        filters.push("atempo=2.000000".to_string());
+        speed /= 2.0;
+    }
+    if (speed - 1.0).abs() > f64::EPSILON {
+        filters.push(format!("atempo={speed:.6}"));
+    }
+    filters
 }
 
 #[cfg(test)]
@@ -391,6 +416,7 @@ mod tests {
             offset_millis,
             duration_millis: 60_000,
             muted: false,
+            speed: 1.0,
             config: Box::new(config),
         }
     }
@@ -447,6 +473,68 @@ mod tests {
         assert_eq!(span.cuts.len(), 1);
         assert!((span.cuts[0].start - 3.0).abs() < 1e-9);
         assert!((span.cuts[0].end - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn speed_changes_duration_and_seek_after_cuts() {
+        let mut clip = clip(1_000, Some("5"), "25", &[("7", "9")]);
+        clip.speed = 2.0;
+        assert_eq!(clip_duration_millis(&clip), 9_000);
+        let span = clip_span(&clip, 4.0, 6.0).unwrap();
+        assert!((span.seek - 13.0).abs() < f64::EPSILON);
+        assert!((span.length - 12.0).abs() < f64::EPSILON);
+        assert!(span.cuts.is_empty());
+        assert!((span.to - 2.0).abs() < f64::EPSILON);
+        clip.speed = 0.5;
+        assert_eq!(clip_duration_millis(&clip), 36_000);
+    }
+
+    #[test]
+    fn speed_graph_retimes_video_and_preserves_audio_pitch() {
+        for speed in [0.5, 2.0, 20.0] {
+            let mut clip = clip(0, None, "20", &[]);
+            clip.speed = speed;
+            let mut args = Vec::new();
+            add_graph(&mut args, &[clip], &window(0.0, 40.0));
+            let graph = args.last().unwrap();
+            assert!(graph.contains(&format!("setpts=(PTS-STARTPTS)/{speed:.6}")));
+            assert!(graph.contains(&speed_audio_filters(speed).join(",")));
+        }
+        assert_eq!(
+            speed_audio_filters(20.0),
+            [
+                "atempo=2.000000",
+                "atempo=2.000000",
+                "atempo=2.000000",
+                "atempo=2.000000",
+                "atempo=1.250000",
+            ]
+        );
+        assert!(speed_audio_filters(1.0).is_empty());
+    }
+
+    #[test]
+    fn legacy_timeline_sources_default_to_normal_speed() {
+        let mut value = serde_json::to_value(clip(0, None, "20", &[])).unwrap();
+        value.as_object_mut().unwrap().remove("speed");
+        let restored: TimelineSource = serde_json::from_value(value).unwrap();
+        assert!((restored.speed - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn invalid_speeds_are_rejected_before_rendering() {
+        for speed in [0.0, 0.49, 20.1, f64::NAN, f64::INFINITY] {
+            let mut clip = clip(0, None, "20", &[]);
+            clip.speed = speed;
+            let mut config = (*clip.config).clone();
+            config.timeline_sources = vec![clip];
+            assert!(
+                validate(&config)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Track speed")
+            );
+        }
     }
 
     #[test]
