@@ -279,7 +279,7 @@ pub fn accent_preset_schemes(theme: ColorTheme) -> &'static [ColorScheme; 6] {
 }
 
 /// Resolves a complete tonal-spot scheme from an opaque accent seed.
-/// The default seed preserves Frame's original baseline exactly.
+/// The purple preset preserves Frame's original baseline exactly.
 #[must_use]
 pub fn scheme_from_accent(
     color_theme: ColorTheme,
@@ -290,7 +290,7 @@ pub fn scheme_from_accent(
         hct::Hct,
         scheme::{Scheme, variant::SchemeTonalSpot},
     };
-    if accent == crate::appearance::AccentColor::default() {
+    if accent == crate::appearance::AccentColor::PRESETS[0].1 {
         return *scheme(color_theme);
     }
     let generated = Scheme::from(
@@ -420,10 +420,10 @@ mod tests {
     }
 
     #[test]
-    fn default_accent_preserves_the_baseline() {
+    fn purple_accent_preserves_the_baseline() {
         for theme in ColorTheme::ALL {
             assert_eq!(
-                scheme_from_accent(theme, crate::appearance::AccentColor::default()),
+                scheme_from_accent(theme, crate::appearance::AccentColor::PRESETS[0].1),
                 *scheme(theme)
             );
         }

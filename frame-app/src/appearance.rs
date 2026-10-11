@@ -175,7 +175,7 @@ pub struct AccentColor(u32);
 
 impl Default for AccentColor {
     fn default() -> Self {
-        Self(0x0067_50A4)
+        Self(0x0000_61A4)
     }
 }
 
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn accent_hex_accepts_opaque_srgb_and_rejects_invalid_values() {
-        let expected = AccentColor::default();
+        let expected = AccentColor::PRESETS[0].1;
         assert_eq!(AccentColor::from_hex(" #6750a4 "), Some(expected));
         assert_eq!(AccentColor::from_hex("6750A4"), Some(expected));
         assert_eq!(expected.hex(), "#6750A4");
@@ -243,13 +243,13 @@ mod tests {
     }
 
     #[test]
-    fn default_appearance_uses_unscaled_ui() {
+    fn default_appearance_uses_unscaled_ui_and_blue_accent() {
         assert_eq!(
             AppearanceSettings::default(),
             AppearanceSettings {
                 ui_scale: ScalePreset::Percent100,
                 color_theme: ColorTheme::Dark,
-                accent_color: crate::appearance::AccentColor::default(),
+                accent_color: AccentColor::PRESETS[1].1,
             }
         );
     }

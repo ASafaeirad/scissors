@@ -725,24 +725,20 @@ mod frame_root_conversion {
         root.appearance.color_theme = ColorTheme::Light;
         root.appearance.ui_scale = ScalePreset::Percent150;
         root.open_app_settings();
-        root.write_text_input_value(FrameTextInputKind::AccentColor, "#006A60");
+        root.set_accent_color(crate::appearance::AccentColor::PRESETS[2].1);
         let expected = crate::appearance::AccentColor::from_hex("#006A60").unwrap();
         assert_eq!(root.appearance.accent_color, expected);
         assert_eq!(root.appearance.color_theme, ColorTheme::Light);
         assert_eq!(root.appearance.ui_scale, ScalePreset::Percent150);
         assert_eq!(persistence.load().unwrap().appearance, root.appearance);
-        // Incomplete edits must not replace the active palette or saved settings.
-        root.write_text_input_value(FrameTextInputKind::AccentColor, "#006");
-        assert_eq!(root.appearance.accent_color, expected);
-        assert_eq!(
-            persistence.load().unwrap().appearance.accent_color,
-            expected
-        );
         root.close_app_settings();
         root.open_app_settings();
-        assert_eq!(root.settings_ui.accent_color_draft, "#006A60");
+        assert_eq!(root.appearance.accent_color, expected);
         assert!(root.set_accent_color(crate::appearance::AccentColor::default()));
-        assert_eq!(root.settings_ui.accent_color_draft, "#6750A4");
+        assert_eq!(
+            persistence.load().unwrap().appearance.accent_color.hex(),
+            "#0061A4"
+        );
     }
 
     #[test]
@@ -753,7 +749,7 @@ mod frame_root_conversion {
         let mut root = FrameRoot::new_with_persistence(AppPersistence::from_settings_path(
             blocker.join("settings.json"),
         ));
-        root.write_text_input_value(FrameTextInputKind::AccentColor, "#006A60");
+        root.set_accent_color(crate::appearance::AccentColor::PRESETS[2].1);
         assert_eq!(
             root.appearance.accent_color,
             crate::appearance::AccentColor::default()

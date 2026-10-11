@@ -71,8 +71,6 @@ pub(super) struct AppSettingsSheetProps<'a> {
     pub(super) default_output_directory: Option<&'a str>,
     pub(super) output_directory_error: Option<&'a str>,
     pub(super) appearance: AppearanceSettings,
-    pub(super) accent_color_draft: &'a str,
-    pub(super) accent_color_focus: &'a FocusHandle,
     pub(super) accent_preset_focuses: &'a [FocusHandle],
     pub(super) palette: &'static theme::ThemePalette,
     pub(super) appearance_error: Option<&'a str>,
@@ -280,8 +278,6 @@ pub(super) fn app_settings_sheet(
                                 .child(app_settings_appearance_section(
                                     props.appearance,
                                     props.appearance_error,
-                                    props.accent_color_draft,
-                                    props.accent_color_focus,
                                     props.accent_preset_focuses,
                                     props.theme_popover,
                                     props.ui_scale_popover,
@@ -436,8 +432,6 @@ fn app_settings_output_directory_section(
 fn app_settings_appearance_section(
     appearance: AppearanceSettings,
     error: Option<&str>,
-    accent_color_draft: &str,
-    accent_color_focus: &FocusHandle,
     accent_preset_focuses: &[FocusHandle],
     theme_popover: PopoverState,
     ui_scale_popover: PopoverState,
@@ -495,8 +489,6 @@ fn app_settings_appearance_section(
     )
     .child(app_settings_accent_color(
         appearance,
-        accent_color_draft,
-        accent_color_focus,
         accent_preset_focuses,
         window,
         cx,
@@ -519,17 +511,13 @@ fn app_settings_appearance_section(
 
 fn app_settings_accent_color(
     appearance: AppearanceSettings,
-    draft: &str,
-    focus: &FocusHandle,
     preset_focuses: &[FocusHandle],
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    use super::input::{FrameTextInputColors, m3_text_input};
     use crate::app::m3::{self, M3Text};
     use crate::appearance::AccentColor;
-    use crate::material::{shape, typography};
-    let scheme = &m3::scheme(appearance.color_theme, cx);
+    use crate::material::typography;
     let previews = crate::material::accent_preset_schemes(appearance.color_theme);
     let presets = AccentColor::PRESETS.iter().enumerate().fold(
         div().grid().grid_cols(2).gap(theme::ui_rem(8.0)),
@@ -560,59 +548,12 @@ fn app_settings_accent_color(
             )
         },
     );
-    let input = m3_text_input(
-        FrameTextInputSpec {
-            id: "app-settings-accent-input",
-            value: draft,
-            placeholder: "",
-            disabled: false,
-            focus: Some(focus),
-            kind: FrameTextInputKind::AccentColor,
-        },
-        FrameTextInputColors {
-            text: scheme.on_surface,
-            placeholder: scheme.on_surface_variant,
-            caret: scheme.primary,
-            selection: scheme
-                .primary
-                .with_alpha(crate::material::state::DRAGGED_OPACITY),
-        },
-        cx,
-    );
     div()
         .flex()
         .flex_col()
         .gap(theme::ui_rem(12.0))
         .child(div().m3_type(typography::LABEL_LARGE).child("Accent color"))
         .child(presets)
-        .child(
-            div()
-                .flex()
-                .items_start()
-                .gap(theme::ui_rem(12.0))
-                .child(
-                    div()
-                        .flex_none()
-                        .mt(theme::ui_rem(12.0))
-                        .size(theme::ui_rem(32.0))
-                        .rounded(theme::ui_rem(shape::CORNER_SMALL))
-                        .bg(color(scheme.primary)),
-                )
-                .child(
-                    m3::TextField::new("app-settings-accent-field", "Custom color")
-                        .input(input)
-                        .populated(!draft.is_empty())
-                        .focused(focus.is_focused(window))
-                        .container(scheme.surface_container_low)
-                        .supporting_text("Enter a six-digit hex color. Changes apply immediately.")
-                        .error(
-                            (AccentColor::from_hex(draft).is_none())
-                                .then_some("Enter six hex digits, for example #6750A4."),
-                        )
-                        .build(scheme, window, cx)
-                        .flex_1(),
-                ),
-        )
 }
 
 trait AppSettingsAppearanceValue: Copy + Eq + 'static {
@@ -2093,107 +2034,6 @@ mod tests {
     use frame_updater::{PlatformAssetKey, UpdateAssetKind, UpdateChannel, UpdatePackage};
     use semver::Version;
     use std::path::PathBuf;
-
-    struct AccentInputTestView {
-        root: gpui::Entity<FrameRoot>,
-        _subscription: gpui::Subscription,
-    }
-
-    impl gpui::Render for AccentInputTestView {
-        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            self.root.update(cx, |root, cx| {
-                crate::app::m3::update_color_schemes(root.appearance.accent_color, cx);
-                let focus = root.ensure_text_input_focus(FrameTextInputKind::AccentColor, cx);
-                if window.focused(cx).is_none() {
-                    focus.focus(window, cx);
-                }
-                let presets = crate::appearance::AccentColor::PRESETS.map(|_| cx.focus_handle());
-                div().p(theme::ui_rem(24.0)).w(theme::ui_rem(360.0)).child(
-                    app_settings_accent_color(
-                        root.appearance,
-                        &root.settings_ui.accent_color_draft,
-                        &focus,
-                        &presets,
-                        window,
-                        cx,
-                    ),
-                )
-            })
-        }
-    }
-
-    #[gpui::test]
-    fn custom_accent_can_be_replaced_and_pasted_with_native_shortcuts(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        use crate::appearance::AccentColor;
-        use gpui::{AppContext, ClipboardItem};
-        cx.update(|cx| crate::app::init_app(cx, "Frame"));
-        let (view, cx) = cx.add_window_view(|_, cx| {
-            let root = cx.new(|_| {
-                let mut root = FrameRoot::new();
-                root.open_app_settings();
-                root
-            });
-            let subscription = cx.observe(&root, |_, _, cx| cx.notify());
-            AccentInputTestView {
-                root,
-                _subscription: subscription,
-            }
-        });
-        cx.update(|window, cx| {
-            window.activate_window();
-            window.draw(cx).clear();
-        });
-        let root = view.read_with(cx, |view, _| view.root.clone());
-        let select_all = if cfg!(target_os = "macos") {
-            "cmd-a"
-        } else {
-            "ctrl-a"
-        };
-        let paste = if cfg!(target_os = "macos") {
-            "cmd-v"
-        } else {
-            "ctrl-v"
-        };
-        cx.simulate_keystrokes(select_all);
-        cx.simulate_input("#386A20");
-        cx.update(|window, cx| window.draw(cx).clear());
-        root.read_with(cx, |root, _| {
-            assert_eq!(root.settings_ui.accent_color_draft, "#386A20");
-            assert_eq!(
-                root.appearance.accent_color,
-                AccentColor::from_hex("#386A20").unwrap()
-            );
-        });
-        cx.simulate_keystrokes(select_all);
-        cx.simulate_input("#12");
-        root.read_with(cx, |root, _| {
-            assert_eq!(root.settings_ui.accent_color_draft, "#12");
-            assert_eq!(
-                root.appearance.accent_color,
-                AccentColor::from_hex("#386A20").unwrap()
-            );
-        });
-        cx.update(|_, cx| cx.write_to_clipboard(ClipboardItem::new_string("#123456".to_string())));
-        cx.simulate_keystrokes(select_all);
-        cx.simulate_keystrokes(paste);
-        cx.update(|window, cx| window.draw(cx).clear());
-        root.read_with(cx, |root, cx| {
-            assert_eq!(root.settings_ui.accent_color_draft, "#123456");
-            assert_eq!(
-                root.appearance.accent_color,
-                AccentColor::from_hex("#123456").unwrap()
-            );
-            assert_eq!(
-                crate::app::m3::scheme(root.appearance.color_theme, cx),
-                crate::material::scheme_from_accent(
-                    root.appearance.color_theme,
-                    root.appearance.accent_color
-                )
-            );
-        });
-    }
 
     #[test]
     fn release_note_emphasis_strips_markers_and_highlights_range() {

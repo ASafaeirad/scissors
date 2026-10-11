@@ -802,7 +802,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_accent_round_trips_and_invalid_or_missing_values_use_purple() {
+    fn custom_accent_round_trips_and_invalid_or_missing_values_use_blue() {
         let mut settings = AppSettings::default();
         settings.appearance.accent_color =
             crate::appearance::AccentColor::from_hex("#006A60").unwrap();

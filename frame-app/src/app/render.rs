@@ -674,8 +674,6 @@ impl Render for FrameRoot {
                 })
                 .collect::<Vec<_>>();
             let value_focus = self.ensure_text_input_focus(FrameTextInputKind::MaxConcurrency, cx);
-            let accent_color_focus =
-                self.ensure_text_input_focus(FrameTextInputKind::AccentColor, cx);
             let accent_preset_focuses = crate::appearance::AccentColor::PRESETS
                 .iter()
                 .enumerate()
@@ -764,8 +762,6 @@ impl Render for FrameRoot {
                         .and_then(std::path::Path::to_str),
                     output_directory_error: self.settings_ui.output_directory_error.as_deref(),
                     appearance: self.appearance,
-                    accent_color_draft: &self.settings_ui.accent_color_draft,
-                    accent_color_focus: &accent_color_focus,
                     accent_preset_focuses: &accent_preset_focuses,
                     palette,
                     appearance_error: self.settings_ui.appearance_error.as_deref(),

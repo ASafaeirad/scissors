@@ -29,12 +29,12 @@ pub(super) fn sanitize_replacement_text(kind: FrameTextInputKind, value: &str) -
         | FrameTextInputKind::ExternalSubtitleTitle => {
             value.chars().filter(|ch| !ch.is_control()).collect()
         }
-        FrameTextInputKind::AccentColor
-        | FrameTextInputKind::SubtitleFontColorHex
-        | FrameTextInputKind::SubtitleOutlineColorHex => value
-            .chars()
-            .filter(|ch| *ch == '#' || ch.is_ascii_hexdigit())
-            .collect(),
+        FrameTextInputKind::SubtitleFontColorHex | FrameTextInputKind::SubtitleOutlineColorHex => {
+            value
+                .chars()
+                .filter(|ch| *ch == '#' || ch.is_ascii_hexdigit())
+                .collect()
+        }
     }
 }
 
