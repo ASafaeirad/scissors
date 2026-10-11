@@ -51,7 +51,6 @@ pub(super) const MAX_IMAGE_PNG_COMPRESSION: u32 = 9;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingsTab {
-    Output,
     VideoFilters,
     Images,
     Audio,
@@ -65,7 +64,6 @@ impl SettingsTab {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Output => "Output",
             Self::VideoFilters => "Video Filters",
             Self::Images => "Images",
             Self::Audio => "Audio",
@@ -79,7 +77,6 @@ impl SettingsTab {
     #[must_use]
     pub const fn id(self) -> &'static str {
         match self {
-            Self::Output => "output",
             Self::VideoFilters => "video-filters",
             Self::Images => "images",
             Self::Audio => "audio",
@@ -91,8 +88,7 @@ impl SettingsTab {
     }
 }
 
-pub const ALL_SETTINGS_TABS: [SettingsTab; 8] = [
-    SettingsTab::Output,
+pub const ALL_SETTINGS_TABS: [SettingsTab; 7] = [
     SettingsTab::VideoFilters,
     SettingsTab::Images,
     SettingsTab::Audio,

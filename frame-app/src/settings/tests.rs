@@ -2162,7 +2162,7 @@ mod visible_settings_tabs {
     use super::*;
 
     #[test]
-    fn default_video_source_starts_with_output() {
+    fn default_video_source_starts_with_video_filters() {
         let tabs = tab_ids(super::visible_settings_tabs(
             &ConversionConfig::default(),
             None,
@@ -2171,7 +2171,6 @@ mod visible_settings_tabs {
         assert_eq!(
             tabs,
             vec![
-                "output",
                 "video-filters",
                 "audio",
                 "audio-filters",
@@ -2197,10 +2196,7 @@ mod visible_settings_tabs {
             Some(&metadata),
         ));
 
-        assert_eq!(
-            tabs,
-            vec!["output", "audio", "audio-filters", "metadata", "presets"]
-        );
+        assert_eq!(tabs, vec!["audio", "audio-filters", "metadata", "presets"]);
     }
 
     #[test]
@@ -2218,10 +2214,7 @@ mod visible_settings_tabs {
             Some(&metadata),
         ));
 
-        assert_eq!(
-            tabs,
-            vec!["output", "video-filters", "images", "metadata", "presets"]
-        );
+        assert_eq!(tabs, vec!["video-filters", "images", "metadata", "presets"]);
     }
 
     #[test]
@@ -2232,14 +2225,11 @@ mod visible_settings_tabs {
         };
         let tabs = tab_ids(super::visible_settings_tabs(&config, None));
 
-        assert_eq!(
-            tabs,
-            vec!["output", "audio", "subtitles", "metadata", "presets"]
-        );
+        assert_eq!(tabs, vec!["audio", "subtitles", "metadata", "presets"]);
     }
 
     #[test]
-    fn active_hidden_tab_falls_back_to_output() {
+    fn active_hidden_tab_falls_back_to_first_visible_tab() {
         let metadata = SourceMetadata {
             media_kind: Some(SourceKind::Audio),
             video_codec: None,
@@ -2251,6 +2241,27 @@ mod visible_settings_tabs {
             Some(&metadata),
         );
 
-        assert_eq!(active, SettingsTab::Output);
+        assert_eq!(active, SettingsTab::Audio);
+
+        let image_metadata = SourceMetadata {
+            media_kind: Some(SourceKind::Image),
+            ..SourceMetadata::default()
+        };
+        let copy_config = ConversionConfig {
+            processing_mode: ProcessingMode::Copy,
+            ..ConversionConfig::default()
+        };
+        assert_eq!(
+            resolve_active_settings_tab(
+                SettingsTab::VideoFilters,
+                &copy_config,
+                Some(&image_metadata),
+            ),
+            SettingsTab::Metadata
+        );
+        assert_eq!(
+            resolve_active_settings_tab(SettingsTab::Presets, &copy_config, Some(&metadata)),
+            SettingsTab::Presets
+        );
     }
 }

@@ -79,7 +79,6 @@ impl FrameRoot {
             }
             Some(VisualFixture::SettingsImages) => self.apply_settings_images_fixture(),
             Some(VisualFixture::SettingsMetadata) => self.apply_settings_metadata_fixture(),
-            Some(VisualFixture::SettingsOutput) => self.apply_settings_output_fixture(),
             Some(VisualFixture::SettingsPresets) => self.apply_settings_presets_fixture(),
             Some(VisualFixture::SettingsSubtitles) => self.apply_settings_subtitles_fixture(),
             Some(VisualFixture::SettingsSubtitlesPopover) => {
@@ -107,7 +106,6 @@ impl FrameRoot {
                 | VisualFixture::SettingsVideoFilters
                 | VisualFixture::SettingsImages
                 | VisualFixture::SettingsMetadata
-                | VisualFixture::SettingsOutput
                 | VisualFixture::SettingsPresets,
             ) => 1,
             Some(VisualFixture::WorkspaceLargeQueue) => 4,
@@ -188,15 +186,15 @@ impl FrameRoot {
         self.active_view = ActiveView::Workspace;
         self.file_queue = FileQueue::new();
         self.source_metadata = SourceMetadataStore::default();
-        self.settings_ui.active_tab = SettingsTab::Output;
+        self.settings_ui.active_tab = SettingsTab::VideoFilters;
     }
     pub(super) fn apply_workspace_audio_fixture(&mut self) {
         self.seed_audio_source_fixture();
-        self.settings_ui.active_tab = SettingsTab::Output;
+        self.settings_ui.active_tab = SettingsTab::Audio;
     }
     pub(super) fn apply_workspace_image_fixture(&mut self) {
         self.seed_image_source_fixture();
-        self.settings_ui.active_tab = SettingsTab::Output;
+        self.settings_ui.active_tab = SettingsTab::VideoFilters;
     }
     pub(super) fn apply_workspace_large_queue_fixture(&mut self) {
         const FILE_COUNT: usize = 500;
@@ -278,15 +276,6 @@ impl FrameRoot {
             height: 0.64,
         });
         self.preview_ui.crop_aspect = "1:1".to_string();
-    }
-    pub(super) fn apply_settings_output_fixture(&mut self) {
-        self.apply_preview_ready_fixture();
-        self.settings_ui.active_tab = SettingsTab::Output;
-        self.file_queue
-            .update_selected_output_name("source_render_review.mov");
-        if let Some(file) = self.file_queue.selected_file_mut() {
-            file.config.container = "mov".to_string();
-        }
     }
     pub(super) fn apply_export_dialog_fixture(&mut self) {
         self.apply_preview_ready_fixture();

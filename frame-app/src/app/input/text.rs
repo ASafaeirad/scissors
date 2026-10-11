@@ -14,8 +14,7 @@ pub(super) fn sanitize_replacement_text(kind: FrameTextInputKind, value: &str) -
         FrameTextInputKind::PreviewStartTime | FrameTextInputKind::PreviewEndTime => {
             sanitize_number_input(value)
         }
-        FrameTextInputKind::OutputName
-        | FrameTextInputKind::ExportName
+        FrameTextInputKind::ExportName
         | FrameTextInputKind::MetadataTitle
         | FrameTextInputKind::MetadataArtist
         | FrameTextInputKind::MetadataAlbum

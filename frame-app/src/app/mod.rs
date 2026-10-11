@@ -415,7 +415,7 @@ impl Default for SettingsUiState {
         Self {
             is_open: false,
             is_present: false,
-            active_tab: SettingsTab::Output,
+            active_tab: SettingsTab::VideoFilters,
             max_concurrency_draft: DEFAULT_MAX_CONCURRENCY.to_string(),
             max_concurrency_error: None,
             output_directory_error: None,
@@ -795,8 +795,6 @@ struct SettingsRenderState<'a> {
     metadata_status: MetadataStatus,
     metadata_error: Option<&'a str>,
     settings_disabled: bool,
-    output_name: &'a str,
-    output_name_focus: Option<&'a FocusHandle>,
     audio_bitrate_focus: Option<&'a FocusHandle>,
     video_width_focus: Option<&'a FocusHandle>,
     video_height_focus: Option<&'a FocusHandle>,

@@ -35,7 +35,7 @@ pub fn visible_settings_tabs(
             SettingsTab::Audio => supports_audio,
             SettingsTab::AudioFilters => supports_audio_filters_tab,
             SettingsTab::Subtitles => supports_subtitles,
-            SettingsTab::Output | SettingsTab::Metadata | SettingsTab::Presets => true,
+            SettingsTab::Metadata | SettingsTab::Presets => true,
         })
         .collect()
 }
@@ -46,9 +46,13 @@ pub fn resolve_active_settings_tab(
     config: &ConversionConfig,
     metadata: Option<&SourceMetadata>,
 ) -> SettingsTab {
-    if visible_settings_tabs(config, metadata).contains(&active_tab) {
+    let visible_tabs = visible_settings_tabs(config, metadata);
+    if visible_tabs.contains(&active_tab) {
         active_tab
     } else {
-        SettingsTab::Output
+        visible_tabs
+            .first()
+            .copied()
+            .unwrap_or(SettingsTab::Metadata)
     }
 }

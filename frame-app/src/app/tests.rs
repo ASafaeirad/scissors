@@ -260,7 +260,7 @@ mod frame_root_conversion {
         assert!(!root.prepare_file_for_reconversion("first"));
         assert!(!root.remove_file_from_queue("first"));
         assert!(root.text_input_disabled(FrameTextInputKind::MaxConcurrency));
-        assert!(root.text_input_disabled(FrameTextInputKind::OutputName));
+        assert!(root.text_input_disabled(FrameTextInputKind::ExportName));
         assert!(root.toggle_file_batch_selection("first").is_none());
         assert!(root.toggle_all_file_batch_selection().is_none());
         assert!(!root.select_workspace_file("second"));
@@ -1044,7 +1044,7 @@ mod frame_root_conversion {
     }
 
     #[test]
-    fn output_name_input_appends_text_at_selection() {
+    fn export_name_input_appends_text_at_selection() {
         let mut root = FrameRoot::new();
         root.file_queue
             .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
@@ -1052,11 +1052,11 @@ mod frame_root_conversion {
             .file_queue
             .selected_file()
             .map_or(0, |file| file.output_name.len());
-        root.text_input_runtime_mut(FrameTextInputKind::OutputName)
+        root.text_input_runtime_mut(FrameTextInputKind::ExportName)
             .selected_range = len..len;
 
         assert!(root.replace_text_input_range(
-            FrameTextInputKind::OutputName,
+            FrameTextInputKind::ExportName,
             None,
             "x",
             None,
@@ -1072,16 +1072,16 @@ mod frame_root_conversion {
     }
 
     #[test]
-    fn output_name_input_delete_can_leave_field_empty() {
+    fn export_name_input_delete_can_leave_field_empty() {
         let mut root = FrameRoot::new();
         root.file_queue
             .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
         root.file_queue.update_selected_output_name("a");
-        root.text_input_runtime_mut(FrameTextInputKind::OutputName)
+        root.text_input_runtime_mut(FrameTextInputKind::ExportName)
             .selected_range = 0..1;
 
         assert!(root.replace_text_input_range(
-            FrameTextInputKind::OutputName,
+            FrameTextInputKind::ExportName,
             None,
             "",
             None,
@@ -3787,21 +3787,6 @@ mod visual_fixtures {
     }
 
     #[test]
-    fn settings_output_fixture_opens_output_tab_with_output_name() {
-        let mut root = FrameRoot::new();
-
-        root.apply_visual_fixture(Some(VisualFixture::SettingsOutput));
-
-        assert_eq!(root.settings_ui.active_tab, SettingsTab::Output);
-        assert_eq!(
-            root.file_queue
-                .selected_file()
-                .map(|file| file.output_name.as_str()),
-            Some("source_render_review.mov")
-        );
-    }
-
-    #[test]
     fn settings_audio_fixture_opens_audio_tab_with_tracks_and_controls() {
         let mut root = FrameRoot::new();
 
@@ -4019,15 +4004,13 @@ mod preview_shell {
 
         SettingsRenderState {
             palette: theme::palette(crate::appearance::ColorTheme::Dark),
-            active_tab: SettingsTab::Output,
+            active_tab: SettingsTab::VideoFilters,
             tooltip_visible_id: None,
             config,
             metadata,
             metadata_status: status,
             metadata_error: None,
             settings_disabled: false,
-            output_name: "",
-            output_name_focus: None,
             audio_bitrate_focus: None,
             video_width_focus: None,
             video_height_focus: None,

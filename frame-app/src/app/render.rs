@@ -38,13 +38,8 @@ impl Render for FrameRoot {
             .ensure_selected_log_file(&self.file_queue);
         self.update_log_scroll_target();
         let selected_file_id = self.file_queue.selected_file_id().map(str::to_string);
-        let selected_file = self.file_queue.selected_file();
         let selected_config_snapshot = self.selected_config().cloned().unwrap_or_default();
-        let selected_output_name = if self.editing_project_output() {
-            self.project.output_name.clone()
-        } else {
-            selected_file.map_or_else(String::new, |file| file.output_name.clone())
-        };
+
         let preview_runtime_request = self.selected_preview_runtime_request(&source_metadata_entry);
         self.sync_preview_crop_for_selection(
             selected_file_id.as_deref(),
@@ -187,8 +182,6 @@ impl Render for FrameRoot {
                     self.preview_timeline_enabled(),
                     cx,
                 );
-                let output_name_focus =
-                    self.ensure_text_input_focus(FrameTextInputKind::OutputName, cx);
                 let audio_bitrate_focus =
                     self.ensure_text_input_focus(FrameTextInputKind::AudioBitrate, cx);
                 let video_width_focus =
@@ -408,8 +401,6 @@ impl Render for FrameRoot {
                     metadata_status: source_metadata_entry.status,
                     metadata_error: source_metadata_entry.error.as_deref(),
                     settings_disabled: self.file_queue.selected_file_locked(),
-                    output_name: &selected_output_name,
-                    output_name_focus: Some(&output_name_focus),
                     audio_bitrate_focus: Some(&audio_bitrate_focus),
                     video_width_focus: Some(&video_width_focus),
                     video_height_focus: Some(&video_height_focus),

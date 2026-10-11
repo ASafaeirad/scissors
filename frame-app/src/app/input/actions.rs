@@ -105,7 +105,7 @@ impl FrameRoot {
     pub(in crate::app) fn text_input_value(&self, kind: FrameTextInputKind) -> String {
         match kind {
             FrameTextInputKind::MaxConcurrency => self.settings_ui.max_concurrency_draft.clone(),
-            FrameTextInputKind::OutputName | FrameTextInputKind::ExportName => {
+            FrameTextInputKind::ExportName => {
                 if self.editing_project_output() {
                     self.project.output_name.clone()
                 } else {
@@ -202,7 +202,7 @@ impl FrameRoot {
                 }
                 Some(next)
             }
-            FrameTextInputKind::OutputName | FrameTextInputKind::ExportName => {
+            FrameTextInputKind::ExportName => {
                 if self.file_queue.selected_file_locked() {
                     return None;
                 }

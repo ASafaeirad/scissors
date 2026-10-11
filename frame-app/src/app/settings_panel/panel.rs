@@ -7,8 +7,8 @@ use super::{
     apply_button_motion, button_colors, button_highlight_shadows, button_motion, color, div,
     frame_tooltip, icon_svg, mix_color, panel_bottom_separator, resolve_active_settings_tab,
     settings_audio_filters_tab, settings_audio_tab, settings_images_tab, settings_metadata_tab,
-    settings_output_tab, settings_presets_tab, settings_section_label, settings_subtitles_tab,
-    settings_tab_icon, settings_video_filters_tab, theme, visible_settings_tabs,
+    settings_presets_tab, settings_section_label, settings_subtitles_tab, settings_tab_icon,
+    settings_video_filters_tab, theme, visible_settings_tabs,
 };
 use crate::settings::source_kind_for;
 
@@ -175,10 +175,6 @@ fn settings_tab_for_key(
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "Settings tab dispatch is intentionally explicit for routing clarity."
-)]
 pub(in crate::app) fn settings_tab_content(
     tab: SettingsTab,
     settings: &SettingsRenderState<'_>,
@@ -194,16 +190,6 @@ pub(in crate::app) fn settings_tab_content(
         .text_color(color(palette.text_muted));
 
     match tab {
-        SettingsTab::Output => content.child(settings_output_tab(
-            settings.config,
-            settings.metadata,
-            settings.settings_disabled,
-            settings.output_name,
-            settings.output_name_focus,
-            palette,
-            window,
-            cx,
-        )),
         SettingsTab::VideoFilters => content.child(settings_video_filters_tab(
             settings.config,
             settings.settings_disabled,
@@ -308,7 +294,7 @@ mod tests {
     use super::*;
 
     const TABS: &[SettingsTab] = &[
-        SettingsTab::Output,
+        SettingsTab::VideoFilters,
         SettingsTab::Audio,
         SettingsTab::Presets,
     ];
@@ -316,11 +302,19 @@ mod tests {
     #[test]
     fn settings_tab_for_key_handles_the_navigation_matrix() {
         let cases = [
-            (SettingsTab::Output, "left", Some(SettingsTab::Presets)),
-            (SettingsTab::Presets, "right", Some(SettingsTab::Output)),
-            (SettingsTab::Audio, "home", Some(SettingsTab::Output)),
+            (
+                SettingsTab::VideoFilters,
+                "left",
+                Some(SettingsTab::Presets),
+            ),
+            (
+                SettingsTab::Presets,
+                "right",
+                Some(SettingsTab::VideoFilters),
+            ),
+            (SettingsTab::Audio, "home", Some(SettingsTab::VideoFilters)),
             (SettingsTab::Audio, "end", Some(SettingsTab::Presets)),
-            (SettingsTab::Output, "space", None),
+            (SettingsTab::VideoFilters, "space", None),
         ];
 
         for (current, key, expected) in cases {

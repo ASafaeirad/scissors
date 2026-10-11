@@ -2072,7 +2072,7 @@ impl FrameRoot {
     pub(super) fn resolve_selected_settings_tab(&mut self, metadata: Option<&SourceMetadata>) {
         let next_tab = self
             .selected_config()
-            .map_or(SettingsTab::Output, |config| {
+            .map_or(SettingsTab::VideoFilters, |config| {
                 resolve_active_settings_tab(self.settings_ui.active_tab, config, metadata)
             });
         self.settings_ui.active_tab = next_tab;

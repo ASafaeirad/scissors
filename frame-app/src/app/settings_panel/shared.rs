@@ -68,7 +68,6 @@ pub(in crate::app) fn settings_section_label(
 
 pub(in crate::app) const fn settings_tab_icon(tab: SettingsTab) -> &'static str {
     match tab {
-        SettingsTab::Output => assets::ICON_FILE_DOWN,
         SettingsTab::VideoFilters => assets::ICON_VIDEO_FILTERS,
         SettingsTab::Images => assets::ICON_FILE_IMAGE,
         SettingsTab::Audio => assets::ICON_MUSIC,
