@@ -8,17 +8,16 @@ use super::input::{
 };
 use super::preview_actions::{
     lerp_preview_canvas_value, lerp_preview_canvas_value_for_elapsed, preview_canvas_initial_zoom,
-    preview_canvas_keyboard_pan_delta, preview_canvas_layout_metrics, preview_canvas_pan_limits,
-    preview_canvas_transform_settled, preview_canvas_transform_visual_delta,
-    preview_canvas_wheel_zoom_multiplier, preview_crop_keyboard_delta,
+    preview_canvas_layout_metrics, preview_canvas_pan_limits, preview_canvas_transform_settled,
+    preview_canvas_transform_visual_delta, preview_crop_keyboard_delta,
     preview_overlay_keyboard_delta, preview_runtime_dimensions,
 };
 use super::preview_panel::{
     format_clip_duration, format_timeline_ruler_time, format_timeline_time,
-    preview_crop_visual_rect, preview_presented_frame, preview_scroll_delta_y, preview_shell_state,
-    preview_timeline_info, preview_timeline_tracks, preview_trim_enabled,
-    preview_visual_controls_visible, timeline_fraction_from_percent,
-    timeline_keyboard_time_for_key, timeline_ruler_ticks, timeline_slider_percent_from_bounds,
+    preview_crop_visual_rect, preview_presented_frame, preview_shell_state, preview_timeline_info,
+    preview_timeline_tracks, preview_trim_enabled, preview_visual_controls_visible,
+    timeline_fraction_from_percent, timeline_keyboard_time_for_key, timeline_ruler_ticks,
+    timeline_slider_percent_from_bounds,
 };
 use super::primitives::frame_highlight_px;
 use super::settings_panel::{hex_to_subtitle_hsv, subtitle_hsv_to_hex};
@@ -3294,52 +3293,6 @@ mod frame_root_config {
     }
 
     #[test]
-    fn preview_canvas_wheel_zoom_multiplier_ignores_tail_micro_delta() {
-        let multiplier = preview_canvas_wheel_zoom_multiplier(0.06);
-
-        assert_eq!(multiplier, None);
-    }
-
-    #[test]
-    fn preview_canvas_wheel_zoom_multiplier_scales_with_delta_magnitude() {
-        let small = preview_canvas_wheel_zoom_multiplier(-0.50).expect("small multiplier");
-        let large = preview_canvas_wheel_zoom_multiplier(-2.00).expect("large multiplier");
-
-        assert!(large > small && small > 1.0);
-    }
-
-    #[test]
-    fn preview_canvas_wheel_zoom_multiplier_zooms_out_for_positive_normalized_delta() {
-        let multiplier = preview_canvas_wheel_zoom_multiplier(1.00).expect("multiplier");
-
-        assert!(multiplier < 1.0);
-    }
-
-    #[test]
-    fn upward_line_scroll_zooms_in() {
-        let delta_y = preview_scroll_delta_y(&ScrollDelta::Lines(point(0.0, 1.0)));
-        let multiplier = preview_canvas_wheel_zoom_multiplier(delta_y).expect("multiplier");
-
-        assert!(multiplier > 1.0);
-    }
-
-    #[test]
-    fn downward_pixel_scroll_zooms_out() {
-        let delta_y = preview_scroll_delta_y(&ScrollDelta::Pixels(point(px(0.0), px(-100.0))));
-        let multiplier = preview_canvas_wheel_zoom_multiplier(delta_y).expect("multiplier");
-
-        assert!(multiplier < 1.0);
-    }
-
-    #[test]
-    fn preview_canvas_wheel_zoom_multiplier_caps_extreme_delta() {
-        let capped = preview_canvas_wheel_zoom_multiplier(-100.0).expect("capped multiplier");
-        let expected = PREVIEW_CANVAS_WHEEL_ZOOM_STEP.powi(8);
-
-        assert!((capped - expected).abs() < 0.000_001);
-    }
-
-    #[test]
     fn preview_canvas_transform_waits_for_all_axes_to_settle() {
         assert!(!preview_canvas_transform_settled(
             1.0, 1.000_01, 10.0, 10.005, -10.0, -10.005,
@@ -4495,11 +4448,6 @@ mod visual_contract {
 
     #[test]
     fn preview_keyboard_delta_helpers_ignore_irrelevant_keys() {
-        assert_eq!(
-            preview_canvas_keyboard_pan_delta("right"),
-            Some(PreviewPoint { x: 24.0, y: 0.0 })
-        );
-        assert_eq!(preview_canvas_keyboard_pan_delta("enter"), None);
         assert_eq!(
             preview_crop_keyboard_delta(DragHandle::North, "up", false),
             Some(PreviewPoint { x: 0.0, y: -0.01 })

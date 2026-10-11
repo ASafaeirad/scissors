@@ -2,7 +2,7 @@ use super::*;
 use super::{
     accessibility::{
         apply_accessible_button, apply_accessible_button_with_focus, apply_accessible_slider,
-        apply_accessible_toggle_button, focus_visible_ring, handle_modal_tab_navigation,
+        apply_accessible_toggle_button, handle_modal_tab_navigation,
     },
     components::{
         FrameIconButtonSize, FrameIconButtonVariant, frame_icon_button, frame_slider,

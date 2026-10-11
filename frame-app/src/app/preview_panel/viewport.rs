@@ -1,11 +1,16 @@
-use super::*;
-use crate::app::preview_actions::{
-    preview_canvas_keyboard_pan_delta, preview_canvas_layout_metrics,
+use super::{
+    App, Arc, Bounds, ColorTheme, Context, DragMoveEvent, Element, ElementId, Entity, FrameRoot,
+    GlobalElementId, InteractiveElement, IntoElement, LayoutId, ParentElement, Pixels, Point,
+    Position, PreviewCanvasRenderState, PreviewCropDrag, PreviewMediaKind, PreviewMediaRenderState,
+    PreviewMetadataStatus, PreviewOverlayDrag, PreviewPoint, PreviewRenderPresentation,
+    PreviewShellState, PreviewTransform, PreviewViewportFocuses, RenderImage, Rgba,
+    StatefulInteractiveElement, Style, Styled, TransformationMatrix, Window, assets, color, div,
+    icon_svg, overlay_drag_point_from_bounds, point, preview_crop_aspect_bar, preview_crop_overlay,
+    preview_overlay_controls, preview_overlay_layer, preview_presented_frame, preview_toolbar,
+    preview_zoom_toolbar, px, radians, relative, size, theme,
 };
+use crate::app::preview_actions::preview_canvas_layout_metrics;
 use crate::numeric::{f64_to_f32, u32_to_f32, usize_to_f32};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct PreviewCanvasPanDrag;
 
 struct PreviewCanvasBoundsProbe {
     owner: Entity<FrameRoot>,
@@ -291,13 +296,11 @@ pub(in crate::app) fn preview_viewport(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let palette = state.palette;
     let scheme = crate::material::scheme(if state.palette.is_light() {
         ColorTheme::Light
     } else {
         ColorTheme::Dark
     });
-    let pan_enabled = preview_canvas_pan_enabled(state);
     let mut viewport = div()
         .id("preview-viewport")
         .relative()
@@ -311,33 +314,10 @@ pub(in crate::app) fn preview_viewport(
         .rounded(theme::ui_rem(crate::material::shape::CORNER_MEDIUM))
         .bg(color(scheme.surface_container_high))
         .track_focus(focuses.viewport)
-        .tab_stop(pan_enabled)
+        .tab_stop(false)
+        .role(gpui::Role::Pane)
+        .aria_label("Preview canvas")
         .child(preview_viewport_content(state, cx));
-
-    if pan_enabled {
-        let viewport_focus = focuses.viewport.clone();
-        viewport = viewport
-            .role(gpui::Role::Pane)
-            .aria_label("Preview canvas")
-            .aria_description("Use arrow keys to pan the zoomed preview.")
-            .focus_visible(move |style| focus_visible_ring(style, palette))
-            .cursor_grab()
-            .on_key_down(
-                cx.listener(move |root, event: &gpui::KeyDownEvent, window, cx| {
-                    if !viewport_focus.is_focused(window) {
-                        return;
-                    }
-                    if root
-                        .adjust_preview_canvas_pan_from_keyboard(event.keystroke.key.as_str(), cx)
-                    {
-                        cx.notify();
-                    }
-                    if preview_canvas_keyboard_pan_delta(event.keystroke.key.as_str()).is_some() {
-                        cx.stop_propagation();
-                    }
-                }),
-            );
-    }
 
     if state.render_image.is_some() && state.media.is_some() {
         viewport = viewport.child(PreviewViewportRoundedClip {
@@ -369,10 +349,6 @@ pub(in crate::app) fn preview_viewport(
     viewport
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "Preview viewport content composes the canvas, fallback, crop, and overlay layers in one render path."
-)]
 pub(in crate::app) fn preview_viewport_content(
     state: &PreviewShellState,
     cx: &Context<FrameRoot>,
@@ -380,54 +356,14 @@ pub(in crate::app) fn preview_viewport_content(
     let palette = state.palette;
     if let (Some(render_image), Some(media)) = (&state.render_image, state.media) {
         let content = div()
-            .id("preview-canvas-pan-layer")
+            .id("preview-canvas-layer")
             .absolute()
             .inset_0()
             .overflow_hidden()
             .flex()
             .items_center()
             .justify_center();
-        let content = if preview_canvas_pan_enabled(state) {
-            content
-                .cursor_grab()
-                .on_drag(PreviewCanvasPanDrag, |_drag, _position, _window, cx| {
-                    cx.new(|_| PreviewTimelineDragPreview)
-                })
-        } else {
-            content
-        };
-
-        let content = content
-            .on_pinch(cx.listener(|root, event: &PinchEvent, _window, cx| {
-                let multiplier = 1.0 + f64::from(event.delta);
-                if root.zoom_preview_canvas_at_position(event.position, multiplier, cx) {
-                    cx.stop_propagation();
-                    cx.notify();
-                }
-            }))
-            .on_scroll_wheel(cx.listener(|root, event: &ScrollWheelEvent, _window, cx| {
-                if root.zoom_preview_canvas_from_wheel(
-                    event.position,
-                    preview_scroll_delta_y(&event.delta),
-                    cx,
-                ) {
-                    cx.stop_propagation();
-                    cx.notify();
-                }
-            }))
-            .on_drag_move(cx.listener(
-                |root, event: &DragMoveEvent<PreviewCanvasPanDrag>, _window, cx| {
-                    if root.apply_preview_canvas_pan_drag(event.event.position, event.bounds, cx) {
-                        cx.notify();
-                    }
-                },
-            ))
-            .capture_any_mouse_up(cx.listener(|root, _event: &MouseUpEvent, _window, cx| {
-                if root.end_preview_canvas_pan_drag() {
-                    cx.notify();
-                }
-            }))
-            .child(PreviewCanvasBoundsProbe { owner: cx.entity() });
+        let content = content.child(PreviewCanvasBoundsProbe { owner: cx.entity() });
 
         if preview_canvas_layout_ready(state.canvas) {
             return content
@@ -586,10 +522,6 @@ pub(in crate::app) fn preview_media_stage(
     media_stage
 }
 
-pub(in crate::app) fn preview_canvas_pan_enabled(state: &PreviewShellState) -> bool {
-    preview_visual_controls_enabled(state) && !state.crop.crop_mode && !state.overlay.overlay_mode
-}
-
 fn preview_canvas_layout_ready(canvas: PreviewCanvasRenderState) -> bool {
     canvas.viewport_width > 0.0 && canvas.viewport_height > 0.0
 }
@@ -707,15 +639,6 @@ fn preview_viewport_corner_cutout(
     builder.close();
 }
 
-pub(in crate::app) fn preview_scroll_delta_y(delta: &ScrollDelta) -> f64 {
-    match delta {
-        ScrollDelta::Pixels(point) => {
-            -f64::from(point.y.as_f32()) / PREVIEW_CANVAS_WHEEL_PIXEL_DELTA_PER_STEP
-        }
-        ScrollDelta::Lines(point) => -f64::from(point.y),
-    }
-}
-
 pub(in crate::app) fn preview_media_placeholder(
     media_kind: PreviewMediaKind,
     palette: &'static theme::ThemePalette,
@@ -746,6 +669,10 @@ pub(in crate::app) fn preview_visual_controls_enabled(state: &PreviewShellState)
 
 #[cfg(test)]
 mod tests {
+    use super::super::{
+        PreviewControlAvailability, PreviewCropRenderState, PreviewOverlayRenderState,
+        PreviewPlaybackState,
+    };
     use super::*;
 
     #[test]

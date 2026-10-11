@@ -243,7 +243,6 @@ impl FrameRoot {
 
         self.preview_ui.canvas_file_id = selected_file_id.map(str::to_string);
         self.preview_ui.canvas = PreviewCanvasState::default();
-        self.preview_ui.canvas_pan_drag = None;
     }
 
     pub(super) fn sync_preview_canvas_auto_fit(&mut self) -> bool {
@@ -297,143 +296,6 @@ impl FrameRoot {
         self.preview_ui.canvas.target_pan_y = target_pan_y;
         self.preview_ui.canvas.auto_fit_pending = false;
         self.schedule_preview_frame_tick(cx);
-        true
-    }
-
-    pub(super) fn zoom_preview_canvas_at_position(
-        &mut self,
-        position: Point<Pixels>,
-        multiplier: f64,
-        cx: &Context<Self>,
-    ) -> bool {
-        if !multiplier.is_finite() || multiplier <= 0.0 {
-            return false;
-        }
-        let Some(bounds) = self.preview_ui.canvas_bounds else {
-            return false;
-        };
-        let viewport_width = f64::from(bounds.size.width.as_f32());
-        let viewport_height = f64::from(bounds.size.height.as_f32());
-        if viewport_width <= 0.0 || viewport_height <= 0.0 {
-            return false;
-        }
-        if position.x < bounds.origin.x
-            || position.x > bounds.origin.x + bounds.size.width
-            || position.y < bounds.origin.y
-            || position.y > bounds.origin.y + bounds.size.height
-        {
-            return false;
-        }
-
-        let current_zoom = self.preview_ui.canvas.target_zoom;
-        let next_zoom = clamp_preview_canvas_zoom(current_zoom * multiplier);
-        if (next_zoom - current_zoom).abs() <= f64::EPSILON {
-            return false;
-        }
-
-        let ratio = if current_zoom > f64::EPSILON {
-            next_zoom / current_zoom
-        } else {
-            1.0
-        };
-        let pointer_x = f64::from((position.x - bounds.origin.x).as_f32()) - (viewport_width / 2.0);
-        let pointer_y =
-            f64::from((position.y - bounds.origin.y).as_f32()) - (viewport_height / 2.0);
-        let target_pan_x =
-            (pointer_x - self.preview_ui.canvas.target_pan_x).mul_add(-ratio, pointer_x);
-        let target_pan_y =
-            (pointer_y - self.preview_ui.canvas.target_pan_y).mul_add(-ratio, pointer_y);
-        let (target_pan_x, target_pan_y) =
-            self.clamp_preview_canvas_pan_for_state(target_pan_x, target_pan_y, next_zoom);
-
-        self.preview_ui.canvas.auto_fit_pending = false;
-        self.preview_ui.canvas.target_zoom = next_zoom;
-        self.preview_ui.canvas.target_pan_x = target_pan_x;
-        self.preview_ui.canvas.target_pan_y = target_pan_y;
-        self.schedule_preview_frame_tick(cx);
-        true
-    }
-
-    pub(super) fn zoom_preview_canvas_from_wheel(
-        &mut self,
-        position: Point<Pixels>,
-        delta_y: f64,
-        cx: &Context<Self>,
-    ) -> bool {
-        let Some(multiplier) = preview_canvas_wheel_zoom_multiplier(delta_y) else {
-            return false;
-        };
-        self.zoom_preview_canvas_at_position(position, multiplier, cx)
-    }
-
-    pub(super) fn apply_preview_canvas_pan_drag(
-        &mut self,
-        position: Point<Pixels>,
-        bounds: Bounds<Pixels>,
-        cx: &Context<Self>,
-    ) -> bool {
-        if bounds.size.width.as_f32() <= 0.0 || bounds.size.height.as_f32() <= 0.0 {
-            return false;
-        }
-
-        let drag_state = if let Some(state) = self.preview_ui.canvas_pan_drag {
-            state
-        } else {
-            let state = PreviewCanvasPanDragState {
-                start_position: position,
-                start_pan_x: self.preview_ui.canvas.current_pan_x,
-                start_pan_y: self.preview_ui.canvas.current_pan_y,
-            };
-            self.preview_ui.canvas_pan_drag = Some(state);
-            state
-        };
-
-        let delta_x = f64::from((position.x - drag_state.start_position.x).as_f32());
-        let delta_y = f64::from((position.y - drag_state.start_position.y).as_f32());
-        let (next_pan_x, next_pan_y) = self.clamp_preview_canvas_pan_for_state(
-            drag_state.start_pan_x + delta_x,
-            drag_state.start_pan_y + delta_y,
-            self.preview_ui.canvas.target_zoom,
-        );
-        let changed = (next_pan_x - self.preview_ui.canvas.target_pan_x).abs() > f64::EPSILON
-            || (next_pan_y - self.preview_ui.canvas.target_pan_y).abs() > f64::EPSILON;
-
-        self.preview_ui.canvas.target_pan_x = next_pan_x;
-        self.preview_ui.canvas.target_pan_y = next_pan_y;
-        if changed {
-            self.preview_ui.canvas.auto_fit_pending = false;
-            self.schedule_preview_frame_tick(cx);
-        }
-        changed
-    }
-
-    pub(super) const fn end_preview_canvas_pan_drag(&mut self) -> bool {
-        let had_drag = self.preview_ui.canvas_pan_drag.is_some();
-        self.preview_ui.canvas_pan_drag = None;
-        had_drag
-    }
-
-    pub(super) fn adjust_preview_canvas_pan_from_keyboard(
-        &mut self,
-        key: &str,
-        cx: &Context<Self>,
-    ) -> bool {
-        let Some(delta) = preview_canvas_keyboard_pan_delta(key) else {
-            return false;
-        };
-        let (next_pan_x, next_pan_y) = self.clamp_preview_canvas_pan_for_state(
-            self.preview_ui.canvas.target_pan_x + delta.x,
-            self.preview_ui.canvas.target_pan_y + delta.y,
-            self.preview_ui.canvas.target_zoom,
-        );
-        let changed = (next_pan_x - self.preview_ui.canvas.target_pan_x).abs() > f64::EPSILON
-            || (next_pan_y - self.preview_ui.canvas.target_pan_y).abs() > f64::EPSILON;
-        self.preview_ui.canvas.target_pan_x = next_pan_x;
-        self.preview_ui.canvas.target_pan_y = next_pan_y;
-        if changed {
-            self.preview_ui.canvas.auto_fit_pending = false;
-            self.schedule_preview_frame_tick(cx);
-        }
         true
     }
 
@@ -2676,29 +2538,6 @@ pub(in crate::app) fn preview_overlay_keyboard_delta(
     }
 }
 
-pub(in crate::app) fn preview_canvas_keyboard_pan_delta(key: &str) -> Option<PreviewPoint> {
-    const PAN_STEP: f64 = 24.0;
-    match key {
-        "left" => Some(PreviewPoint {
-            x: -PAN_STEP,
-            y: 0.0,
-        }),
-        "right" => Some(PreviewPoint {
-            x: PAN_STEP,
-            y: 0.0,
-        }),
-        "up" => Some(PreviewPoint {
-            x: 0.0,
-            y: -PAN_STEP,
-        }),
-        "down" => Some(PreviewPoint {
-            x: 0.0,
-            y: PAN_STEP,
-        }),
-        _ => None,
-    }
-}
-
 fn preview_overlay_keyboard_start_point(
     handle: OverlayDragHandle,
     overlay: &PreviewOverlay,
@@ -2747,23 +2586,6 @@ pub(in crate::app) fn lerp_preview_canvas_value_for_elapsed(
     };
     let factor = factor.clamp(PREVIEW_CANVAS_LERP_FACTOR, 1.0);
     (target - current).mul_add(factor, current)
-}
-
-pub(in crate::app) fn preview_canvas_wheel_zoom_multiplier(delta_y: f64) -> Option<f64> {
-    if !delta_y.is_finite() {
-        return None;
-    }
-
-    let magnitude = delta_y.abs();
-    if magnitude <= PREVIEW_CANVAS_WHEEL_DEADZONE {
-        return None;
-    }
-
-    let steps =
-        (magnitude - PREVIEW_CANVAS_WHEEL_DEADZONE).min(PREVIEW_CANVAS_WHEEL_MAX_STEPS_PER_EVENT);
-    let exponent = if delta_y < 0.0 { steps } else { -steps };
-    let multiplier = PREVIEW_CANVAS_WHEEL_ZOOM_STEP.powf(exponent);
-    (multiplier.is_finite() && multiplier > 0.0).then_some(multiplier)
 }
 
 #[expect(

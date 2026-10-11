@@ -163,13 +163,12 @@ use gpui::{
     FileDropEvent, FocusHandle, GlobalElementId, InteractiveElement, IntoElement, KeyBinding,
     LayoutId, Lerp, Menu, MenuItem, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ObjectFit, PaintQuad, PinchEvent, Pixels, PlatformInput, Point, Position, PromptButton,
-    PromptLevel, Render, RenderImage, Rgba, ScrollDelta, ScrollHandle, ScrollStrategy,
-    ScrollWheelEvent, ShapedLine, SharedString, StatefulInteractiveElement, Style, Task,
-    TextRenderingMode, TextRun, TitlebarOptions, TransformationMatrix, UTF16Selection,
-    UniformListScrollHandle, Window, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowOptions, actions, canvas, deferred, div, ease_in_out, fill, hsla, img,
-    linear_color_stop, linear_gradient, point, prelude::*, px, radians, relative, size, svg,
-    uniform_list,
+    PromptLevel, Render, RenderImage, Rgba, ScrollHandle, ScrollStrategy, ScrollWheelEvent,
+    ShapedLine, SharedString, StatefulInteractiveElement, Style, Task, TextRenderingMode, TextRun,
+    TitlebarOptions, TransformationMatrix, UTF16Selection, UniformListScrollHandle, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
+    actions, canvas, deferred, div, ease_in_out, fill, hsla, img, linear_color_stop,
+    linear_gradient, point, prelude::*, px, radians, relative, size, svg, uniform_list,
 };
 use std::{
     ops::Range,
@@ -234,10 +233,6 @@ const PREVIEW_CANVAS_INITIAL_CONTAIN_SCALE: f64 = 0.9;
 const PREVIEW_CANVAS_MIN_ZOOM: f64 = 0.25;
 const PREVIEW_CANVAS_MAX_ZOOM: f64 = 8.0;
 const PREVIEW_CANVAS_ZOOM_STEP: f64 = 1.18;
-const PREVIEW_CANVAS_WHEEL_ZOOM_STEP: f64 = 1.05;
-const PREVIEW_CANVAS_WHEEL_PIXEL_DELTA_PER_STEP: f64 = 48.0;
-const PREVIEW_CANVAS_WHEEL_DEADZONE: f64 = 0.08;
-const PREVIEW_CANVAS_WHEEL_MAX_STEPS_PER_EVENT: f64 = 8.0;
 const PREVIEW_CANVAS_MAX_PAN: f64 = 2.0;
 const PREVIEW_CANVAS_LERP_FACTOR: f64 = 0.2;
 const PREVIEW_CANVAS_VISUAL_SETTLE_EPSILON: f64 = 0.5;
@@ -472,7 +467,6 @@ impl Default for SubtitleUiState {
 struct PreviewUiState {
     canvas_file_id: Option<String>,
     canvas: PreviewCanvasState,
-    canvas_pan_drag: Option<PreviewCanvasPanDragState>,
     canvas_bounds: Option<Bounds<Pixels>>,
     crop_file_id: Option<String>,
     crop_mode: bool,
@@ -510,7 +504,6 @@ impl Default for PreviewUiState {
         Self {
             canvas_file_id: None,
             canvas: PreviewCanvasState::default(),
-            canvas_pan_drag: None,
             canvas_bounds: None,
             crop_file_id: None,
             crop_mode: false,
@@ -671,17 +664,6 @@ impl Default for PreviewCanvasState {
             last_animation_tick: None,
         }
     }
-}
-
-#[expect(
-    clippy::struct_field_names,
-    reason = "Drag state fields intentionally share the start prefix to distinguish initial values from live pan values."
-)]
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct PreviewCanvasPanDragState {
-    start_position: Point<Pixels>,
-    start_pan_x: f64,
-    start_pan_y: f64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
