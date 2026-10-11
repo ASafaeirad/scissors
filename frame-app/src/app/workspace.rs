@@ -257,6 +257,7 @@ const TOOLS: [(Symbol, &str); 6] = [
 ];
 /// Index of the Video tool in [`TOOLS`].
 const VIDEO_TOOL: usize = 1;
+const AUDIO_TOOL: usize = 2;
 const FILTERS: [&str; 4] = ["All", "Video", "Audio", "Images"];
 
 #[expect(
@@ -365,6 +366,10 @@ pub(super) fn workspace_view(
                             .map(|row| m3::ListItem::new(row.label).value(row.value).build(scheme)),
                     )
             });
+        let audio_metadata = settings
+            .metadata
+            .filter(|_| state.tool == AUDIO_TOOL)
+            .map(|metadata| audio_source_information(metadata, scheme));
         div().size_full().min_w_0().child(
             m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
                 .id("workspace-track-properties")
@@ -375,6 +380,7 @@ pub(super) fn workspace_view(
                 .flex_col()
                 .p(theme::ui_rem(spacing::SPACE_3))
                 .children(speed)
+                .children(audio_metadata)
                 .children(video_stream)
                 .child(settings_panel(settings, window, cx).flex_none()),
         )
@@ -426,6 +432,47 @@ pub(super) fn workspace_view(
                         ),
                 ),
         )
+}
+
+/// Source file and audio stream details below the selected clip's speed control.
+fn audio_source_information(
+    metadata: &crate::settings::SourceMetadata,
+    scheme: &ColorScheme,
+) -> gpui::Div {
+    use crate::settings::SourceInfoSection;
+
+    let mut content = div()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .mb(theme::ui_rem(spacing::SPACE_3));
+    for section in crate::settings::source_info_sections(metadata) {
+        match section {
+            SourceInfoSection::Rows { title, rows } if title == "File information" => {
+                content =
+                    content
+                        .child(m3::list_subheader(title, scheme))
+                        .children(rows.into_iter().map(|row| {
+                            m3::ListItem::new(row.label).value(row.value).build(scheme)
+                        }));
+            }
+            SourceInfoSection::Tracks { title, tracks } if title == "Audio stream" => {
+                content = content.child(m3::list_subheader(title, scheme));
+                let multiple_tracks = tracks.len() > 1;
+                for track in tracks {
+                    if multiple_tracks {
+                        content = content.child(m3::list_subheader(track.label, scheme));
+                    }
+                    content =
+                        content.children(track.rows.into_iter().map(|row| {
+                            m3::ListItem::new(row.label).value(row.value).build(scheme)
+                        }));
+                }
+            }
+            _ => {}
+        }
+    }
+    content
 }
 
 pub(super) fn logs_workspace_view(
