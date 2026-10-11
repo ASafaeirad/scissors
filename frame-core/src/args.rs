@@ -28,6 +28,94 @@ use crate::types::{
 };
 use crate::utils::{get_hwaccel_args, is_audio_only_container, parse_time};
 
+fn build_project_args(
+    output: &str,
+    config: &ConversionConfig,
+    probe: &ProbeMetadata,
+) -> Result<Vec<String>, ConversionError> {
+    crate::project_timeline::validate(config)?;
+    let audio_only = is_audio_only_container(&config.container);
+    if is_image_container(&config.container) || config.container == "gif" {
+        return Err(ConversionError::InvalidInput(
+            "Export a project to a video or audio container".to_string(),
+        ));
+    }
+    let (mut width, mut height) = (probe.width.unwrap_or(1280), probe.height.unwrap_or(720));
+    match config.resolution.as_str() {
+        "custom" => {
+            width = config
+                .custom_width
+                .as_deref()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(width);
+            height = config
+                .custom_height
+                .as_deref()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(height);
+        }
+        "1080p" => {
+            width = 1920;
+            height = 1080;
+        }
+        "720p" => {
+            width = 1280;
+            height = 720;
+        }
+        "480p" => {
+            width = 854;
+            height = 480;
+        }
+        _ => {}
+    }
+    width = width.max(2) / 2 * 2;
+    height = height.max(2) / 2 * 2;
+    let fps = config.fps.parse::<u32>().unwrap_or(30).clamp(1, 120);
+    let duration = crate::project_timeline::duration_seconds(&config.timeline_sources);
+    let audio = container_supports_audio(&config.container) && config.audio_codec != "none";
+    let mut args = vec!["-filter_complex_threads".to_string(), "1".to_string()];
+    crate::project_timeline::add_inputs(&mut args, &config.timeline_sources, fps);
+    args.extend([
+        "-filter_complex".to_string(),
+        crate::project_timeline::graph(
+            &config.timeline_sources,
+            width,
+            height,
+            fps,
+            0.0,
+            duration,
+            !audio_only,
+            audio,
+            false,
+        ),
+    ]);
+    if !audio_only {
+        args.extend(["-map".to_string(), "[project_video_out]".to_string()]);
+        add_video_codec_args(&mut args, config);
+        args.extend([
+            "-pix_fmt".to_string(),
+            if has_custom_pixel_format(config) {
+                config.pixel_format.clone()
+            } else {
+                "yuv420p".to_string()
+            },
+        ]);
+    }
+    if audio {
+        args.extend(["-map".to_string(), "[project_audio_out]".to_string()]);
+        add_audio_codec_args(&mut args, config);
+    }
+    add_container_metadata_flags(&mut args, config, probe);
+    add_container_output_args(&mut args, &config.container);
+    args.extend([
+        "-t".to_string(),
+        format!("{duration:.6}"),
+        "-n".to_string(),
+        output.to_string(),
+    ]);
+    Ok(args)
+}
+
 fn is_copy_mode(config: &ConversionConfig) -> bool {
     config.processing_mode == "copy"
 }
@@ -499,6 +587,9 @@ pub fn build_ffmpeg_args(
     config: &ConversionConfig,
     probe: &ProbeMetadata,
 ) -> Result<Vec<String>, ConversionError> {
+    if !config.timeline_sources.is_empty() {
+        return build_project_args(output, config, probe);
+    }
     let external_audio = crate::audio_timeline::has_external_audio(config);
     if external_audio && (!container_supports_audio(&config.container) || is_copy_mode(config)) {
         return Err(ConversionError::InvalidInput(
@@ -989,6 +1080,14 @@ pub fn validate_task_input(
     file_path: &str,
     config: &ConversionConfig,
 ) -> Result<(), ConversionError> {
+    if !config.timeline_sources.is_empty() {
+        crate::project_timeline::validate(config)?;
+        let mut output_config = config.clone();
+        output_config.timeline_sources.clear();
+        output_config.selected_audio_tracks.clear();
+        output_config.selected_subtitle_tracks.clear();
+        return validate_task_input(file_path, &output_config);
+    }
     let input_path = Path::new(file_path);
     if !input_path.exists() {
         return Err(ConversionError::InvalidInput(format!(
@@ -1489,6 +1588,7 @@ mod tests {
             video_filters: crate::types::VideoFiltersConfig::default(),
             audio_filters: crate::types::AudioFiltersConfig::default(),
             external_audio_tracks: vec![],
+            timeline_sources: Vec::new(),
             selected_audio_tracks: vec![],
             selected_subtitle_tracks: vec![],
             external_subtitle_tracks: vec![],

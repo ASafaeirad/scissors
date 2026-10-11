@@ -54,6 +54,7 @@ impl FrameRoot {
             Some(VisualFixture::M3Gallery) => self.m3_gallery = Some(m3::M3GalleryState::new()),
             Some(VisualFixture::PreviewCrop) => self.apply_preview_crop_fixture(),
             Some(VisualFixture::PreviewReady) => self.apply_preview_ready_fixture(),
+            Some(VisualFixture::ProjectTimeline) => self.apply_project_timeline_fixture(),
             Some(VisualFixture::PreviewMultitrack) => {
                 self.apply_preview_ready_fixture();
                 if let Some(file) = self.file_queue.selected_file_mut() {
@@ -113,6 +114,50 @@ impl FrameRoot {
             Some(VisualFixture::WorkspaceLargeQueue) => 5,
             _ => 0,
         };
+    }
+
+    pub(super) fn apply_project_timeline_fixture(&mut self) {
+        self.apply_preview_ready_fixture();
+        let mut video = self.file_queue.selected_file().unwrap().clone();
+        let mut metadata = self.selected_source_metadata().unwrap();
+        metadata.duration = Some("4.0".to_string());
+        metadata.width = Some(640);
+        metadata.height = Some(360);
+        metadata.resolution = Some("640x360".to_string());
+        video.path = "/tmp/frame_project_fixture/video.mp4".to_string();
+        video.name = "Morning walk.mp4".to_string();
+        video.original_format = "mp4".to_string();
+        video.id = "library-video".to_string();
+        video.config.start_time = None;
+        video.config.end_time = None;
+        video.config.cut_segments.clear();
+        self.file_queue = FileQueue::new();
+        self.project.enabled = true;
+        self.project.library.add_file(video);
+        self.source_metadata.mark_ready("library-video", metadata);
+        self.add_library_clip("library-video");
+        self.add_library_clip("library-video");
+        let audio = FileItem::from_path(
+            "library-audio",
+            "/tmp/frame_project_fixture/music.wav",
+            4_000_000,
+        );
+        self.project.library.add_file(audio);
+        self.source_metadata.mark_ready(
+            "library-audio",
+            SourceMetadata {
+                media_kind: Some(SourceKind::Audio),
+                duration: Some("4".to_string()),
+                audio_tracks: vec![crate::settings::AudioTrack {
+                    index: 0,
+                    codec: "mp3".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        );
+        self.add_library_clip("library-audio");
+        self.workspace_ui.tool = 0;
     }
 
     pub(super) fn apply_update_available_fixture(&mut self) {

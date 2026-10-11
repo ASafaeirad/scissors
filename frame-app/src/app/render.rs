@@ -38,10 +38,12 @@ impl Render for FrameRoot {
         self.update_log_scroll_target();
         let selected_file_id = self.file_queue.selected_file_id().map(str::to_string);
         let selected_file = self.file_queue.selected_file();
-        let selected_config_snapshot =
-            selected_file.map_or_else(ConversionConfig::default, |file| file.config.clone());
-        let selected_output_name =
-            selected_file.map_or_else(String::new, |file| file.output_name.clone());
+        let selected_config_snapshot = self.selected_config().cloned().unwrap_or_default();
+        let selected_output_name = if self.editing_project_output() {
+            self.project.output_name.clone()
+        } else {
+            selected_file.map_or_else(String::new, |file| file.output_name.clone())
+        };
         let preview_runtime_request = self.selected_preview_runtime_request(&source_metadata_entry);
         self.sync_preview_crop_for_selection(
             selected_file_id.as_deref(),
@@ -171,7 +173,7 @@ impl Render for FrameRoot {
             overlay_toolbar_first_focus.focus(window, cx);
         }
         let content = div().flex_1().min_h_0();
-        let active_content_view = if state.file_count == 0 {
+        let active_content_view = if state.file_count == 0 && !self.project.enabled {
             None
         } else {
             Some(state.active_view)
@@ -479,6 +481,7 @@ impl Render for FrameRoot {
                     &self.file_list_scroll_handle,
                     &settings,
                     PreviewPanelProps {
+                        project: self.project_render_state(),
                         canvas: preview_canvas,
                         crop: preview_crop,
                         overlay: preview_overlay,
@@ -508,7 +511,11 @@ impl Render for FrameRoot {
                         runtime_error: preview_runtime_error,
                     },
                     workspace::WorkspaceState {
-                        export_enabled: self.file_queue.selected_file().is_some(),
+                        export_enabled: if self.project.enabled {
+                            !self.project.clips.is_empty()
+                        } else {
+                            self.file_queue.selected_file().is_some()
+                        },
                         ..self.workspace_ui
                     },
                     window,
@@ -530,7 +537,11 @@ impl Render for FrameRoot {
                     logs,
                     &self.file_queue,
                     workspace::WorkspaceState {
-                        export_enabled: self.file_queue.selected_file().is_some(),
+                        export_enabled: if self.project.enabled {
+                            !self.project.clips.is_empty()
+                        } else {
+                            self.file_queue.selected_file().is_some()
+                        },
                         ..self.workspace_ui
                     },
                     crate::material::scheme(self.appearance.color_theme),

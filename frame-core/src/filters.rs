@@ -404,6 +404,7 @@ mod tests {
             video_filters: crate::types::VideoFiltersConfig::default(),
             audio_filters: crate::types::AudioFiltersConfig::default(),
             external_audio_tracks: vec![],
+            timeline_sources: Vec::new(),
             selected_audio_tracks: vec![],
             selected_subtitle_tracks: vec![],
             external_subtitle_tracks: vec![],

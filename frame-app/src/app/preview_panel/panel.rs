@@ -109,6 +109,7 @@ impl PreviewOverlayRenderState {
 }
 
 pub(in crate::app) struct PreviewPanelProps<'a> {
+    pub(in crate::app) project: Option<crate::app::project::ProjectRenderState>,
     pub(in crate::app) canvas: PreviewCanvasRenderState,
     pub(in crate::app) crop: PreviewCropRenderState,
     pub(in crate::app) overlay: PreviewOverlayRenderState,
@@ -158,6 +159,10 @@ pub(in crate::app) struct PreviewShellStateInput<'a> {
     pub(in crate::app) runtime_error: Option<String>,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "The preview combines viewport, playback toolbar, and the source or project timeline."
+)]
 pub(in crate::app) fn preview_panel(
     file_queue: &FileQueue,
     settings: &SettingsRenderState<'_>,
@@ -165,7 +170,8 @@ pub(in crate::app) fn preview_panel(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let state = preview_shell_state(PreviewShellStateInput {
+    let project_enabled = props.project.is_some();
+    let mut state = preview_shell_state(PreviewShellStateInput {
         selected_file: file_queue.selected_file(),
         settings,
         crop: props.crop,
@@ -177,6 +183,24 @@ pub(in crate::app) fn preview_panel(
         runtime_error: props.runtime_error,
     });
 
+    if project_enabled {
+        state.duration_seconds = state.playback.duration();
+        if props.project.as_ref().is_some_and(|project| {
+            project
+                .timeline
+                .clips
+                .iter()
+                .any(|clip| clip.kind != SourceKind::Audio)
+        }) {
+            state.availability = preview_control_availability(PreviewControlInput {
+                metadata_status: state.metadata_status,
+                source_media_kind: Some(SourceMediaKind::Video),
+                controls_disabled: state.controls_disabled,
+                processing_mode: crate::settings::ProcessingMode::Reencode,
+                container: Some("mp4"),
+            });
+        }
+    }
     let scheme = material::scheme(if state.palette.is_light() {
         ColorTheme::Light
     } else {
@@ -248,10 +272,22 @@ pub(in crate::app) fn preview_panel(
                                 )
                             )),
                     )
-                    .child(preview_cut_button(&state, window, cx)),
+                    .when(!project_enabled, |bar| {
+                        bar.child(preview_cut_button(&state, window, cx))
+                    }),
                 ),
         )
-        .child(preview_timeline(&state, props.seek_focus, window, cx))
+        .when(!project_enabled, |panel| {
+            panel.child(preview_timeline(&state, props.seek_focus, window, cx))
+        })
+        .when(project_enabled, |panel| {
+            panel.child(crate::app::project_timeline::project_timeline(
+                &props.project.as_ref().unwrap().timeline,
+                props.seek_focus,
+                window,
+                cx,
+            ))
+        })
 }
 
 pub(in crate::app) fn preview_shell_state(input: PreviewShellStateInput<'_>) -> PreviewShellState {

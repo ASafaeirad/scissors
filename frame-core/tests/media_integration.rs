@@ -280,6 +280,159 @@ fn gif_audio_timeline_exports_and_previews_aligned_sound() -> TestResult {
     Ok(())
 }
 
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Generated sources verify project composition, seeking, independent audio, and export agreement."
+)]
+fn project_timeline_exports_sequence_and_previews_the_same_frames_and_audio() -> TestResult {
+    use frame_core::types::TimelineSource;
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("project_timeline")?;
+    let red = sandbox.path("red.mp4");
+    let blue = sandbox.path("blue.mp4");
+    let music = sandbox.path("music.wav");
+    for (path, color) in [(&red, "red"), (&blue, "blue")] {
+        run_tool(
+            &tools.ffmpeg,
+            &args(&[
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("color=c={color}:s=160x90:r=30:d=2"),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-y",
+                &path_arg(path),
+            ]),
+        )?;
+    }
+    generate_audio_source(&tools, &music)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.selected_audio_tracks.clear();
+    let mut clip_config = config.clone();
+    clip_config.end_time = Some("1".to_string());
+    config.timeline_sources = vec![
+        TimelineSource {
+            path: path_arg(&red),
+            kind: "video".to_string(),
+            offset_millis: 0,
+            duration_millis: 2000,
+            muted: false,
+            config: Box::new(clip_config.clone()),
+        },
+        TimelineSource {
+            path: path_arg(&blue),
+            kind: "video".to_string(),
+            offset_millis: 1000,
+            duration_millis: 2000,
+            muted: false,
+            config: Box::new(clip_config.clone()),
+        },
+    ];
+    clip_config.selected_audio_tracks = vec![0];
+    clip_config.audio_volume = 25.0;
+    config.timeline_sources.push(TimelineSource {
+        path: path_arg(&music),
+        kind: "audio".to_string(),
+        offset_millis: 500,
+        duration_millis: 2000,
+        muted: false,
+        config: Box::new(clip_config),
+    });
+    let output = sandbox.path("project.mp4");
+    convert(&tools, &red, &output, &config)?;
+    let probe = probe_media(&tools, &output)?;
+    let duration = probe
+        .duration
+        .as_deref()
+        .and_then(frame_core::utils::parse_time)
+        .unwrap_or_default();
+    assert!((duration - 2.0).abs() < 0.1, "duration={duration}");
+    assert_eq!(probe.audio_tracks.len(), 1);
+    for (time, expected) in [(0.25, Rgb::RED), (1.25, Rgb::BLUE)] {
+        let frame = run_tool_output(
+            &tools.ffmpeg,
+            &args(&[
+                "-ss",
+                &format!("{time}"),
+                "-i",
+                &path_arg(&output),
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ]),
+        )?;
+        assert_color_near(
+            Rgb::new(frame[0], frame[1], frame[2]),
+            expected,
+            8,
+            "exported clip color",
+        )?;
+        let plan = build_ffmpeg_preview_args(
+            &path_arg(&red),
+            &config,
+            &PreviewFfmpegOptions {
+                start_seconds: time,
+                end_seconds: Some(time + 0.1),
+                source_width: Some(160),
+                source_height: Some(90),
+                max_width: 160,
+                max_height: 90,
+                fps: 30,
+                realtime: false,
+                precise_seek: true,
+                source_is_image: false,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        let frame = run_tool_output(&tools.ffmpeg, &plan.args)?;
+        assert_color_near(
+            Rgb::new(frame[2], frame[1], frame[0]),
+            expected,
+            8,
+            "preview clip color",
+        )?;
+    }
+    let audio_options = frame_core::preview::PreviewAudioFfmpegOptions {
+        start_seconds: 0.0,
+        end_seconds: Some(2.0),
+        sample_rate: 48000,
+        channels: 1,
+        realtime: false,
+        precise_seek: true,
+        selected_track: u32::MAX,
+    };
+    let plan = frame_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&red),
+        &config,
+        &audio_options,
+    )
+    .map_err(|error| error.to_string())?;
+    let samples = pcm_samples(&run_tool_output(&tools.ffmpeg, &plan.args)?);
+    assert_eq!(samples.len(), 96_000);
+    assert!(sample_energy(&samples, 4800, 19200) < 0.001);
+    assert!(sample_energy(&samples, 28800, 43200) > 0.005);
+    assert!(sample_energy(&samples, 81600, 91200) < 0.001);
+    config.timeline_sources[2].muted = true;
+    let plan = frame_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&red),
+        &config,
+        &audio_options,
+    )
+    .map_err(|error| error.to_string())?;
+    let muted = pcm_samples(&run_tool_output(&tools.ffmpeg, &plan.args)?);
+    assert!(sample_energy(&muted, 0, muted.len()) < 0.001);
+    Ok(())
+}
+
 fn pcm_samples(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(4)
@@ -1769,6 +1922,7 @@ fn base_config(container: &str, video_codec: &str) -> ConversionConfig {
         video_filters: frame_core::types::VideoFiltersConfig::default(),
         audio_filters: frame_core::types::AudioFiltersConfig::default(),
         external_audio_tracks: Vec::new(),
+        timeline_sources: Vec::new(),
         selected_audio_tracks: Vec::new(),
         selected_subtitle_tracks: Vec::new(),
         external_subtitle_tracks: Vec::new(),

@@ -23,8 +23,8 @@ impl Render for PreviewTimelineDragPreview {
     }
 }
 
-struct PreviewTimelineTrackBoundsProbe {
-    owner: Entity<FrameRoot>,
+pub(in crate::app) struct PreviewTimelineTrackBoundsProbe {
+    pub(in crate::app) owner: Entity<FrameRoot>,
 }
 
 impl IntoElement for PreviewTimelineTrackBoundsProbe {

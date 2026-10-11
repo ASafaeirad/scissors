@@ -17,6 +17,8 @@ mod motion;
 mod preview_actions;
 mod preview_panel;
 mod primitives;
+mod project;
+mod project_timeline;
 mod render;
 mod runtime;
 mod settings_actions;
@@ -265,6 +267,7 @@ pub struct FrameRoot {
     fps_meter: Option<fps_meter::FpsMeter>,
     focus_registry: FrameFocusRegistry,
     file_queue: FileQueue,
+    project: project::Project,
     file_list_scroll_handle: UniformListScrollHandle,
     conversion_events: ConversionEventState,
     logs_scroll_handle: UniformListScrollHandle,

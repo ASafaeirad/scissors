@@ -2,7 +2,7 @@ use super::*;
 use crate::app::preview_panel::preview_presented_frame;
 use crate::conversion_runner::core_config_from_gpui;
 use crate::numeric::rounded_f64_to_u64;
-use crate::preview_engine::PreviewEngineError;
+use crate::preview_engine::{PreviewEngineError, PreviewSourceKind};
 use crate::settings::{AudioFiltersConfig, FilterValue, VideoFiltersConfig};
 use std::{
     collections::hash_map::DefaultHasher,
@@ -17,13 +17,56 @@ impl FrameRoot {
         let selected_file_id = self.file_queue.selected_file()?.id.clone();
         let preview_dimensions = self.selected_preview_runtime_dimensions(&selected_file_id);
         let selected_file = self.file_queue.selected_file()?;
-        preview_runtime_request(
+        let mut request = preview_runtime_request(
             selected_file,
             metadata_entry,
             !self.preview_ui.crop_mode,
             !self.preview_ui.overlay.overlay_mode(),
             preview_dimensions,
-        )
+        )?;
+        if self.project.enabled
+            && !self.preview_ui.crop_mode
+            && !self.preview_ui.overlay.overlay_mode()
+        {
+            let mut config = self.project_config()?;
+            let visual = self
+                .project
+                .clips
+                .iter()
+                .find(|clip| clip.kind != SourceKind::Audio);
+            let first = visual.or_else(|| self.project.clips.first())?;
+            let file = self.file_queue.file_by_id(&first.id)?;
+            let metadata = self.source_metadata.metadata_for(&first.id)?;
+            let (width, height) = valid_preview_dimensions(metadata.width, metadata.height);
+            config.resolution = "original".to_string();
+            config.custom_width = None;
+            config.custom_height = None;
+            let serialized = serde_json::to_string(&config.timeline_sources).ok()?;
+            let mut hash = DefaultHasher::new();
+            hash.write(serialized.as_bytes());
+            let hash = hash.finish();
+            request.key.file_id = "project".to_string();
+            request.key.path.clone_from(&file.path);
+            request.key.source_kind = if visual.is_some() {
+                PreviewSourceKind::Video
+            } else {
+                PreviewSourceKind::Audio
+            };
+            request.key.source_width = width;
+            request.key.source_height = height;
+            request.key.duration_millis = rounded_f64_to_u64(self.project_duration() * 1000.0);
+            request.key.visual_hash = hash;
+            request.key.audio_hash = hash;
+            request.config.file_id = "project".to_string();
+            request.config.path = PathBuf::from(&file.path);
+            request.config.source_kind = request.key.source_kind;
+            request.config.source_width = width;
+            request.config.source_height = height;
+            request.config.selected_audio_track = Some(u32::MAX);
+            request.config.duration_seconds = self.project_duration();
+            request.config.conversion_config = config;
+        }
+        Some(request)
     }
 
     fn selected_preview_runtime_dimensions(
@@ -566,6 +609,35 @@ impl FrameRoot {
         config: &ConversionConfig,
         cx: &Context<Self>,
     ) {
+        if self.project.enabled
+            && !self.preview_ui.crop_mode
+            && !self.preview_ui.overlay.overlay_mode()
+        {
+            if self.preview_ui.playback_file_id.as_deref() != Some("project") {
+                self.preview_ui.playback_file_id = Some("project".to_string());
+                self.preview_ui.trim_preview_seek.reset();
+                self.preview_ui.playback = preview_playback_state(
+                    PreviewMediaKind::Video,
+                    self.project_duration(),
+                    None,
+                    None,
+                );
+            }
+            self.preview_ui.playback.set_is_image(false);
+            self.preview_ui.playback.sync_initial_values(None, None);
+            self.preview_ui.playback.sync_cut_segments(&[]);
+            if let Some(session) = &self.preview_ui.session {
+                let snapshot = session.snapshot();
+                if !self.preview_media_snapshot_sync_blocked() {
+                    self.preview_ui.playback.sync_media(MediaSnapshot {
+                        current_time: snapshot.playback.position_seconds,
+                        duration: self.project_duration(),
+                        paused: !snapshot.playback.playing,
+                    });
+                }
+            }
+            return;
+        }
         let media_kind = preview_control_availability(PreviewControlInput {
             metadata_status: if metadata.is_some() {
                 PreviewMetadataStatus::Ready
@@ -2098,12 +2170,18 @@ impl FrameRoot {
     }
 
     pub(super) fn preview_timeline_enabled(&self) -> bool {
+        if self.project.enabled {
+            return !self.is_processing && self.project_duration() > 0.0;
+        }
         self.selected_preview_control_availability()
             .is_some_and(|availability| !availability.trim_disabled)
             && self.preview_ui.playback.duration() > 0.0
     }
 
     fn preview_cut_enabled(&self) -> bool {
+        if self.project.enabled {
+            return false;
+        }
         self.selected_preview_control_availability()
             .is_some_and(|availability| availability.cut_available)
             && self.preview_ui.playback.duration() > 0.0

@@ -309,6 +309,18 @@ pub struct TransportStreamMetadata {
     pub service_provider: Option<String>,
 }
 
+/// One independently configured source instance in a project composition.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineSource {
+    pub path: String,
+    pub kind: String,
+    pub offset_millis: u64,
+    pub duration_millis: u64,
+    pub muted: bool,
+    pub config: Box<ConversionConfig>,
+}
+
 /// An audio clip placed on the source timeline. Lengths use milliseconds.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -349,6 +361,8 @@ pub struct ConversionConfig {
     pub audio_filters: AudioFiltersConfig,
     #[serde(default)]
     pub external_audio_tracks: Vec<ExternalAudioTrack>,
+    #[serde(default)]
+    pub timeline_sources: Vec<TimelineSource>,
     pub selected_audio_tracks: Vec<u32>,
     pub selected_subtitle_tracks: Vec<u32>,
     #[serde(default)]

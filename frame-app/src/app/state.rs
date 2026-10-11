@@ -94,6 +94,7 @@ impl FrameRoot {
             fps_meter: None,
             focus_registry: FrameFocusRegistry::default(),
             file_queue: FileQueue::new(),
+            project: project::Project::default(),
             file_list_scroll_handle: UniformListScrollHandle::new(),
             conversion_events: ConversionEventState::new(),
             logs_scroll_handle: UniformListScrollHandle::new(),
@@ -150,21 +151,41 @@ impl FrameRoot {
         )
     }
     pub(super) fn selected_config(&self) -> Option<&ConversionConfig> {
-        self.file_queue.selected_file().map(|file| &file.config)
+        if self.editing_project_output() {
+            Some(&self.project.output)
+        } else {
+            self.file_queue.selected_file().map(|file| &file.config)
+        }
     }
     pub(super) fn update_selected_config(
         &mut self,
         update: impl FnOnce(&mut ConversionConfig) -> bool,
     ) -> bool {
-        if self.update_installation_in_progress() {
+        if self.update_installation_in_progress() || (self.project.enabled && self.is_processing) {
             return false;
         }
-        self.file_queue
-            .selected_file_mut()
-            .is_some_and(|file| update(&mut file.config))
+        self.selected_config_mut().is_some_and(update)
     }
     pub(super) fn normalize_selected_config(&mut self, metadata: Option<&SourceMetadata>) -> bool {
-        self.update_selected_config(|config| normalize_output_config(config, metadata))
+        if self.editing_project_output() {
+            let metadata = self.project_output_metadata();
+            return self.update_selected_config(|config| {
+                normalize_output_config(config, metadata.as_ref())
+            });
+        }
+        let project_enabled = self.project.enabled;
+        self.update_selected_config(|config| {
+            let trim = (
+                config.start_time.clone(),
+                config.end_time.clone(),
+                config.cut_segments.clone(),
+            );
+            let changed = normalize_output_config(config, metadata);
+            if project_enabled {
+                (config.start_time, config.end_time, config.cut_segments) = trim;
+            }
+            changed
+        })
     }
 
     pub(super) fn persist_app_settings(

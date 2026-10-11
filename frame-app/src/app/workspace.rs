@@ -10,7 +10,7 @@ use super::{
     settings_panel::settings_panel,
 };
 use crate::material::{self, ColorScheme, Symbol, shape, spacing, typography};
-use gpui::prelude::FluentBuilder;
+use gpui::{AppContext, prelude::FluentBuilder};
 
 #[derive(Clone, Copy, Default)]
 pub(super) struct WorkspaceState {
@@ -44,8 +44,11 @@ pub(super) fn workspace_view(
     } else {
         crate::appearance::ColorTheme::Dark
     });
+    let project = preview_props.project.as_ref();
+    let project_enabled = project.is_some();
     let rail = navigation_rail(state.tool, scheme, window, cx);
     if state.tool == 5 {
+        let queue = project.map_or(file_queue, |project| &project.exports);
         return div()
             .size_full()
             .flex()
@@ -66,19 +69,30 @@ pub(super) fn workspace_view(
                         cx,
                     ))
                     .child(
-                        file_list_panel(file_queue, file_list_scroll_handle, settings.palette, cx)
+                        file_list_panel(queue, file_list_scroll_handle, settings.palette, cx)
                             .flex_1(),
                     ),
             );
     }
     let side = if state.tool == 0 {
-        library_panel(file_queue, state.filter, scheme, window, cx)
+        library_panel(
+            if project_enabled {
+                &project.unwrap().library
+            } else {
+                file_queue
+            },
+            state.filter,
+            project,
+            scheme,
+            window,
+            cx,
+        )
     } else if file_queue.selected_file().is_some() {
         settings_panel(settings, window, cx)
     } else {
         m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
             .p(theme::ui_rem(24.0))
-            .child("Select media from the library to edit its settings.")
+            .child("Select a timeline track to edit its properties.")
     };
     div()
         .size_full()
@@ -268,6 +282,7 @@ fn media_symbol(file: &FileItem) -> Symbol {
 fn library_panel(
     queue: &FileQueue,
     filter: usize,
+    project: Option<&super::project::ProjectRenderState>,
     scheme: &'static ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
@@ -302,7 +317,9 @@ fn library_panel(
             media_card(
                 file,
                 queue.selected_file_id() == Some(file.id.as_str()),
+                project,
                 scheme,
+                window,
                 cx,
             )
         })
@@ -332,7 +349,7 @@ fn library_panel(
                             .w_full()
                             .min_w_0()
                             .text_color(color(scheme.on_surface_variant))
-                            .child("Select media to preview and edit."),
+                            .child("Import sources, then add them to the timeline."),
                     ),
             )
             .child(
@@ -392,15 +409,21 @@ fn library_panel(
     )
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "A library card combines accessible source selection, drag, add, and removal actions."
+)]
 fn media_card(
     file: &FileItem,
     selected: bool,
+    project: Option<&super::project::ProjectRenderState>,
     scheme: &'static ColorScheme,
-    cx: &Context<FrameRoot>,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
     let id = file.id.clone();
     let symbol = media_symbol(file);
-    div()
+    let preview = div()
         .id(format!("library-media-{id}"))
         .flex()
         .flex_col()
@@ -408,7 +431,7 @@ fn media_card(
         .min_w_0()
         .gap(theme::ui_rem(6.0))
         .role(gpui::Role::Button)
-        .aria_label(format!("Preview {}", file.name))
+        .aria_label(format!("Select {} source", file.name))
         .aria_selected(selected)
         .focusable()
         .tab_stop(true)
@@ -419,7 +442,7 @@ fn media_card(
                 .ring_color(color(scheme.secondary))
         })
         .on_click(cx.listener(move |root, _: &ClickEvent, _, cx| {
-            if root.select_workspace_file(&id) {
+            if root.select_library_source(&id) {
                 cx.notify();
             }
         }))
@@ -428,7 +451,7 @@ fn media_card(
             move |root, event: &gpui::KeyDownEvent, _, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     cx.stop_propagation();
-                    if root.select_workspace_file(&id) {
+                    if root.select_library_source(&id) {
                         cx.notify();
                     }
                 }
@@ -467,7 +490,92 @@ fn media_card(
                 .m3_type(typography::LABEL_MEDIUM)
                 .truncate()
                 .child(file.name.clone()),
-        )
+        );
+    div()
+        .id(format!("library-card-{}", file.id))
+        .relative()
+        .min_w_0()
+        .child(preview.on_drag(
+            super::project_timeline::LibrarySourceDrag(file.id.clone()),
+            |_, _, _, cx| cx.new(|_| super::project_timeline::MediaDragPreview),
+        ))
+        .when_some(project, |card, project| {
+            card.child(
+                m3::Button::new(
+                    format!("library-add-{}", file.id),
+                    "Add to timeline",
+                    m3::ButtonVariant::Tonal,
+                )
+                .size(m3::ButtonSize::ExtraSmall)
+                .icon(Symbol::Add)
+                .enabled(project.ready_sources.contains(&file.id) && project.timeline.enabled)
+                .build(scheme, window, cx)
+                .on_click(cx.listener({
+                    let id = file.id.clone();
+                    move |root, _, _, cx| {
+                        if root.add_library_clip(&id) {
+                            cx.notify();
+                        }
+                    }
+                })),
+            )
+            .child(
+                div()
+                    .m3_type(typography::LABEL_SMALL)
+                    .text_color(color(scheme.on_surface_variant))
+                    .child(format!(
+                        "{} timeline uses",
+                        project
+                            .timeline
+                            .clips
+                            .iter()
+                            .filter(|clip| clip.source_id == file.id)
+                            .count()
+                    )),
+            )
+        })
+        .child(remove_library_button(file, scheme, window, cx))
+}
+
+fn remove_library_button(
+    file: &FileItem,
+    scheme: &'static ColorScheme,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Stateful<gpui::Div> {
+    let id = file.id.clone();
+    let key_id = id.clone();
+    m3::IconButton::new(
+        format!("library-remove-{id}"),
+        Symbol::Close,
+        format!("Remove {} from library", file.name),
+    )
+    .variant(m3::IconButtonVariant::Tonal)
+    .build(scheme, window, cx)
+    .absolute()
+    .top(theme::ui_rem(4.0))
+    .right(theme::ui_rem(4.0))
+    .on_click(cx.listener(move |root, _, _, cx| {
+        if if root.project.enabled {
+            root.remove_library_source(&id)
+        } else {
+            root.remove_file_from_queue(&id)
+        } {
+            cx.notify();
+        }
+    }))
+    .on_key_down(cx.listener(move |root, event: &gpui::KeyDownEvent, _, cx| {
+        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+            cx.stop_propagation();
+            if if root.project.enabled {
+                root.remove_library_source(&key_id)
+            } else {
+                root.remove_file_from_queue(&key_id)
+            } {
+                cx.notify();
+            }
+        }
+    }))
 }
 
 pub(super) fn welcome_view(

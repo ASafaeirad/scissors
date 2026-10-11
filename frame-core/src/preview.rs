@@ -69,6 +69,9 @@ pub fn build_ffmpeg_preview_args(
     options: &PreviewFfmpegOptions,
 ) -> Result<PreviewFfmpegPlan, ConversionError> {
     validate_preview_options(input, options)?;
+    if !config.timeline_sources.is_empty() {
+        return build_project_preview(config, options);
+    }
 
     let fps = effective_preview_fps(config, options.fps);
     let geometry = preview_geometry(config, options)?;
@@ -159,6 +162,9 @@ pub fn build_ffmpeg_preview_audio_args(
     options: &PreviewAudioFfmpegOptions,
 ) -> Result<PreviewAudioFfmpegPlan, ConversionError> {
     validate_preview_audio_options(input, options)?;
+    if !config.timeline_sources.is_empty() {
+        return Ok(build_project_audio_preview(config, options));
+    }
 
     let mut args = vec![
         "-hide_banner".to_string(),
@@ -531,6 +537,105 @@ fn format_seconds(seconds: f64) -> String {
     format!("{seconds:.3}")
 }
 
+fn build_project_preview(
+    config: &ConversionConfig,
+    options: &PreviewFfmpegOptions,
+) -> Result<PreviewFfmpegPlan, ConversionError> {
+    let width = options.max_width.max(16) / 2 * 2;
+    let height = options.max_height.max(16) / 2 * 2;
+    let fps = options.fps;
+    let end = options
+        .end_seconds
+        .unwrap_or_else(|| crate::project_timeline::duration_seconds(&config.timeline_sources));
+    let mut args = vec![
+        "-hide_banner".to_string(),
+        "-nostdin".to_string(),
+        "-loglevel".to_string(),
+        "warning".to_string(),
+        "-filter_complex_threads".to_string(),
+        "1".to_string(),
+    ];
+    crate::project_timeline::add_inputs(&mut args, &config.timeline_sources, fps);
+    args.extend([
+        "-filter_complex".to_string(),
+        crate::project_timeline::graph(
+            &config.timeline_sources,
+            width,
+            height,
+            fps,
+            options.start_seconds,
+            end,
+            true,
+            false,
+            options.realtime,
+        ),
+        "-map".to_string(),
+        "[project_video_out]".to_string(),
+        "-an".to_string(),
+        "-sn".to_string(),
+        "-pix_fmt".to_string(),
+        "bgra".to_string(),
+        "-f".to_string(),
+        "rawvideo".to_string(),
+        "pipe:1".to_string(),
+    ]);
+    Ok(PreviewFfmpegPlan {
+        args,
+        width,
+        height,
+        fps,
+        frame_bytes: frame_bytes(width, height)?,
+    })
+}
+
+fn build_project_audio_preview(
+    config: &ConversionConfig,
+    options: &PreviewAudioFfmpegOptions,
+) -> PreviewAudioFfmpegPlan {
+    let end = options
+        .end_seconds
+        .unwrap_or_else(|| crate::project_timeline::duration_seconds(&config.timeline_sources));
+    let mut args = vec![
+        "-hide_banner".to_string(),
+        "-nostdin".to_string(),
+        "-loglevel".to_string(),
+        "warning".to_string(),
+        "-filter_complex_threads".to_string(),
+        "1".to_string(),
+    ];
+    crate::project_timeline::add_inputs(&mut args, &config.timeline_sources, 30);
+    args.extend([
+        "-filter_complex".to_string(),
+        crate::project_timeline::graph(
+            &config.timeline_sources,
+            16,
+            16,
+            30,
+            options.start_seconds,
+            end,
+            false,
+            true,
+            options.realtime,
+        ),
+        "-map".to_string(),
+        "[project_audio_out]".to_string(),
+        "-vn".to_string(),
+        "-sn".to_string(),
+        "-ac".to_string(),
+        options.channels.to_string(),
+        "-ar".to_string(),
+        options.sample_rate.to_string(),
+        "-f".to_string(),
+        "f32le".to_string(),
+        "pipe:1".to_string(),
+    ]);
+    PreviewAudioFfmpegPlan {
+        args,
+        sample_rate: options.sample_rate,
+        channels: options.channels,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,6 +658,7 @@ mod tests {
             video_filters: crate::types::VideoFiltersConfig::default(),
             audio_filters: crate::types::AudioFiltersConfig::default(),
             external_audio_tracks: vec![],
+            timeline_sources: Vec::new(),
             selected_audio_tracks: vec![],
             selected_subtitle_tracks: vec![],
             external_subtitle_tracks: vec![],

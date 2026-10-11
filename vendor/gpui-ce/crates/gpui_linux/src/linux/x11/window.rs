@@ -1597,7 +1597,12 @@ impl PlatformWindow for X11Window {
             .0
             .upgrade()
             .map(|ref_cell| {
-                let state = ref_cell.borrow();
+                // Input dispatch can already hold the client state while a drag
+                // preview lays out text. Use grayscale for this capability
+                // query rather than borrowing the client a second time.
+                let Ok(state) = ref_cell.try_borrow() else {
+                    return false;
+                };
                 state
                     .gpu_context
                     .borrow()

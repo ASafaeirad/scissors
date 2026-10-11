@@ -508,6 +508,7 @@ mod tests {
             video_filters: VideoFiltersConfig::default(),
             audio_filters: AudioFiltersConfig::default(),
             external_audio_tracks: vec![],
+            timeline_sources: Vec::new(),
             selected_audio_tracks: vec![],
             selected_subtitle_tracks: vec![],
             external_subtitle_tracks: vec![],

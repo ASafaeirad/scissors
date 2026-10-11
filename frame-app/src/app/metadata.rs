@@ -2,10 +2,20 @@ use super::*;
 
 impl FrameRoot {
     pub(super) fn selected_source_metadata_entry(&self) -> SourceMetadataEntry {
+        if self.editing_project_output() {
+            return SourceMetadataEntry {
+                status: MetadataStatus::Ready,
+                metadata: self.project_output_metadata(),
+                error: None,
+            };
+        }
         self.source_metadata.selected_entry(&self.file_queue)
     }
 
     pub(super) fn selected_source_metadata(&self) -> Option<SourceMetadata> {
+        if self.editing_project_output() {
+            return self.project_output_metadata();
+        }
         self.file_queue
             .selected_file_id()
             .and_then(|id| self.source_metadata.metadata_for(id))
@@ -49,7 +59,11 @@ impl FrameRoot {
                     Ok(metadata) => {
                         if normalize_selected_config
                             && !root.update_installation_in_progress()
-                            && let Some(file) = root.file_queue.file_by_id_mut(&file_id)
+                            && let Some(file) = root
+                                .project
+                                .library
+                                .file_by_id_mut(&file_id)
+                                .or_else(|| root.file_queue.file_by_id_mut(&file_id))
                         {
                             initialize_output_config(&mut file.config, Some(&metadata));
                         }

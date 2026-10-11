@@ -139,9 +139,16 @@ impl FrameRoot {
     }
 
     fn start_export(&mut self, cx: &mut Context<Self>) {
-        let ready = self.file_queue.selected_file().is_some_and(|file| {
-            !file.output_name.trim().is_empty() && custom_dimensions_error(&file.config).is_none()
-        });
+        let ready = if self.project.enabled {
+            !self.project.clips.is_empty()
+                && !self.project.output_name.trim().is_empty()
+                && custom_dimensions_error(&self.project.output).is_none()
+        } else {
+            self.file_queue.selected_file().is_some_and(|file| {
+                !file.output_name.trim().is_empty()
+                    && custom_dimensions_error(&file.config).is_none()
+            })
+        };
         if !ready {
             return;
         }
@@ -193,10 +200,9 @@ impl FrameRoot {
             return;
         }
         let metadata = self.selected_source_metadata();
-        let Some(file) = self.file_queue.selected_file_mut() else {
+        let Some(config) = self.selected_config_mut() else {
             return;
         };
-        let config = &mut file.config;
         let Some((source_width, source_height)) = source_dimensions(config, metadata.as_ref())
         else {
             return;
@@ -328,9 +334,17 @@ impl FrameRoot {
     }
 
     fn export_view(&self, scheme: &'static ColorScheme) -> ExportView {
-        let metadata = self.selected_source_metadata();
+        let metadata = if self.project.enabled {
+            self.project_output_metadata()
+        } else {
+            self.selected_source_metadata()
+        };
         let file = self.file_queue.selected_file();
-        let config = file.map(|file| file.config.clone()).unwrap_or_default();
+        let config = if self.project.enabled {
+            self.project.output.clone()
+        } else {
+            file.map(|file| file.config.clone()).unwrap_or_default()
+        };
         let kind = source_kind_for(metadata.as_ref());
         let video_controls = kind == SourceKind::Video
             && config.processing_mode != ProcessingMode::Copy
@@ -339,8 +353,11 @@ impl FrameRoot {
             .into_iter()
             .filter(|option| !option.is_disabled)
             .collect();
-        let duration =
-            output_duration_seconds(&config, preview_duration_seconds(metadata.as_ref()));
+        let duration = if self.project.enabled {
+            self.project_duration()
+        } else {
+            output_duration_seconds(&config, preview_duration_seconds(metadata.as_ref()))
+        };
         ExportView {
             scheme,
             title: match kind {
@@ -348,24 +365,36 @@ impl FrameRoot {
                 SourceKind::Image => "Export image",
                 SourceKind::Video => "Export video",
             },
-            source_name: file.map(|file| file.name.clone()).unwrap_or_default(),
-            output_name: file
-                .map(|file| file.output_name.clone())
-                .unwrap_or_default(),
+            source_name: if self.project.enabled {
+                "Current project".to_string()
+            } else {
+                file.map(|file| file.name.clone()).unwrap_or_default()
+            },
+            output_name: if self.project.enabled {
+                self.project.output_name.clone()
+            } else {
+                file.map(|file| file.output_name.clone())
+                    .unwrap_or_default()
+            },
             disabled: self.update_installation_in_progress()
-                || self.file_queue.selected_file_locked(),
+                || self.file_queue.selected_file_locked()
+                || (self.project.enabled && self.is_processing),
             kind,
             video_controls,
             encoders,
             duration,
-            queued: self
-                .file_queue
-                .files()
-                .iter()
-                .filter(|file| {
-                    file.is_selected_for_conversion && file.status.is_actionable_for_conversion()
-                })
-                .count(),
+            queued: if self.project.enabled {
+                usize::from(!self.project.clips.is_empty())
+            } else {
+                self.file_queue
+                    .files()
+                    .iter()
+                    .filter(|file| {
+                        file.is_selected_for_conversion
+                            && file.status.is_actionable_for_conversion()
+                    })
+                    .count()
+            },
             has_output_directory: self.default_output_directory.is_some(),
             output_directory: self
                 .default_output_directory

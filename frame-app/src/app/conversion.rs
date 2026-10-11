@@ -14,6 +14,36 @@ impl FrameRoot {
         else {
             return Vec::new();
         };
+        if self.project.enabled {
+            let Some(config) = self.project_config() else {
+                return Vec::new();
+            };
+            if config.timeline_sources.is_empty() {
+                return Vec::new();
+            }
+            if self.is_processing {
+                return Vec::new();
+            }
+            let source = config
+                .timeline_sources
+                .iter()
+                .find(|source| source.kind != "audio")
+                .or_else(|| config.timeline_sources.first())
+                .unwrap();
+            let mut job = FileItem::from_path("project-export", source.path.clone(), 0);
+            job.name = "Current project".to_string();
+            job.output_name.clone_from(&self.project.output_name);
+            job.config = self.project.output.clone();
+            job.status = FileStatus::Queued;
+            let mut task = conversion_task_from_file(&job, &output_directory);
+            task.config = config;
+            if let Some(existing) = self.file_queue.file_by_id_mut("project-export") {
+                *existing = job;
+            } else {
+                self.file_queue.add_file(job);
+            }
+            return vec![task];
+        }
         self.normalize_selected_actionable_conversion_configs();
 
         let mut tasks = self
@@ -191,6 +221,7 @@ impl FrameRoot {
 
         let removed = self.file_queue.remove_file(id).is_some();
         if removed {
+            self.project.clips.retain(|clip| clip.id != id);
             self.source_metadata.remove(id);
             self.conversion_events.remove_logs(id);
             self.refresh_processing_state_from_queue();

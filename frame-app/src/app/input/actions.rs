@@ -98,34 +98,36 @@ impl FrameRoot {
     pub(in crate::app) fn text_input_disabled(&self, kind: FrameTextInputKind) -> bool {
         self.update_installation_in_progress()
             || (kind != FrameTextInputKind::MaxConcurrency
-                && self.file_queue.selected_file_locked())
+                && (self.file_queue.selected_file_locked()
+                    || (self.project.enabled && self.is_processing)))
     }
 
     pub(in crate::app) fn text_input_value(&self, kind: FrameTextInputKind) -> String {
         match kind {
             FrameTextInputKind::MaxConcurrency => self.settings_ui.max_concurrency_draft.clone(),
-            FrameTextInputKind::OutputName | FrameTextInputKind::ExportName => self
-                .file_queue
-                .selected_file()
-                .map_or_else(String::new, |file| file.output_name.clone()),
+            FrameTextInputKind::OutputName | FrameTextInputKind::ExportName => {
+                if self.editing_project_output() {
+                    self.project.output_name.clone()
+                } else {
+                    self.file_queue
+                        .selected_file()
+                        .map_or_else(String::new, |file| file.output_name.clone())
+                }
+            }
             FrameTextInputKind::AudioBitrate => self
-                .file_queue
-                .selected_file()
-                .map_or_else(String::new, |file| file.config.audio_bitrate.clone()),
+                .selected_config()
+                .map_or_else(String::new, |config| config.audio_bitrate.clone()),
             FrameTextInputKind::VideoCustomWidth => self
-                .file_queue
-                .selected_file()
-                .and_then(|file| file.config.custom_width.clone())
+                .selected_config()
+                .and_then(|config| config.custom_width.clone())
                 .unwrap_or_default(),
             FrameTextInputKind::VideoCustomHeight => self
-                .file_queue
-                .selected_file()
-                .and_then(|file| file.config.custom_height.clone())
+                .selected_config()
+                .and_then(|config| config.custom_height.clone())
                 .unwrap_or_default(),
             FrameTextInputKind::GifLoop => self
-                .file_queue
-                .selected_file()
-                .map_or_else(String::new, |file| file.config.gif_loop.to_string()),
+                .selected_config()
+                .map_or_else(String::new, |config| config.gif_loop.to_string()),
             FrameTextInputKind::PreviewStartTime | FrameTextInputKind::PreviewEndTime => self
                 .text_input_runtime(kind)
                 .timecode_draft
@@ -205,7 +207,11 @@ impl FrameRoot {
                     return None;
                 }
                 let next = sanitize_output_name(candidate);
-                self.file_queue.set_selected_output_name_from_input(&next);
+                if self.editing_project_output() {
+                    self.project.output_name.clone_from(&next);
+                } else {
+                    self.file_queue.set_selected_output_name_from_input(&next);
+                }
                 Some(next)
             }
             FrameTextInputKind::AudioBitrate => {
@@ -213,8 +219,8 @@ impl FrameRoot {
                     return None;
                 }
                 let next = sanitize_number_input(candidate);
-                self.file_queue.selected_file_mut().map(|file| {
-                    apply_audio_bitrate(&mut file.config, &next);
+                self.selected_config_mut().map(|config| {
+                    apply_audio_bitrate(config, &next);
                 })?;
                 Some(next)
             }
@@ -223,8 +229,8 @@ impl FrameRoot {
                     return None;
                 }
                 let next = sanitize_number_input(candidate);
-                self.file_queue.selected_file_mut().map(|file| {
-                    apply_custom_width(&mut file.config, &next);
+                self.selected_config_mut().map(|config| {
+                    apply_custom_width(config, &next);
                 })?;
                 self.sync_export_linked_dimension(FrameTextInputKind::VideoCustomWidth);
                 Some(next)
@@ -234,8 +240,8 @@ impl FrameRoot {
                     return None;
                 }
                 let next = sanitize_number_input(candidate);
-                self.file_queue.selected_file_mut().map(|file| {
-                    apply_custom_height(&mut file.config, &next);
+                self.selected_config_mut().map(|config| {
+                    apply_custom_height(config, &next);
                 })?;
                 self.sync_export_linked_dimension(FrameTextInputKind::VideoCustomHeight);
                 Some(next)
@@ -245,8 +251,8 @@ impl FrameRoot {
                     return None;
                 }
                 let next = sanitize_number_input(candidate);
-                self.file_queue.selected_file_mut().map(|file| {
-                    apply_gif_loop(&mut file.config, &next);
+                self.selected_config_mut().map(|config| {
+                    apply_gif_loop(config, &next);
                 })?;
                 Some(file_gif_loop_value(&self.file_queue))
             }
@@ -274,8 +280,8 @@ impl FrameRoot {
                     return None;
                 }
                 let field = metadata_field_for_text_input(kind)?;
-                self.file_queue.selected_file_mut().map(|file| {
-                    apply_metadata_field(&mut file.config, field, candidate);
+                self.selected_config_mut().map(|config| {
+                    apply_metadata_field(config, field, candidate);
                 })?;
                 Some(candidate.to_string())
             }
@@ -295,12 +301,12 @@ impl FrameRoot {
                 }
                 let index = self.subtitle_ui.external_track_index?;
                 let next: String = candidate.chars().filter(|ch| !ch.is_control()).collect();
-                self.file_queue.selected_file_mut().map(|file| match kind {
+                self.selected_config_mut().map(|config| match kind {
                     FrameTextInputKind::ExternalSubtitleLanguage => {
-                        apply_external_subtitle_language(&mut file.config, index, &next);
+                        apply_external_subtitle_language(config, index, &next);
                     }
                     FrameTextInputKind::ExternalSubtitleTitle => {
-                        apply_external_subtitle_title(&mut file.config, index, &next);
+                        apply_external_subtitle_title(config, index, &next);
                     }
                     _ => unreachable!("matched external subtitle text input variants"),
                 })?;

@@ -78,7 +78,8 @@ impl Element for FileDropLifecycleProbe {
 
 impl FrameRoot {
     pub(super) fn select_workspace_file(&mut self, id: &str) -> bool {
-        !self.update_installation_in_progress() && self.file_queue.select_existing_file(id)
+        !(self.update_installation_in_progress() || self.project.enabled && self.is_processing)
+            && self.file_queue.select_existing_file(id)
     }
 
     pub(super) fn toggle_file_batch_selection(&mut self, id: &str) -> Option<bool> {
@@ -188,7 +189,9 @@ impl FrameRoot {
                 if root.update_installation_in_progress() {
                     return;
                 }
-                if root.file_queue.add_files(files) > 0 {
+                root.project.enabled = true;
+                root.active_view = ActiveView::Workspace;
+                if root.project.library.add_files(files) > 0 {
                     for (file_id, file_path) in probe_targets {
                         root.queue_source_metadata_probe(file_id, file_path, cx);
                     }

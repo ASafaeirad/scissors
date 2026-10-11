@@ -61,6 +61,7 @@ pub fn core_config_from_gpui(config: &GpuiConversionConfig) -> CoreConversionCon
         video_filters: core_video_filters_from_gpui(&config.video_filters),
         audio_filters: core_audio_filters_from_gpui(&config.audio_filters),
         external_audio_tracks: config.external_audio_tracks.clone(),
+        timeline_sources: Vec::new(),
         selected_audio_tracks: config.selected_audio_tracks.clone(),
         selected_subtitle_tracks: config.selected_subtitle_tracks.clone(),
         external_subtitle_tracks: config
