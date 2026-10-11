@@ -142,6 +142,14 @@ impl FrameRoot {
     }
 
     pub(super) fn add_library_clip(&mut self, source_id: &str) -> bool {
+        self.insert_library_clip(source_id, None)
+    }
+
+    pub(super) fn add_library_clip_at(&mut self, source_id: &str, offset_millis: u64) -> bool {
+        self.insert_library_clip(source_id, Some(offset_millis))
+    }
+
+    fn insert_library_clip(&mut self, source_id: &str, offset_millis: Option<u64>) -> bool {
         if self.is_processing || self.update_installation_in_progress() {
             return false;
         }
@@ -178,19 +186,22 @@ impl FrameRoot {
         if duration <= 0.0 {
             return false;
         }
-        let offset_millis = if kind == SourceKind::Audio {
-            crate::numeric::rounded_f64_to_u64(self.preview_ui.playback.current_time() * 1000.0)
-        } else {
-            self.project_sources()
-                .iter()
-                .filter(|clip| clip.kind != "audio")
-                .map(|clip| {
-                    clip.offset_millis
-                        .saturating_add(frame_core::project_timeline::clip_duration_millis(clip))
-                })
-                .max()
-                .unwrap_or(0)
-        };
+        let offset_millis = offset_millis.unwrap_or_else(|| {
+            if kind == SourceKind::Audio {
+                crate::numeric::rounded_f64_to_u64(self.preview_ui.playback.current_time() * 1000.0)
+            } else {
+                self.project_sources()
+                    .iter()
+                    .filter(|clip| clip.kind != "audio")
+                    .map(|clip| {
+                        clip.offset_millis.saturating_add(
+                            frame_core::project_timeline::clip_duration_millis(clip),
+                        )
+                    })
+                    .max()
+                    .unwrap_or(0)
+            }
+        });
         file.id = self.next_file_id();
         file.output_name = "Untitled project".to_string();
         initialize_output_config(&mut file.config, Some(&metadata));

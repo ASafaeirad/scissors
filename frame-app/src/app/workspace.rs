@@ -12,6 +12,122 @@ use super::{
 use crate::material::{self, ColorScheme, Symbol, shape, spacing, typography};
 use gpui::{AppContext, prelude::FluentBuilder};
 
+#[cfg(test)]
+mod drag_drop_tests {
+    use super::*;
+    use crate::app::{Entity, FocusHandle, IntoElement, Render, VisualFixture};
+    use gpui::{Modifiers, MouseButton, TestAppContext, point, px};
+
+    struct MediaTimelineTestView {
+        root: Entity<FrameRoot>,
+        focus: FocusHandle,
+    }
+
+    impl Render for MediaTimelineTestView {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.root.update(cx, |root, cx| {
+                let project = root.project_render_state().unwrap();
+                let file = project.library.files().first().unwrap();
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        media_card(
+                            file,
+                            false,
+                            Some(&project),
+                            project.timeline.scheme,
+                            window,
+                            cx,
+                        )
+                        .debug_selector(|| "drag-source".to_string())
+                        .w(theme::ui_rem(180.0)),
+                    )
+                    .child(super::super::project_timeline::project_timeline(
+                        &project.timeline,
+                        &self.focus,
+                        window,
+                        cx,
+                    ))
+            })
+        }
+    }
+
+    #[test]
+    fn media_card_drop_places_a_new_clip_at_visible_time() {
+        for (empty, processing) in [(false, false), (true, false), (false, true)] {
+            let mut app = TestAppContext::single();
+            let (view, cx) = app.add_window_view(|_, cx| {
+                let root = cx.new(|_| {
+                    let mut root = FrameRoot::new();
+                    root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                    root.is_processing = processing;
+                    if empty {
+                        root.project.clips.clear();
+                        root.file_queue = FileQueue::new();
+                    }
+                    root
+                });
+                MediaTimelineTestView {
+                    root,
+                    focus: cx.focus_handle(),
+                }
+            });
+            let root = view.read_with(cx, |view, _| view.root.clone());
+            cx.update(|window, cx| window.draw(cx).clear());
+            let source = cx.debug_bounds("drag-source").unwrap();
+            let bounds =
+                root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
+            let initial_count = root.read_with(cx, |root, _| root.project.clips.len());
+            // Zoom and pan before dropping; fitting the project would give a different time.
+            cx.simulate_event(gpui::PinchEvent {
+                position: bounds.center(),
+                delta: 1.0,
+                ..Default::default()
+            });
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: bounds.center(),
+                delta: gpui::ScrollDelta::Pixels(point(-bounds.size.width * 0.5, px(0.0))),
+                ..Default::default()
+            });
+            cx.update(|window, cx| window.draw(cx).clear());
+            let original_view = root.read_with(cx, |root, _| root.project_timeline_view());
+            let start = point(source.center().x, source.top() + px(30.0));
+            let end = point(bounds.left() + bounds.size.width * 0.75, bounds.center().y);
+            let expected = root.read_with(cx, |root, _| root.project_duration().max(1.0) * 625.0);
+            cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+            cx.simulate_mouse_move(
+                point(start.x + px(8.0), start.y),
+                MouseButton::Left,
+                Modifiers::default(),
+            );
+            cx.update(|window, cx| window.draw(cx).clear());
+            cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
+            cx.update(|window, cx| window.draw(cx).clear());
+            cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+            root.read_with(cx, |root, _| {
+                assert_eq!(
+                    root.project.clips.len(),
+                    initial_count + usize::from(!processing)
+                );
+                if processing {
+                    return;
+                }
+                let clip = root.project.clips.last().unwrap();
+                assert_eq!(clip.source_id, "library-video");
+                assert!(
+                    clip.offset_millis
+                        .abs_diff(crate::numeric::rounded_f64_to_u64(expected))
+                        <= 1
+                );
+                assert_eq!(root.project.library.files().len(), 2);
+                assert_eq!(root.file_queue.selected_file_id(), Some(clip.id.as_str()));
+                assert_eq!(root.project_timeline_view(), original_view);
+            });
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub(super) struct WorkspaceState {
     pub(super) tool: usize,
@@ -613,9 +729,22 @@ fn media_card(
         .id(format!("library-card-{}", file.id))
         .relative()
         .min_w_0()
-        .child(preview.on_drag(
-            super::project_timeline::LibrarySourceDrag(file.id.clone()),
-            |_, _, _, cx| cx.new(|_| super::project_timeline::MediaDragPreview),
+        .child(preview.when(
+            project.is_some_and(|project| {
+                project.ready_sources.contains(&file.id) && project.timeline.enabled
+            }),
+            |preview| {
+                let name = file.name.clone();
+                preview.cursor_grab().on_drag(
+                    super::project_timeline::LibrarySourceDrag(file.id.clone()),
+                    move |_, _, _, cx| {
+                        cx.new(|_| super::project_timeline::LibraryDragPreview {
+                            name: name.clone(),
+                            scheme,
+                        })
+                    },
+                )
+            },
         ))
         .when_some(project, |card, project| {
             card.child(

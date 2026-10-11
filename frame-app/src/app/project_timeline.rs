@@ -90,10 +90,45 @@ impl FrameRoot {
         );
         self.commit_preview_timeline_seek_at_position_with_context(position, cx)
     }
+
+    fn drop_library_source(&mut self, source_id: &str, position: Point<Pixels>) -> bool {
+        let Some(bounds) = self.preview_ui.timeline_track_bounds else {
+            return false;
+        };
+        if bounds.size.width <= px(0.0) {
+            return false;
+        }
+        let view = self.project_timeline_view();
+        let time = view.time(timeline_slider_percent_from_bounds(position, bounds));
+        if !self.add_library_clip_at(source_id, crate::numeric::rounded_f64_to_u64(time * 1000.0)) {
+            return false;
+        }
+        // Keep the drop position stable when the new clip extends the project duration.
+        self.preview_ui.project_timeline_view = Some(view);
+        true
+    }
 }
 
 #[derive(Clone)]
 pub(super) struct LibrarySourceDrag(pub(super) String);
+
+pub(super) struct LibraryDragPreview {
+    pub(super) name: String,
+    pub(super) scheme: &'static material::ColorScheme,
+}
+
+impl Render for LibraryDragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        m3::m3_surface(self.scheme.secondary_container, shape::CORNER_SMALL)
+            .px(theme::ui_rem(12.0))
+            .py(theme::ui_rem(8.0))
+            .max_w(theme::ui_rem(240.0))
+            .text_color(color(self.scheme.on_secondary_container))
+            .m3_type(typography::LABEL_MEDIUM)
+            .truncate()
+            .child(self.name.clone())
+    }
+}
 
 #[derive(Clone)]
 struct ClipDrag {
@@ -178,9 +213,16 @@ pub(super) fn project_timeline(
                 cx.notify();
             }
         }))
-        .on_drop(cx.listener(|root, source: &LibrarySourceDrag, _, cx| {
+        .drag_over::<LibrarySourceDrag>(move |style, _, _, _| {
+            if enabled {
+                style.bg(color(scheme.surface_container_high))
+            } else {
+                style
+            }
+        })
+        .on_drop(cx.listener(|root, source: &LibrarySourceDrag, window, cx| {
             cx.stop_propagation();
-            if root.add_library_clip(&source.0) {
+            if root.drop_library_source(&source.0, window.mouse_position()) {
                 cx.notify();
             }
         }))
@@ -238,7 +280,8 @@ pub(super) fn project_timeline(
                 div()
                     .p(theme::ui_rem(24.0))
                     .text_color(color(scheme.on_surface_variant))
-                    .child("Add sources from the library to start editing."),
+                    .m3_type(typography::BODY_MEDIUM)
+                    .child("Drag media here to start editing, or use Add to timeline."),
             )
         })
         .children(clips.iter().zip(sources).filter_map(|(placement, source)| {
@@ -631,6 +674,32 @@ mod tests {
     struct TimelineTestView {
         root: Entity<FrameRoot>,
         focus: FocusHandle,
+    }
+
+    #[test]
+    fn drops_require_bounds_and_ready_editable_sources() {
+        let mut root = FrameRoot::new();
+        root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+        root.preview_ui.timeline_track_bounds = None;
+        assert!(!root.drop_library_source("library-video", point(px(50.0), px(10.0))));
+        root.preview_ui.timeline_track_bounds = Some(Bounds::new(
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(24.0)),
+        ));
+        let count = root.project.clips.len();
+        assert!(!root.drop_library_source("missing", point(px(50.0), px(10.0))));
+        root.project
+            .library
+            .add_file(FileItem::from_path("pending", "/tmp/pending.mp4", 1));
+        assert!(!root.drop_library_source("pending", point(px(50.0), px(10.0))));
+        root.is_processing = true;
+        assert!(!root.drop_library_source("library-video", point(px(50.0), px(10.0))));
+        assert_eq!(root.project.clips.len(), count);
+        root.is_processing = false;
+        for (source, x, offset) in [("library-audio", -10.0, 0), ("library-video", 150.0, 6000)] {
+            assert!(root.drop_library_source(source, point(px(x), px(10.0))));
+            assert_eq!(root.project.clips.last().unwrap().offset_millis, offset);
+        }
     }
 
     impl Render for TimelineTestView {
