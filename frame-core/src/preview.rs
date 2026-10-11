@@ -555,20 +555,21 @@ fn build_project_preview(
         "-filter_complex_threads".to_string(),
         "1".to_string(),
     ];
-    crate::project_timeline::add_inputs(&mut args, &config.timeline_sources, fps);
-    args.extend([
-        "-filter_complex".to_string(),
-        crate::project_timeline::graph(
-            &config.timeline_sources,
+    crate::project_timeline::add_graph(
+        &mut args,
+        &config.timeline_sources,
+        &crate::project_timeline::RenderWindow {
             width,
             height,
             fps,
-            options.start_seconds,
+            start: options.start_seconds,
             end,
-            true,
-            false,
-            options.realtime,
-        ),
+            video: true,
+            audio: false,
+            realtime: options.realtime,
+        },
+    );
+    args.extend([
         "-map".to_string(),
         "[project_video_out]".to_string(),
         "-an".to_string(),
@@ -603,20 +604,21 @@ fn build_project_audio_preview(
         "-filter_complex_threads".to_string(),
         "1".to_string(),
     ];
-    crate::project_timeline::add_inputs(&mut args, &config.timeline_sources, 30);
-    args.extend([
-        "-filter_complex".to_string(),
-        crate::project_timeline::graph(
-            &config.timeline_sources,
-            16,
-            16,
-            30,
-            options.start_seconds,
+    crate::project_timeline::add_graph(
+        &mut args,
+        &config.timeline_sources,
+        &crate::project_timeline::RenderWindow {
+            width: 16,
+            height: 16,
+            fps: 30,
+            start: options.start_seconds,
             end,
-            false,
-            true,
-            options.realtime,
-        ),
+            video: false,
+            audio: true,
+            realtime: options.realtime,
+        },
+    );
+    args.extend([
         "-map".to_string(),
         "[project_audio_out]".to_string(),
         "-vn".to_string(),

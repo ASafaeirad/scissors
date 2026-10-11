@@ -339,7 +339,7 @@ fn build_preview_filter_complex(
     }
 }
 
-fn apply_preview_subtitle_timebase(filters: &mut Vec<String>, source_time_seconds: f64) {
+pub(crate) fn apply_preview_subtitle_timebase(filters: &mut Vec<String>, source_time_seconds: f64) {
     if !source_time_seconds.is_finite() || source_time_seconds <= 0.0 {
         return;
     }

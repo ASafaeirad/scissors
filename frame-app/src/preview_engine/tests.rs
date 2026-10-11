@@ -225,6 +225,34 @@ fn test_preview_session_command_is_noop_without_pipeline() {
 }
 
 #[test]
+fn test_preview_session_reports_the_newest_queued_seek_until_it_runs() {
+    let config = PreviewSessionConfig {
+        file_id: "test-seek".to_string(),
+        path: PathBuf::from("/tmp/test.mp4"),
+        source_kind: PreviewSourceKind::Video,
+        source_width: Some(1920),
+        source_height: Some(1080),
+        selected_audio_track: None,
+        duration_seconds: 12.5,
+        max_width: DEFAULT_PREVIEW_MAX_WIDTH,
+        max_height: DEFAULT_PREVIEW_MAX_HEIGHT,
+        fps: DEFAULT_PREVIEW_FPS,
+        conversion_config: default_core_config(),
+    };
+    let session = PreviewSession::new_for_test(config);
+    let first = session.queue(PreviewCommand::SeekPrecise(2.0));
+    let second = session.queue(PreviewCommand::SeekPrecise(9.0));
+    assert!((session.snapshot().playback.position_seconds - 9.0).abs() < f64::EPSILON);
+
+    // The superseded seek leaves the newer target in place.
+    session.run(first).expect("first seek");
+    assert!((session.snapshot().playback.position_seconds - 9.0).abs() < f64::EPSILON);
+
+    session.run(second).expect("second seek");
+    assert!(session.snapshot().playback.position_seconds.abs() < f64::EPSILON);
+}
+
+#[test]
 fn test_preview_session_snapshot_exposes_runtime_metrics() {
     let config = PreviewSessionConfig {
         file_id: "test-metrics".to_string(),

@@ -2114,11 +2114,15 @@ impl FrameRoot {
                 self.preview_ui.media_command_generation =
                     self.preview_ui.media_command_generation.saturating_add(1);
                 let command_generation = self.preview_ui.media_command_generation;
+                let commands: Vec<_> = commands
+                    .into_iter()
+                    .map(|command| session.queue(command))
+                    .collect();
                 cx.spawn(async move |this, cx| {
                     let result = cx
                         .background_spawn(async move {
                             for command in commands {
-                                session.command(command)?;
+                                session.run(command)?;
                             }
                             Ok::<(), PreviewEngineError>(())
                         })

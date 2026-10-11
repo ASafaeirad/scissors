@@ -74,21 +74,20 @@ fn build_project_args(
     let duration = crate::project_timeline::duration_seconds(&config.timeline_sources);
     let audio = container_supports_audio(&config.container) && config.audio_codec != "none";
     let mut args = vec!["-filter_complex_threads".to_string(), "1".to_string()];
-    crate::project_timeline::add_inputs(&mut args, &config.timeline_sources, fps);
-    args.extend([
-        "-filter_complex".to_string(),
-        crate::project_timeline::graph(
-            &config.timeline_sources,
+    crate::project_timeline::add_graph(
+        &mut args,
+        &config.timeline_sources,
+        &crate::project_timeline::RenderWindow {
             width,
             height,
             fps,
-            0.0,
-            duration,
-            !audio_only,
+            start: 0.0,
+            end: duration,
+            video: !audio_only,
             audio,
-            false,
-        ),
-    ]);
+            realtime: false,
+        },
+    );
     if !audio_only {
         args.extend(["-map".to_string(), "[project_video_out]".to_string()]);
         add_video_codec_args(&mut args, config);

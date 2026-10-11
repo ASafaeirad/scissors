@@ -1,4 +1,7 @@
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{
+    Mutex, MutexGuard, TryLockError,
+    atomic::{AtomicU64, Ordering},
+};
 
 use super::metrics::PreviewRuntimeMetricsStore;
 use super::{
@@ -16,6 +19,18 @@ pub struct PreviewSession {
     pipeline: Mutex<Option<RunningPreviewProcess>>,
     playing: Mutex<bool>,
     status: Mutex<PreviewSessionStatus>,
+    /// Playback served by `snapshot` while a command holds the pipeline.
+    last_playback: Mutex<PreviewPlaybackSnapshot>,
+    /// The newest queued seek, reported until it lands.
+    pending_seek: Mutex<Option<(u64, f64)>>,
+    seek_tickets: AtomicU64,
+}
+
+/// A command with its place in the seek order; see [`PreviewSession::queue`].
+#[derive(Clone, Copy, Debug)]
+pub struct QueuedPreviewCommand {
+    command: PreviewCommand,
+    ticket: u64,
 }
 
 impl PreviewSession {
@@ -43,6 +58,13 @@ impl PreviewSession {
                     pipeline: Mutex::new(Some(pipeline)),
                     playing: Mutex::new(false),
                     status: Mutex::new(PreviewSessionStatus::Ready),
+                    last_playback: Mutex::new(PreviewPlaybackSnapshot {
+                        position_seconds: 0.0,
+                        duration_seconds,
+                        playing: false,
+                    }),
+                    pending_seek: Mutex::new(None),
+                    seek_tickets: AtomicU64::new(0),
                 })
             }
         }
@@ -56,6 +78,13 @@ impl PreviewSession {
         Self {
             dimensions: Mutex::new(config.target_dimensions()),
             duration_seconds: Mutex::new(config.duration_seconds),
+            last_playback: Mutex::new(PreviewPlaybackSnapshot {
+                position_seconds: 0.0,
+                duration_seconds: config.duration_seconds,
+                playing: false,
+            }),
+            pending_seek: Mutex::new(None),
+            seek_tickets: AtomicU64::new(0),
             config: Mutex::new(config),
             frame_store,
             metrics,
@@ -119,16 +148,66 @@ impl PreviewSession {
     /// # Errors
     ///
     /// Returns an error when the underlying pipeline command fails.
+    pub fn command(&self, command: PreviewCommand) -> Result<(), PreviewEngineError> {
+        self.run(self.queue(command))
+    }
+
+    /// Orders `command` before it runs on another thread.
+    ///
+    /// Call this where commands are issued: a seek reports its target from
+    /// [`Self::snapshot`] at once, and is skipped if a later seek is queued
+    /// before it runs.
+    pub fn queue(&self, command: PreviewCommand) -> QueuedPreviewCommand {
+        let ticket = match command {
+            PreviewCommand::SeekFast(seconds) | PreviewCommand::SeekPrecise(seconds) => {
+                let ticket = self.seek_tickets.fetch_add(1, Ordering::SeqCst) + 1;
+                *lock(&self.pending_seek) = Some((ticket, seconds));
+                ticket
+            }
+            PreviewCommand::Play | PreviewCommand::Pause => 0,
+        };
+        QueuedPreviewCommand { command, ticket }
+    }
+
+    /// Runs a command from [`Self::queue`], blocking until the pipeline applies it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the underlying pipeline command fails.
+    pub fn run(&self, queued: QueuedPreviewCommand) -> Result<(), PreviewEngineError> {
+        let QueuedPreviewCommand { command, ticket } = queued;
+        let superseded = || ticket != 0 && self.seek_tickets.load(Ordering::SeqCst) != ticket;
+        if superseded() {
+            return Ok(());
+        }
+        let result = self.run_on_pipeline(command, &superseded);
+        if ticket != 0 {
+            let mut pending = lock(&self.pending_seek);
+            if pending.is_some_and(|(pending, _)| pending == ticket) {
+                *pending = None;
+            }
+        }
+        result
+    }
+
     #[expect(
         clippy::significant_drop_tightening,
         reason = "The pipeline mutex guard must live across the selected FFmpeg process command."
     )]
-    pub fn command(&self, command: PreviewCommand) -> Result<(), PreviewEngineError> {
+    fn run_on_pipeline(
+        &self,
+        command: PreviewCommand,
+        superseded: &dyn Fn() -> bool,
+    ) -> Result<(), PreviewEngineError> {
         let next_playing = {
             let pipeline = lock(&self.pipeline);
             let Some(pipeline) = pipeline.as_ref() else {
                 return Ok(());
             };
+            // A later seek may have been queued while this one waited.
+            if superseded() {
+                return Ok(());
+            }
 
             match command {
                 PreviewCommand::Play => {
@@ -159,26 +238,48 @@ impl PreviewSession {
         Ok(())
     }
 
+    /// Current session state. Never waits for an in-flight command: while one
+    /// holds the pipeline, the last known playback is reported instead.
     #[must_use]
     pub fn snapshot(&self) -> PreviewSessionSnapshot {
-        let pipeline_snapshot = {
-            let pipeline = lock(&self.pipeline);
+        let read = |pipeline: &Option<RunningPreviewProcess>| {
             pipeline
                 .as_ref()
                 .map(|pipeline| (pipeline.duration(), pipeline.ended(), pipeline.position()))
         };
-        let duration = pipeline_snapshot.map_or_else(
-            || *lock(&self.duration_seconds),
-            |(duration, _, _)| self.update_duration(duration),
-        );
-        let ended = pipeline_snapshot.is_some_and(|(_, ended, _)| ended);
-        let position = pipeline_snapshot.map_or(
-            0.0,
-            |(_, ended, position)| {
-                if ended { duration } else { position }
+        let pipeline_snapshot = match self.pipeline.try_lock() {
+            Ok(pipeline) => Some(read(&pipeline)),
+            Err(TryLockError::Poisoned(pipeline)) => Some(read(&pipeline.into_inner())),
+            Err(TryLockError::WouldBlock) => None,
+        };
+        let mut playback = pipeline_snapshot.map_or_else(
+            || *lock(&self.last_playback),
+            |pipeline_snapshot| {
+                let duration = pipeline_snapshot.map_or_else(
+                    || *lock(&self.duration_seconds),
+                    |(duration, _, _)| self.update_duration(duration),
+                );
+                let ended = pipeline_snapshot.is_some_and(|(_, ended, _)| ended);
+                let position =
+                    pipeline_snapshot.map_or(
+                        0.0,
+                        |(_, ended, position)| {
+                            if ended { duration } else { position }
+                        },
+                    );
+                let playback = PreviewPlaybackSnapshot {
+                    position_seconds: position,
+                    duration_seconds: duration,
+                    playing: pipeline_snapshot.is_some_and(|_| !ended && *lock(&self.playing)),
+                };
+                *lock(&self.last_playback) = playback;
+                playback
             },
         );
-        let playing = pipeline_snapshot.is_some_and(|_| !ended && *lock(&self.playing));
+        let pending_seek = *lock(&self.pending_seek);
+        if let Some((_, seconds)) = pending_seek {
+            playback.position_seconds = seconds;
+        }
 
         let config = lock(&self.config);
         PreviewSessionSnapshot {
@@ -186,11 +287,7 @@ impl PreviewSession {
             source_kind: config.source_kind,
             dimensions: *lock(&self.dimensions),
             status: lock(&self.status).clone(),
-            playback: PreviewPlaybackSnapshot {
-                position_seconds: position,
-                duration_seconds: duration,
-                playing,
-            },
+            playback,
             frame_generation: self.frame_store.generation(),
             frame_stats: self.frame_store.stats(),
             runtime_metrics: self.metrics.snapshot(),
