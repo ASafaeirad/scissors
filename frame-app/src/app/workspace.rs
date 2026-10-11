@@ -249,7 +249,7 @@ pub(super) struct WorkspaceState {
 
 const TOOLS: [(Symbol, &str); 7] = [
     (Symbol::VideoLibrary, "Library"),
-    (Symbol::Crop, "Crop"),
+    (Symbol::Movie, "Video"),
     (Symbol::VolumeUp, "Audio"),
     (Symbol::ClosedCaption, "Captions"),
     (Symbol::FileExport, "Output"),
@@ -561,9 +561,6 @@ fn navigation_rail(
             4 => SettingsTab::Output,
             _ => root.settings_ui.active_tab,
         };
-        if *index == 1 && !root.preview_ui.crop_mode {
-            root.toggle_selected_crop_mode();
-        }
         cx.notify();
     }))
     .build(scheme, window, cx)
