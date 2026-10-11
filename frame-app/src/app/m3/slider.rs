@@ -15,6 +15,8 @@ const HANDLE_WIDTH: f32 = 4.0;
 const HANDLE_GAP: f32 = 6.0;
 const STOP_SIZE: f32 = 4.0;
 const STOP_INSET: f32 = (TRACK_HEIGHT - STOP_SIZE) / 2.0;
+/// Stops this close to the handle (as a track fraction) are hidden behind it.
+const STOP_HANDLE_TOLERANCE: f32 = 0.005;
 const VALUE_LABEL_HEIGHT: f32 = 44.0;
 const VALUE_LABEL_MIN_WIDTH: f32 = 48.0;
 const VALUE_LABEL_GAP: f32 = 8.0;
@@ -31,6 +33,7 @@ pub(in crate::app) struct Slider {
     max: f64,
     value_text: Option<String>,
     show_value_label: bool,
+    stops: Vec<f32>,
     enabled: bool,
     focus: Option<FocusHandle>,
 }
@@ -52,6 +55,7 @@ impl Slider {
             max,
             value_text: None,
             show_value_label: false,
+            stops: Vec::new(),
             enabled: true,
             focus: None,
         }
@@ -67,6 +71,13 @@ impl Slider {
     /// Shows the value in an `inverse_surface` bubble above the handle, e.g. while dragging.
     pub(in crate::app) const fn show_value_label(mut self, show: bool) -> Self {
         self.show_value_label = show;
+        self
+    }
+
+    /// Stop indicators for a discrete slider, as track fractions in `0..=1`. Without stops, only
+    /// the maximum is marked.
+    pub(in crate::app) fn stops(mut self, stops: impl IntoIterator<Item = f32>) -> Self {
+        self.stops = stops.into_iter().collect();
         self
     }
 
@@ -89,6 +100,7 @@ impl Slider {
             max,
             value_text,
             show_value_label,
+            stops,
             enabled,
             focus,
         } = self;
@@ -128,18 +140,9 @@ impl Slider {
                     .h_full()
                     .rounded_l(theme::ui_rem(TRACK_INNER_CORNER))
                     .rounded_r(theme::ui_rem(TRACK_OUTER_CORNER))
-                    .bg(color(scheme.secondary_container))
-                    // End stop: marks the maximum on the inactive track.
-                    .child(
-                        div()
-                            .absolute()
-                            .top(theme::ui_rem(STOP_INSET))
-                            .right(theme::ui_rem(STOP_INSET))
-                            .size(theme::ui_rem(STOP_SIZE))
-                            .rounded(theme::ui_rem(shape::CORNER_FULL))
-                            .bg(color(scheme.on_secondary_container)),
-                    ),
+                    .bg(color(scheme.secondary_container)),
             );
+        let stops = stop_dots(stops, fraction, scheme);
         let handle = div()
             .absolute()
             .top_0()
@@ -161,6 +164,7 @@ impl Slider {
             .when(enabled, gpui::Styled::cursor_pointer)
             .child(active)
             .child(inactive)
+            .child(stops)
             .child(handle)
             .when(show_value_label, |this| {
                 this.child(value_label(value_text.clone(), fraction, scheme))
@@ -210,6 +214,43 @@ fn value_label(text: String, fraction: f32, scheme: &ColorScheme) -> gpui::Div {
         )
 }
 
+/// Stop indicators, spaced between the end stops, which sit inside the rounded track ends.
+/// Without stops, only the maximum is marked.
+fn stop_dots(stops: Vec<f32>, fraction: f32, scheme: &ColorScheme) -> gpui::Div {
+    let stops = if stops.is_empty() { vec![1.0] } else { stops };
+    div()
+        .absolute()
+        .top(theme::ui_rem(TRACK_TOP + STOP_INSET))
+        .left(theme::ui_rem(STOP_INSET + STOP_SIZE / 2.0))
+        .right(theme::ui_rem(STOP_INSET + STOP_SIZE / 2.0))
+        .h(theme::ui_rem(STOP_SIZE))
+        .children(stops.into_iter().filter_map(|stop| {
+            let on_active = stop_on_active_track(stop, fraction)?;
+            Some(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left(relative(stop.clamp(0.0, 1.0)))
+                    .ml(theme::ui_rem(-STOP_SIZE / 2.0))
+                    .size(theme::ui_rem(STOP_SIZE))
+                    .rounded(theme::ui_rem(shape::CORNER_FULL))
+                    .bg(color(if on_active {
+                        scheme.on_primary
+                    } else {
+                        scheme.on_secondary_container
+                    })),
+            )
+        }))
+}
+
+/// Whether a stop at `stop` sits on the active track, or `None` when the handle covers it.
+fn stop_on_active_track(stop: f32, fraction: f32) -> Option<bool> {
+    if !stop.is_finite() || (stop - fraction).abs() < STOP_HANDLE_TOLERANCE {
+        return None;
+    }
+    Some(stop < fraction)
+}
+
 /// Position of `value` along the track, in `0..=1`. A zero-width range sits at the start.
 #[expect(
     clippy::cast_possible_truncation,
@@ -244,6 +285,14 @@ mod tests {
         assert!(slider_fraction(5.0, 5.0, 5.0).abs() < f32::EPSILON);
         assert!(slider_fraction(f64::NAN, 0.0, 1.0).abs() < f32::EPSILON);
         assert!(slider_fraction(1.0, 0.0, f64::INFINITY).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn stops_switch_color_at_the_handle_and_hide_under_it() {
+        assert_eq!(stop_on_active_track(0.0, 0.5), Some(true));
+        assert_eq!(stop_on_active_track(0.75, 0.5), Some(false));
+        assert_eq!(stop_on_active_track(0.5, 0.5), None);
+        assert_eq!(stop_on_active_track(f32::NAN, 0.5), None);
     }
 
     #[test]

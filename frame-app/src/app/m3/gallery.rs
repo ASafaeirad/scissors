@@ -4,9 +4,9 @@
 
 use super::{
     Button, ButtonVariant, Chip, ChipKind, ColorScheme, Dialog, IconButton, IconButtonVariant,
-    LinearProgress, M3Text, Menu, MenuItem, NavigationItem, NavigationRail, RadioItem,
+    LinearProgress, ListItem, M3Text, Menu, MenuItem, NavigationItem, NavigationRail, RadioItem,
     SegmentedButton, SelectCard, Slider, Switch, Symbol, TextField, ToolbarColor, ToolbarVariant,
-    color, div, m3_icon, m3_surface, theme, toolbar,
+    color, div, list_subheader, m3_icon, m3_surface, theme, toolbar,
 };
 use crate::app::{
     Context, FrameRoot, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled,
@@ -447,6 +447,10 @@ impl FrameRoot {
                         root.update_m3_gallery(cx, |gallery| gallery.fade = !gallery.fade);
                     })),
             ))
+            .child(list_subheader("Audio stream", scheme))
+            .child(ListItem::new("Codec").value("aac").build(scheme))
+            .child(ListItem::new("Channels").value("Stereo").build(scheme))
+            .child(ListItem::new("Sample rate").value("48 kHz").build(scheme))
     }
 
     fn captions_panel(
@@ -524,6 +528,7 @@ impl FrameRoot {
                 div().pt(theme::ui_rem(56.0)).child(
                     Slider::new("m3-quality", "Quality", 70.0, 0.0, 100.0)
                         .show_value_label(true)
+                        .stops((0..=10_u8).map(|step| f32::from(step) / 10.0))
                         .build(scheme),
                 ),
             )

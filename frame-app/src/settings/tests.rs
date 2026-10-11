@@ -2059,7 +2059,7 @@ mod source_info_sections {
                     title: "Video stream",
                     rows: vec![
                         SourceInfoRow {
-                            label: "Video codec",
+                            label: "Codec",
                             value: "h264".to_string(),
                         },
                         SourceInfoRow {
@@ -2067,17 +2067,39 @@ mod source_info_sections {
                             value: "1920×1080".to_string(),
                         },
                         SourceInfoRow {
+                            label: "Aspect ratio",
+                            value: "16:9".to_string(),
+                        },
+                        SourceInfoRow {
                             label: "Frame rate",
                             value: "59.94 fps".to_string(),
                         },
                         SourceInfoRow {
-                            label: "Video bitrate",
+                            label: "Bitrate",
                             value: "2.2 Mb/s".to_string(),
                         },
                     ],
                 },
             ]
         );
+    }
+
+    #[test]
+    fn aspect_ratios_reduce_to_small_terms_or_fall_back_to_decimal() {
+        assert_eq!(
+            format_source_aspect_ratio(Some(2560), Some(1600)).as_deref(),
+            Some("16:10")
+        );
+        assert_eq!(
+            format_source_aspect_ratio(Some(1080), Some(1920)).as_deref(),
+            Some("9:16")
+        );
+        assert_eq!(
+            format_source_aspect_ratio(Some(1366), Some(768)).as_deref(),
+            Some("1.78:1")
+        );
+        assert_eq!(format_source_aspect_ratio(Some(0), Some(1080)), None);
+        assert_eq!(format_source_aspect_ratio(None, Some(1080)), None);
     }
 
     #[test]

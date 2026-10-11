@@ -22,10 +22,10 @@ pub fn source_info_sections(metadata: &SourceMetadata) -> Vec<SourceInfoSection>
         });
     }
 
-    if metadata.video_codec.is_some() && !is_image {
+    if let Some(rows) = source_video_stream_rows(metadata) {
         sections.push(SourceInfoSection::Rows {
             title: "Video stream",
-            rows: source_video_rows(metadata),
+            rows,
         });
     }
 
@@ -108,6 +108,35 @@ pub fn format_source_resolution(metadata: &SourceMetadata) -> String {
     }
 
     display_source_value(metadata.resolution.as_deref())
+}
+
+/// `16:9` for common shapes. Ratios that don't reduce to small terms, such as 1366×768, read
+/// better as a decimal: `1.78:1`.
+#[must_use]
+pub fn format_source_aspect_ratio(width: Option<u32>, height: Option<u32>) -> Option<String> {
+    const MAX_TERM: u32 = 32;
+    let (width, height) = (width?, height?);
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let divisor = greatest_common_divisor(width, height);
+    let (x, y) = (width / divisor, height / divisor);
+    // 16:10 is the conventional name for 8:5.
+    if (x, y) == (8, 5) || (x, y) == (5, 8) {
+        return Some(format!("{}:{}", x * 2, y * 2));
+    }
+    if x <= MAX_TERM && y <= MAX_TERM {
+        return Some(format!("{x}:{y}"));
+    }
+    let ratio = f64::from(width) / f64::from(height);
+    Some(format!("{}:1", trim_decimal_zeros(&format!("{ratio:.2}"))))
+}
+
+const fn greatest_common_divisor(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
 }
 
 #[must_use]
@@ -230,9 +259,18 @@ fn source_file_rows(metadata: &SourceMetadata) -> Vec<SourceInfoRow> {
     rows
 }
 
+/// Rows for the "Video stream" section, or `None` when the source has no video stream.
+#[must_use]
+pub fn source_video_stream_rows(metadata: &SourceMetadata) -> Option<Vec<SourceInfoRow>> {
+    if metadata.video_codec.is_none() || metadata.source_kind() == SourceKind::Image {
+        return None;
+    }
+    Some(source_video_rows(metadata))
+}
+
 fn source_video_rows(metadata: &SourceMetadata) -> Vec<SourceInfoRow> {
     let mut rows = vec![SourceInfoRow {
-        label: "Video codec",
+        label: "Codec",
         value: display_source_value(metadata.video_codec.as_deref()),
     }];
     push_optional_row(&mut rows, "Profile", metadata.profile.as_deref());
@@ -240,6 +278,12 @@ fn source_video_rows(metadata: &SourceMetadata) -> Vec<SourceInfoRow> {
         label: "Dimensions",
         value: format_source_resolution(metadata),
     });
+    if let Some(aspect_ratio) = format_source_aspect_ratio(metadata.width, metadata.height) {
+        rows.push(SourceInfoRow {
+            label: "Aspect ratio",
+            value: aspect_ratio,
+        });
+    }
     if metadata
         .frame_rate
         .is_some_and(|frame_rate| frame_rate > 0.0)
@@ -262,7 +306,7 @@ fn source_video_rows(metadata: &SourceMetadata) -> Vec<SourceInfoRow> {
         .is_some_and(|bitrate| bitrate > 0.0)
     {
         rows.push(SourceInfoRow {
-            label: "Video bitrate",
+            label: "Bitrate",
             value: format_source_bitrate_kbps(metadata.video_bitrate_kbps),
         });
     }

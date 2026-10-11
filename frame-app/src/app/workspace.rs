@@ -255,6 +255,8 @@ const TOOLS: [(Symbol, &str); 6] = [
     (Symbol::Layers, "Queue"),
     (Symbol::Info, "Logs"),
 ];
+/// Index of the Video tool in [`TOOLS`].
+const VIDEO_TOOL: usize = 1;
 const FILTERS: [&str; 4] = ["All", "Video", "Audio", "Images"];
 
 #[expect(
@@ -325,23 +327,57 @@ pub(super) fn workspace_view(
             cx,
         )
     } else if file_queue.selected_file().is_some() {
-        let mut panel = div().size_full().min_h_0().flex().flex_col();
-        if let Some(clip) = project.and_then(|project| {
-            project
-                .timeline
-                .clips
-                .iter()
-                .find(|clip| file_queue.selected_file_id() == Some(clip.id.as_str()))
-        }) {
-            panel = panel.child(track_speed_control(
-                clip,
-                !settings.settings_disabled,
-                scheme,
-                window,
-                cx,
-            ));
-        }
-        panel.child(settings_panel(settings, window, cx).flex_1().min_h_0())
+        let speed = project
+            .map(|project| &project.timeline)
+            .and_then(|timeline| {
+                let index = timeline
+                    .clips
+                    .iter()
+                    .position(|clip| file_queue.selected_file_id() == Some(clip.id.as_str()))?;
+                Some((timeline, index))
+            })
+            .map(|(timeline, index)| {
+                super::track_speed::track_speed_control(
+                    &timeline.clips[index],
+                    // Sources skip clips without metadata, so they only line up when none are
+                    // missing.
+                    (timeline.sources.len() == timeline.clips.len())
+                        .then(|| &timeline.sources[index]),
+                    !settings.settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                )
+            });
+        let video_stream = settings
+            .metadata
+            .filter(|_| state.tool == VIDEO_TOOL)
+            .and_then(crate::settings::source_video_stream_rows)
+            .map(|rows| {
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .mb(theme::ui_rem(spacing::SPACE_3))
+                    .child(m3::list_subheader("Video stream", scheme))
+                    .children(
+                        rows.into_iter()
+                            .map(|row| m3::ListItem::new(row.label).value(row.value).build(scheme)),
+                    )
+            });
+        div().size_full().min_w_0().child(
+            m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
+                .id("workspace-track-properties")
+                .size_full()
+                .overflow_hidden()
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .p(theme::ui_rem(spacing::SPACE_3))
+                .children(speed)
+                .children(video_stream)
+                .child(settings_panel(settings, window, cx).flex_none()),
+        )
     } else {
         m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
             .p(theme::ui_rem(24.0))
@@ -388,102 +424,6 @@ pub(super) fn workspace_view(
                                 .flex_1()
                                 .min_w_0(),
                         ),
-                ),
-        )
-}
-
-#[derive(Clone)]
-struct TrackSpeedDrag(String);
-
-fn track_speed_control(
-    clip: &super::project::ClipPlacement,
-    enabled: bool,
-    scheme: &ColorScheme,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Div {
-    let id = clip.id.clone();
-    let key_id = id.clone();
-    let speed = clip.speed;
-    let slider = m3::Slider::new("track-speed", "Track speed", speed, 0.5, 20.0)
-        .value_text(format!("{speed:.1}x"))
-        .enabled(enabled)
-        .build(scheme)
-        .when(enabled, |slider| {
-            slider
-                .on_drag(TrackSpeedDrag(id.clone()), |_, _, _, cx| {
-                    cx.new(|_| super::project_timeline::MediaDragPreview)
-                })
-                .on_drag_move(cx.listener(
-                    move |root, event: &gpui::DragMoveEvent<TrackSpeedDrag>, _, cx| {
-                        if event.drag(cx).0 != id {
-                            return;
-                        }
-                        let fraction = super::timeline_slider_percent_from_bounds(
-                            event.event.position,
-                            event.bounds,
-                        );
-                        let speed = (fraction.mul_add(19.5, 0.5) * 10.0).round() / 10.0;
-                        if root.set_project_clip_speed(&id, speed) {
-                            cx.notify();
-                        }
-                    },
-                ))
-                .on_key_down(cx.listener(move |root, event: &gpui::KeyDownEvent, _, cx| {
-                    let next = match event.keystroke.key.as_str() {
-                        "left" | "down" => speed - 0.1,
-                        "right" | "up" => speed + 0.1,
-                        "home" => 0.5,
-                        "end" => 20.0,
-                        _ => return,
-                    };
-                    cx.stop_propagation();
-                    let next = (next * 10.0).round().clamp(5.0, 200.0) / 10.0;
-                    if root.set_project_clip_speed(&key_id, next) {
-                        cx.notify();
-                    }
-                }))
-        });
-    let reset_id = clip.id.clone();
-    m3::m3_surface(scheme.surface_container_low, shape::CORNER_LARGE)
-        .flex_none()
-        .p(theme::ui_rem(spacing::SPACE_4))
-        .mb(theme::ui_rem(spacing::SPACE_3))
-        .text_color(color(scheme.on_surface))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(div().m3_type(typography::TITLE_SMALL).child("Track speed"))
-                .child(
-                    div()
-                        .m3_type(typography::LABEL_LARGE)
-                        .child(format!("{speed:.1}x")),
-                ),
-        )
-        .child(slider)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .m3_type(typography::BODY_SMALL)
-                        .text_color(color(scheme.on_surface_variant))
-                        .child("0.5x to 20x"),
-                )
-                .child(
-                    m3::Button::new("track-speed-reset", "Reset", m3::ButtonVariant::Text)
-                        .size(m3::ButtonSize::ExtraSmall)
-                        .enabled(enabled && (speed - 1.0).abs() > f64::EPSILON)
-                        .build(scheme, window, cx)
-                        .on_click(cx.listener(move |root, _, _, cx| {
-                            if root.set_project_clip_speed(&reset_id, 1.0) {
-                                cx.notify();
-                            }
-                        })),
                 ),
         )
 }

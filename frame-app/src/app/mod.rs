@@ -27,6 +27,7 @@ mod settings_panel;
 mod state;
 #[cfg(test)]
 mod tests;
+mod track_speed;
 mod update_actions;
 mod update_session;
 mod workspace;
