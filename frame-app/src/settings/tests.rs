@@ -2162,7 +2162,7 @@ mod visible_settings_tabs {
     use super::*;
 
     #[test]
-    fn default_video_source_matches_original_default_tab_set() {
+    fn default_video_source_starts_with_output() {
         let tabs = tab_ids(super::visible_settings_tabs(
             &ConversionConfig::default(),
             None,
@@ -2171,7 +2171,6 @@ mod visible_settings_tabs {
         assert_eq!(
             tabs,
             vec![
-                "source",
                 "output",
                 "video-filters",
                 "audio",
@@ -2200,14 +2199,7 @@ mod visible_settings_tabs {
 
         assert_eq!(
             tabs,
-            vec![
-                "source",
-                "output",
-                "audio",
-                "audio-filters",
-                "metadata",
-                "presets"
-            ]
+            vec!["output", "audio", "audio-filters", "metadata", "presets"]
         );
     }
 
@@ -2228,14 +2220,7 @@ mod visible_settings_tabs {
 
         assert_eq!(
             tabs,
-            vec![
-                "source",
-                "output",
-                "video-filters",
-                "images",
-                "metadata",
-                "presets"
-            ]
+            vec!["output", "video-filters", "images", "metadata", "presets"]
         );
     }
 
@@ -2249,14 +2234,7 @@ mod visible_settings_tabs {
 
         assert_eq!(
             tabs,
-            vec![
-                "source",
-                "output",
-                "audio",
-                "subtitles",
-                "metadata",
-                "presets"
-            ]
+            vec!["output", "audio", "subtitles", "metadata", "presets"]
         );
     }
 

@@ -81,7 +81,6 @@ impl FrameRoot {
             Some(VisualFixture::SettingsMetadata) => self.apply_settings_metadata_fixture(),
             Some(VisualFixture::SettingsOutput) => self.apply_settings_output_fixture(),
             Some(VisualFixture::SettingsPresets) => self.apply_settings_presets_fixture(),
-            Some(VisualFixture::SettingsSource) => self.apply_settings_source_fixture(),
             Some(VisualFixture::SettingsSubtitles) => self.apply_settings_subtitles_fixture(),
             Some(VisualFixture::SettingsSubtitlesPopover) => {
                 self.apply_settings_subtitles_popover_fixture();
@@ -109,8 +108,7 @@ impl FrameRoot {
                 | VisualFixture::SettingsImages
                 | VisualFixture::SettingsMetadata
                 | VisualFixture::SettingsOutput
-                | VisualFixture::SettingsPresets
-                | VisualFixture::SettingsSource,
+                | VisualFixture::SettingsPresets,
             ) => 1,
             Some(VisualFixture::WorkspaceLargeQueue) => 4,
             _ => 0,
@@ -190,15 +188,15 @@ impl FrameRoot {
         self.active_view = ActiveView::Workspace;
         self.file_queue = FileQueue::new();
         self.source_metadata = SourceMetadataStore::default();
-        self.settings_ui.active_tab = SettingsTab::Source;
+        self.settings_ui.active_tab = SettingsTab::Output;
     }
     pub(super) fn apply_workspace_audio_fixture(&mut self) {
         self.seed_audio_source_fixture();
-        self.settings_ui.active_tab = SettingsTab::Source;
+        self.settings_ui.active_tab = SettingsTab::Output;
     }
     pub(super) fn apply_workspace_image_fixture(&mut self) {
         self.seed_image_source_fixture();
-        self.settings_ui.active_tab = SettingsTab::Source;
+        self.settings_ui.active_tab = SettingsTab::Output;
     }
     pub(super) fn apply_workspace_large_queue_fixture(&mut self) {
         const FILE_COUNT: usize = 500;
@@ -280,10 +278,6 @@ impl FrameRoot {
             height: 0.64,
         });
         self.preview_ui.crop_aspect = "1:1".to_string();
-    }
-    pub(super) fn apply_settings_source_fixture(&mut self) {
-        self.apply_preview_ready_fixture();
-        self.settings_ui.active_tab = SettingsTab::Source;
     }
     pub(super) fn apply_settings_output_fixture(&mut self) {
         self.apply_preview_ready_fixture();

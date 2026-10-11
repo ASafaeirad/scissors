@@ -115,7 +115,6 @@ pub enum VisualFixture {
     SettingsMetadata,
     SettingsOutput,
     SettingsPresets,
-    SettingsSource,
     SettingsSubtitles,
     SettingsSubtitlesPopover,
     SettingsVideoFilters,
@@ -145,7 +144,6 @@ pub fn visual_fixture_from_env_value(value: Option<&str>) -> Option<VisualFixtur
         Some("settings-metadata") => Some(VisualFixture::SettingsMetadata),
         Some("settings-output") => Some(VisualFixture::SettingsOutput),
         Some("settings-presets") => Some(VisualFixture::SettingsPresets),
-        Some("settings-source") => Some(VisualFixture::SettingsSource),
         Some("settings-subtitles") => Some(VisualFixture::SettingsSubtitles),
         Some("settings-subtitles-popover") => Some(VisualFixture::SettingsSubtitlesPopover),
         Some("settings-video-filters") => Some(VisualFixture::SettingsVideoFilters),
@@ -459,7 +457,6 @@ mod tests {
                 ("settings-metadata", VisualFixture::SettingsMetadata),
                 ("settings-output", VisualFixture::SettingsOutput),
                 ("settings-presets", VisualFixture::SettingsPresets),
-                ("settings-source", VisualFixture::SettingsSource),
                 ("settings-subtitles", VisualFixture::SettingsSubtitles),
                 (
                     "settings-subtitles-popover",

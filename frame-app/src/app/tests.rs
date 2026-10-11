@@ -3787,28 +3787,6 @@ mod visual_fixtures {
     }
 
     #[test]
-    fn settings_source_fixture_opens_source_tab_with_ready_metadata() {
-        let mut root = FrameRoot::new();
-
-        root.apply_visual_fixture(Some(VisualFixture::SettingsSource));
-
-        let metadata = root
-            .selected_source_metadata()
-            .expect("source fixture should seed ready metadata");
-        assert_eq!(root.settings_ui.active_tab, SettingsTab::Source);
-        assert_eq!(
-            source_info_sections(&metadata)
-                .iter()
-                .map(|section| match section {
-                    SourceInfoSection::Rows { title, .. }
-                    | SourceInfoSection::Tracks { title, .. } => *title,
-                })
-                .collect::<Vec<_>>(),
-            ["File information", "Video stream"]
-        );
-    }
-
-    #[test]
     fn settings_output_fixture_opens_output_tab_with_output_name() {
         let mut root = FrameRoot::new();
 
@@ -4041,7 +4019,7 @@ mod preview_shell {
 
         SettingsRenderState {
             palette: theme::palette(crate::appearance::ColorTheme::Dark),
-            active_tab: SettingsTab::Source,
+            active_tab: SettingsTab::Output,
             tooltip_visible_id: None,
             config,
             metadata,

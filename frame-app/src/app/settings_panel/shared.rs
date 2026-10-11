@@ -1,5 +1,6 @@
 use super::{
-    ParentElement, SettingsTab, Styled, assets, button_highlight_shadows, color, div, theme,
+    ParentElement, SettingsTab, Styled, assets, button_highlight_shadows, color, div,
+    horizontal_separator_shadows, px, theme,
 };
 use crate::numeric::{rounded_f64_to_u32, u32_to_f32};
 
@@ -43,31 +44,30 @@ pub(in crate::app) fn settings_hint_text(
         .child(theme::ui_text(text))
 }
 
-pub(in crate::app) fn settings_value_row(
+pub(in crate::app) fn settings_section_label(
     label: &'static str,
-    value: impl Into<String>,
     palette: &'static theme::ThemePalette,
 ) -> gpui::Div {
     div()
-        .grid()
-        .grid_cols(2)
-        .gap_4()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
+        .font_weight(theme::TEXT_WEIGHT_MEDIUM)
+        .text_color(color(palette.text_muted))
+        .child(theme::ui_text(label))
         .child(
             div()
-                .text_color(color(palette.text_muted))
-                .child(theme::ui_text(label)),
-        )
-        .child(
-            div()
-                .text_right()
-                .text_color(color(palette.text_primary))
-                .child(value.into()),
+                .h(px(1.0))
+                .w_full()
+                .bg(color(palette.canvas))
+                .shadow(horizontal_separator_shadows(palette)),
         )
 }
 
 pub(in crate::app) const fn settings_tab_icon(tab: SettingsTab) -> &'static str {
     match tab {
-        SettingsTab::Source => assets::ICON_FILE_UP,
         SettingsTab::Output => assets::ICON_FILE_DOWN,
         SettingsTab::VideoFilters => assets::ICON_VIDEO_FILTERS,
         SettingsTab::Images => assets::ICON_FILE_IMAGE,

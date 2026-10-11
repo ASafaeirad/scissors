@@ -7,9 +7,8 @@ use super::{
     apply_button_motion, button_colors, button_highlight_shadows, button_motion, color, div,
     frame_tooltip, icon_svg, mix_color, panel_bottom_separator, resolve_active_settings_tab,
     settings_audio_filters_tab, settings_audio_tab, settings_images_tab, settings_metadata_tab,
-    settings_output_tab, settings_presets_tab, settings_section_label, settings_source_tab,
-    settings_subtitles_tab, settings_tab_icon, settings_video_filters_tab, theme,
-    visible_settings_tabs,
+    settings_output_tab, settings_presets_tab, settings_section_label, settings_subtitles_tab,
+    settings_tab_icon, settings_video_filters_tab, theme, visible_settings_tabs,
 };
 use crate::settings::source_kind_for;
 
@@ -195,12 +194,6 @@ pub(in crate::app) fn settings_tab_content(
         .text_color(color(palette.text_muted));
 
     match tab {
-        SettingsTab::Source => content.child(settings_source_tab(
-            settings.metadata,
-            settings.metadata_status,
-            settings.metadata_error,
-            palette,
-        )),
         SettingsTab::Output => content.child(settings_output_tab(
             settings.config,
             settings.metadata,
@@ -314,15 +307,19 @@ pub(in crate::app) fn settings_section(
 mod tests {
     use super::*;
 
-    const TABS: &[SettingsTab] = &[SettingsTab::Source, SettingsTab::Output, SettingsTab::Audio];
+    const TABS: &[SettingsTab] = &[
+        SettingsTab::Output,
+        SettingsTab::Audio,
+        SettingsTab::Presets,
+    ];
 
     #[test]
     fn settings_tab_for_key_handles_the_navigation_matrix() {
         let cases = [
-            (SettingsTab::Source, "left", Some(SettingsTab::Audio)),
-            (SettingsTab::Audio, "right", Some(SettingsTab::Source)),
-            (SettingsTab::Output, "home", Some(SettingsTab::Source)),
-            (SettingsTab::Output, "end", Some(SettingsTab::Audio)),
+            (SettingsTab::Output, "left", Some(SettingsTab::Presets)),
+            (SettingsTab::Presets, "right", Some(SettingsTab::Output)),
+            (SettingsTab::Audio, "home", Some(SettingsTab::Output)),
+            (SettingsTab::Audio, "end", Some(SettingsTab::Presets)),
             (SettingsTab::Output, "space", None),
         ];
 
