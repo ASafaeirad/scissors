@@ -218,6 +218,7 @@ impl FrameRoot {
             muted: false,
             speed: 1.0,
         });
+        self.zoom_to_first_project_clip();
         true
     }
 
@@ -372,10 +373,10 @@ impl FrameRoot {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::app) mod tests {
     use super::*;
 
-    fn project() -> FrameRoot {
+    pub(in crate::app) fn project() -> FrameRoot {
         let mut root = FrameRoot::new();
         root.project.enabled = true;
         root.project

@@ -100,14 +100,33 @@ impl FrameRoot {
         }
         let view = self.project_timeline_view();
         let time = view.time(timeline_slider_percent_from_bounds(position, bounds));
+        let first_clip = !self.preview_ui.first_clip_zoomed;
         if !self.add_library_clip_at(source_id, crate::numeric::rounded_f64_to_u64(time * 1000.0)) {
             return false;
         }
         // Keep the drop position stable when the new clip extends the project duration.
-        self.preview_ui.project_timeline_view = Some(view);
+        // The first clip keeps the zoom it set in `zoom_to_first_project_clip`.
+        if !first_clip {
+            self.preview_ui.project_timeline_view = Some(view);
+        }
         true
     }
+
+    /// Zooms out once, when the first clip ever lands on the timeline, so the track
+    /// spans 110% of the project length. Later clips keep whatever scale is in use.
+    pub(super) fn zoom_to_first_project_clip(&mut self) {
+        if std::mem::replace(&mut self.preview_ui.first_clip_zoomed, true) {
+            return;
+        }
+        self.preview_ui.project_timeline_view = Some(TimelineView {
+            start: 0.0,
+            span: self.project_duration() * FIRST_CLIP_TRACK_SPAN,
+        });
+    }
 }
+
+/// The visible span after the first clip is added, as a multiple of the project length.
+const FIRST_CLIP_TRACK_SPAN: f64 = 1.1;
 
 #[derive(Clone)]
 pub(super) struct LibrarySourceDrag(pub(super) String);
@@ -833,6 +852,54 @@ mod tests {
         cx.update(|window, cx| window.draw(cx).clear());
         assert!(cx.debug_bounds("project-empty-video").is_some());
         assert!(cx.debug_bounds("project-empty-audio").is_some());
+    }
+
+    #[test]
+    fn only_the_first_ever_clip_zooms_the_timeline_to_its_track_length() {
+        let mut root = crate::app::project::tests::project();
+        assert!(root.add_library_clip("source"));
+        let duration = root.project_duration();
+        assert_eq!(
+            root.project_timeline_view(),
+            TimelineView {
+                start: 0.0,
+                span: duration * FIRST_CLIP_TRACK_SPAN,
+            }
+        );
+
+        let zoomed = TimelineView {
+            start: 1.0,
+            span: 50.0,
+        };
+        root.preview_ui.project_timeline_view = Some(zoomed);
+        assert!(root.add_library_clip("source"));
+        assert_eq!(root.project_timeline_view(), zoomed);
+
+        for _ in 0..2 {
+            let id = root.project.clips[0].id.clone();
+            assert!(root.remove_project_clip(&id));
+        }
+        assert!(root.add_library_clip("source"));
+        root.preview_ui.project_timeline_view = Some(zoomed);
+        assert!(root.add_library_clip("source"));
+        assert_eq!(root.project_timeline_view(), zoomed);
+    }
+
+    #[test]
+    fn dropping_the_first_clip_also_zooms_the_timeline() {
+        let mut root = crate::app::project::tests::project();
+        root.preview_ui.timeline_track_bounds = Some(Bounds::new(
+            point(px(0.0), px(0.0)),
+            size(px(100.0), px(24.0)),
+        ));
+        assert!(root.drop_library_source("source", point(px(50.0), px(10.0))));
+        assert_eq!(
+            root.project_timeline_view(),
+            TimelineView {
+                start: 0.0,
+                span: root.project_duration() * FIRST_CLIP_TRACK_SPAN,
+            }
+        );
     }
 
     #[test]

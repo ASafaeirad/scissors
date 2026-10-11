@@ -161,6 +161,8 @@ impl FrameRoot {
         let id = self.project.clips[1].id.clone();
         self.set_project_clip_speed(&id, 2.0);
         self.select_project_clip(&id);
+        // Show the fitted layout, not the first-clip zoom that the setup above triggered.
+        self.preview_ui.project_timeline_view = None;
     }
 
     pub(super) fn apply_update_available_fixture(&mut self) {
