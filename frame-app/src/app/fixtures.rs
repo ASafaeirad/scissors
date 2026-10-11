@@ -300,6 +300,19 @@ impl FrameRoot {
             file.config.custom_height = Some("720".to_string());
             file.config.video_bitrate_mode = "crf".to_string();
             file.config.crf = 18;
+            file.config.selected_audio_tracks = vec![1];
+        }
+        if let (Some(id), Some(mut metadata)) = (
+            self.file_queue.selected_file().map(|file| file.id.clone()),
+            self.selected_source_metadata(),
+        ) {
+            metadata.audio_tracks = vec![crate::settings::AudioTrack {
+                index: 1,
+                codec: "aac".to_string(),
+                channels: Some("2".to_string()),
+                ..Default::default()
+            }];
+            self.source_metadata.mark_ready(id, metadata);
         }
         self.open_export_dialog();
         self.export_ui.advanced = true;

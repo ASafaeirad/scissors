@@ -1,6 +1,7 @@
 //! Pure state for the export dialog: options, labels, output geometry and the size estimate.
 //! Rendering lives in `mod.rs`.
 
+use super::super::settings_panel::is_lossless_audio_codec;
 use crate::file_queue::{FileItem, FileStatus};
 use crate::material::Symbol;
 use crate::numeric::{
@@ -8,10 +9,13 @@ use crate::numeric::{
 };
 use crate::preview::parse_time_to_seconds;
 use crate::settings::{
-    ConversionConfig, DEFAULT_CRF, DEFAULT_FPS, DEFAULT_PIXEL_FORMAT, DEFAULT_PRESET,
-    DEFAULT_QUALITY, DEFAULT_RESOLUTION, DEFAULT_SCALING_ALGORITHM, DEFAULT_VIDEO_BITRATE,
-    DEFAULT_VIDEO_BITRATE_MODE, ProcessingMode, SourceMetadata, container_supports_audio,
-    first_allowed_video_codec, is_gif_container, is_hardware_video_codec, is_video_preset_allowed,
+    AudioQualityRange, ConversionConfig, DEFAULT_AUDIO_BITRATE, DEFAULT_AUDIO_BITRATE_MODE,
+    DEFAULT_AUDIO_CHANNELS, DEFAULT_AUDIO_QUALITY, DEFAULT_CRF, DEFAULT_FPS, DEFAULT_PIXEL_FORMAT,
+    DEFAULT_PRESET, DEFAULT_QUALITY, DEFAULT_RESOLUTION, DEFAULT_SCALING_ALGORITHM,
+    DEFAULT_VIDEO_BITRATE, DEFAULT_VIDEO_BITRATE_MODE, ProcessingMode, SourceMetadata,
+    audio_codec_supports_vbr, audio_quality_range, container_supports_audio,
+    default_audio_codec_for_container, first_allowed_video_codec, is_gif_container,
+    is_hardware_video_codec, is_video_preset_allowed, mp2_original_channels_are_unsupported,
 };
 
 /// One of the format cards at the top of the dialog.
@@ -419,7 +423,7 @@ pub(super) fn advanced_summary(config: &ConversionConfig, encoder_label: &str) -
     parts.join(" · ")
 }
 
-/// Whether the encoding settings the dialog edits are at their recommended values.
+/// Whether the video and audio encoding settings the dialog edits are at their recommended values.
 pub(super) fn is_recommended(config: &ConversionConfig) -> bool {
     config.container == "mp4"
         && config.video_codec == first_allowed_video_codec("mp4", None)
@@ -431,9 +435,13 @@ pub(super) fn is_recommended(config: &ConversionConfig) -> bool {
         && config.preset == DEFAULT_PRESET
         && config.pixel_format == DEFAULT_PIXEL_FORMAT
         && config.scaling_algorithm == DEFAULT_SCALING_ALGORITHM
+        && config.audio_codec == default_audio_codec_for_container("mp4")
+        && config.audio_channels == DEFAULT_AUDIO_CHANNELS
+        && config.audio_bitrate_mode == DEFAULT_AUDIO_BITRATE_MODE
+        && config.audio_bitrate == DEFAULT_AUDIO_BITRATE
 }
 
-/// Puts the encoding settings back to their recommended values. Returns whether anything changed.
+/// Puts the video and audio encoding settings back to their recommended values. Returns whether anything changed.
 pub(super) fn reset_to_recommended(config: &mut ConversionConfig) -> bool {
     let before = config.clone();
     crate::settings::apply_output_container(config, "mp4");
@@ -449,6 +457,11 @@ pub(super) fn reset_to_recommended(config: &mut ConversionConfig) -> bool {
     config.preset = DEFAULT_PRESET.to_string();
     config.pixel_format = DEFAULT_PIXEL_FORMAT.to_string();
     config.scaling_algorithm = DEFAULT_SCALING_ALGORITHM.to_string();
+    config.audio_codec = default_audio_codec_for_container("mp4").to_string();
+    config.audio_channels = DEFAULT_AUDIO_CHANNELS.to_string();
+    config.audio_bitrate_mode = DEFAULT_AUDIO_BITRATE_MODE.to_string();
+    config.audio_bitrate = DEFAULT_AUDIO_BITRATE.to_string();
+    config.audio_quality = DEFAULT_AUDIO_QUALITY.to_string();
     crate::settings::normalize_video_config(config, None);
     before != *config
 }
@@ -512,10 +525,221 @@ pub(super) fn exports_audio(config: &ConversionConfig, metadata: Option<&SourceM
         })
 }
 
+pub(super) const AUDIO_CHANNEL_OPTIONS: [(&str, &str); 3] = [
+    ("original", "Original"),
+    ("stereo", "Stereo"),
+    ("mono", "Mono"),
+];
+const MIN_AUDIO_BITRATE_KBPS: u32 = 32;
+/// The only rates the MP2 encoder accepts, in kb/s.
+const MP2_BITRATES: [&str; 10] = [
+    "64", "96", "112", "128", "160", "192", "224", "256", "320", "384",
+];
+const VBR_LEVEL_WORDS: [&str; 5] = ["Low", "Medium", "Good", "High", "Very high"];
+
+/// Whether the export re-encodes audio, so the audio section's settings apply.
+pub(super) fn encodes_audio(config: &ConversionConfig) -> bool {
+    config.processing_mode != ProcessingMode::Copy && container_supports_audio(&config.container)
+}
+
+pub(super) fn audio_codec_label(codec: &str) -> &'static str {
+    match codec {
+        "aac" => "AAC",
+        "libfdk_aac" => "AAC (Fraunhofer FDK)",
+        "ac3" => "Dolby Digital (AC-3)",
+        "libopus" => "Opus",
+        "mp3" => "MP3",
+        "alac" => "Apple Lossless",
+        "flac" => "FLAC",
+        "pcm_s16le" => "PCM 16-bit",
+        "pcm_bluray" => "Blu-ray PCM",
+        "mp2" => "MPEG Layer II",
+        _ => "Other codec",
+    }
+}
+
+pub(super) fn audio_codec_description(codec: &str) -> &'static str {
+    match codec {
+        "aac" => "Plays everywhere",
+        "libfdk_aac" => "Higher-quality AAC",
+        "ac3" => "Surround, TVs and discs",
+        "libopus" => "Best quality per bit",
+        "mp3" => "Legacy players",
+        "mp2" => "Broadcast",
+        codec if is_lossless_audio_codec(codec) => "Lossless",
+        _ => "",
+    }
+}
+
+/// The most channels among the source audio tracks being exported.
+fn source_audio_channels(
+    config: &ConversionConfig,
+    metadata: Option<&SourceMetadata>,
+) -> Option<u16> {
+    metadata?
+        .audio_tracks
+        .iter()
+        .filter(|track| config.selected_audio_tracks.contains(&track.index))
+        .filter_map(|track| track.channels.as_deref()?.parse::<u16>().ok())
+        .max()
+}
+
+pub(super) fn audio_channels_note(
+    config: &ConversionConfig,
+    metadata: Option<&SourceMetadata>,
+) -> String {
+    match config.audio_channels.as_str() {
+        "mono" => "Mixes down to 1 channel".to_string(),
+        "stereo" => "2 channels".to_string(),
+        _ if mp2_original_channels_are_unsupported(config, metadata) => {
+            "MP2 keeps at most 2 channels".to_string()
+        }
+        _ => match source_audio_channels(config, metadata) {
+            Some(1) => "Keeps 1 channel from source".to_string(),
+            Some(channels) => format!("Keeps {channels} channels from source"),
+            None => "Keeps the source channels".to_string(),
+        },
+    }
+}
+
+const fn max_audio_bitrate(codec: &str) -> u32 {
+    match codec.as_bytes() {
+        b"libopus" => 512,
+        b"mp3" => 320,
+        b"mp2" => 384,
+        _ => 640,
+    }
+}
+
+/// Whether the audio is encoded at a target bitrate, the only mode some codecs offer.
+pub(super) fn uses_audio_bitrate(config: &ConversionConfig) -> bool {
+    let vbr = config.audio_bitrate_mode == "vbr" && audio_codec_supports_vbr(&config.audio_codec);
+    !(is_lossless_audio_codec(&config.audio_codec) || vbr)
+}
+
+/// Why the target audio bitrate can't be exported, if it can't.
+pub(super) fn audio_bitrate_error(config: &ConversionConfig) -> Option<String> {
+    if !encodes_audio(config) || !uses_audio_bitrate(config) {
+        return None;
+    }
+    if config.audio_codec == "mp2" {
+        return (!MP2_BITRATES.contains(&config.audio_bitrate.as_str()))
+            .then(|| "Use a standard MP2 rate, like 192 kb/s".to_string());
+    }
+    let max = max_audio_bitrate(&config.audio_codec);
+    let in_range = config
+        .audio_bitrate
+        .parse::<u32>()
+        .is_ok_and(|kbps| (MIN_AUDIO_BITRATE_KBPS..=max).contains(&kbps));
+    (!in_range).then(|| format!("Enter {MIN_AUDIO_BITRATE_KBPS}–{max} kb/s"))
+}
+
+/// Typical stereo bitrate of a VBR quality level, in kb/s.
+fn vbr_kbps(codec: &str, quality: u32) -> Option<u32> {
+    let table: &[u32] = match codec {
+        // LAME -V0 (best) to -V9.
+        "mp3" => &[245, 225, 190, 175, 165, 130, 115, 100, 85, 65],
+        // FDK VBR modes 1 to 5.
+        "libfdk_aac" => &[0, 56, 72, 112, 144, 224],
+        _ => return None,
+    };
+    table.get(quality as usize).copied()
+}
+
+/// The VBR quality slider. Its position always runs from smaller file to higher quality, so
+/// codecs where a lower number is better are flipped.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct AudioVbrControl {
+    pub(super) position: u32,
+    pub(super) min: u32,
+    pub(super) max: u32,
+    pub(super) badge: String,
+}
+
+/// The codec's VBR quality range and the configured level, clamped into it.
+fn audio_vbr_quality(config: &ConversionConfig) -> Option<(AudioQualityRange, u32)> {
+    let range = audio_quality_range(&config.audio_codec)?;
+    let quality = config
+        .audio_quality
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(range.default_value)
+        .clamp(range.min, range.max);
+    Some((range, quality))
+}
+
+fn vbr_estimate_kbps(config: &ConversionConfig) -> Option<u32> {
+    let (_, quality) = audio_vbr_quality(config)?;
+    vbr_kbps(&config.audio_codec, quality)
+}
+
+pub(super) fn audio_vbr_control(config: &ConversionConfig) -> Option<AudioVbrControl> {
+    let (range, quality) = audio_vbr_quality(config)?;
+    let position = if range.lower_is_better {
+        range.max + range.min - quality
+    } else {
+        quality
+    };
+    let span = usize::try_from((range.max - range.min).max(1)).unwrap_or(1);
+    let step = usize::try_from(position - range.min).unwrap_or(0);
+    let word = VBR_LEVEL_WORDS[(step * (VBR_LEVEL_WORDS.len() - 1) + span / 2) / span];
+    let badge = vbr_kbps(&config.audio_codec, quality).map_or_else(
+        || word.to_string(),
+        |kbps| format!("{word} · ≈ {kbps} kb/s"),
+    );
+    Some(AudioVbrControl {
+        position,
+        min: range.min,
+        max: range.max,
+        badge,
+    })
+}
+
+/// The codec quality value for a VBR slider position.
+pub(super) fn audio_quality_for_position(codec: &str, position: u32) -> Option<u32> {
+    let range = audio_quality_range(codec)?;
+    let position = position.clamp(range.min, range.max);
+    Some(if range.lower_is_better {
+        range.max + range.min - position
+    } else {
+        position
+    })
+}
+
+/// One line summing up the audio section while it is collapsed.
+pub(super) fn audio_section_summary(
+    config: &ConversionConfig,
+    metadata: Option<&SourceMetadata>,
+) -> String {
+    if !exports_audio(config, metadata) {
+        return "No audio tracks selected".to_string();
+    }
+    let channels = match config.audio_channels.as_str() {
+        "stereo" => "stereo",
+        "mono" => "mono",
+        _ => "original channels",
+    };
+    format!("{} · {channels}", audio_summary(config, metadata))
+}
+
 fn audio_kbps(config: &ConversionConfig) -> f64 {
+    let mono = config.audio_channels == "mono";
     match config.audio_codec.as_str() {
-        codec if codec.starts_with("pcm") => 1_536.0,
-        "flac" | "alac" => 900.0,
+        codec if codec.starts_with("pcm") => {
+            if mono {
+                768.0
+            } else {
+                1_536.0
+            }
+        }
+        "flac" | "alac" => {
+            if mono {
+                450.0
+            } else {
+                900.0
+            }
+        }
+        _ if !uses_audio_bitrate(config) => vbr_estimate_kbps(config).map_or(192.0, f64::from),
         _ => config.audio_bitrate.parse().unwrap_or(192.0),
     }
 }
@@ -535,10 +759,9 @@ pub(super) fn audio_summary(
         return "None".to_string();
     }
     let codec = match config.audio_codec.as_str() {
-        "aac" => "AAC",
+        "aac" | "libfdk_aac" => "AAC",
         "libopus" => "Opus",
-        "libmp3lame" => "MP3",
-        "libvorbis" => "Vorbis",
+        "mp3" => "MP3",
         "ac3" => "Dolby Digital",
         "flac" => "FLAC",
         "alac" => "ALAC",
@@ -546,10 +769,15 @@ pub(super) fn audio_summary(
         codec if codec.starts_with("pcm") => "PCM",
         _ => return config.audio_codec.to_uppercase(),
     };
-    if matches!(codec, "FLAC" | "ALAC" | "PCM") || config.audio_bitrate_mode == "vbr" {
-        codec.to_string()
-    } else {
+    if is_lossless_audio_codec(&config.audio_codec) {
+        format!("{codec} · lossless")
+    } else if uses_audio_bitrate(config) {
         format!("{codec} · {} kb/s", config.audio_bitrate)
+    } else {
+        vbr_estimate_kbps(config).map_or_else(
+            || format!("{codec} · VBR"),
+            |kbps| format!("{codec} · VBR ≈ {kbps} kb/s"),
+        )
     }
 }
 
@@ -992,5 +1220,142 @@ mod tests {
             ..ConversionConfig::default()
         };
         assert_eq!(audio_summary(&gif, None), "None");
+        let flac = ConversionConfig {
+            container: "mkv".to_string(),
+            audio_codec: "flac".to_string(),
+            ..ConversionConfig::default()
+        };
+        assert_eq!(audio_summary(&flac, None), "FLAC · lossless");
+        let vbr = ConversionConfig {
+            audio_codec: "mp3".to_string(),
+            audio_bitrate_mode: "vbr".to_string(),
+            audio_quality: "4".to_string(),
+            ..ConversionConfig::default()
+        };
+        assert_eq!(audio_summary(&vbr, None), "MP3 · VBR ≈ 165 kb/s");
+        assert_eq!(
+            audio_section_summary(&vbr, None),
+            "MP3 · VBR ≈ 165 kb/s · original channels"
+        );
+    }
+
+    #[test]
+    fn audio_bitrate_is_checked_against_the_codec() {
+        let mut config = ConversionConfig {
+            audio_bitrate: "192".to_string(),
+            ..ConversionConfig::default()
+        };
+        assert_eq!(audio_bitrate_error(&config), None);
+        config.audio_bitrate = "16".to_string();
+        assert_eq!(
+            audio_bitrate_error(&config).as_deref(),
+            Some("Enter 32–640 kb/s")
+        );
+        config.audio_bitrate = String::new();
+        assert!(audio_bitrate_error(&config).is_some());
+
+        config.audio_codec = "libopus".to_string();
+        config.audio_bitrate = "600".to_string();
+        assert_eq!(
+            audio_bitrate_error(&config).as_deref(),
+            Some("Enter 32–512 kb/s")
+        );
+
+        config.audio_codec = "mp2".to_string();
+        config.audio_bitrate = "200".to_string();
+        assert!(audio_bitrate_error(&config).is_some());
+        config.audio_bitrate = "192".to_string();
+        assert_eq!(audio_bitrate_error(&config), None);
+
+        // Lossless and VBR audio have no bitrate to check.
+        config.audio_codec = "alac".to_string();
+        config.audio_bitrate = "0".to_string();
+        assert_eq!(audio_bitrate_error(&config), None);
+        config.audio_codec = "mp3".to_string();
+        config.audio_bitrate_mode = "vbr".to_string();
+        assert_eq!(audio_bitrate_error(&config), None);
+        config.processing_mode = ProcessingMode::Copy;
+        config.audio_bitrate_mode = "bitrate".to_string();
+        assert_eq!(audio_bitrate_error(&config), None);
+    }
+
+    #[test]
+    fn vbr_slider_runs_from_small_to_high_quality() {
+        let mut config = ConversionConfig {
+            audio_codec: "mp3".to_string(),
+            audio_bitrate_mode: "vbr".to_string(),
+            audio_quality: "0".to_string(),
+            ..ConversionConfig::default()
+        };
+        let best = audio_vbr_control(&config).expect("mp3 has VBR");
+        assert_eq!((best.position, best.min, best.max), (9, 0, 9));
+        assert_eq!(best.badge, "Very high · ≈ 245 kb/s");
+        assert_eq!(audio_quality_for_position("mp3", 9), Some(0));
+        assert_eq!(audio_quality_for_position("mp3", 0), Some(9));
+
+        config.audio_quality = "9".to_string();
+        assert_eq!(
+            audio_vbr_control(&config).expect("mp3 has VBR").badge,
+            "Low · ≈ 65 kb/s"
+        );
+
+        config.audio_codec = "libfdk_aac".to_string();
+        config.audio_quality = "4".to_string();
+        let fdk = audio_vbr_control(&config).expect("FDK AAC has VBR");
+        assert_eq!(fdk.position, 4);
+        assert_eq!(fdk.badge, "High · ≈ 144 kb/s");
+        assert_eq!(audio_quality_for_position("libfdk_aac", 4), Some(4));
+
+        config.audio_codec = "aac".to_string();
+        assert_eq!(audio_vbr_control(&config), None);
+    }
+
+    #[test]
+    fn channel_note_reads_the_source_tracks() {
+        let metadata = SourceMetadata {
+            audio_tracks: vec![crate::settings::AudioTrack {
+                index: 1,
+                channels: Some("6".to_string()),
+                ..crate::settings::AudioTrack::default()
+            }],
+            ..video_metadata(1920, 1080, 30.0)
+        };
+        let mut config = ConversionConfig {
+            selected_audio_tracks: vec![1],
+            ..ConversionConfig::default()
+        };
+        assert_eq!(
+            audio_channels_note(&config, Some(&metadata)),
+            "Keeps 6 channels from source"
+        );
+        assert_eq!(
+            audio_channels_note(&config, None),
+            "Keeps the source channels"
+        );
+        config.audio_codec = "mp2".to_string();
+        assert_eq!(
+            audio_channels_note(&config, Some(&metadata)),
+            "MP2 keeps at most 2 channels"
+        );
+        config.audio_channels = "mono".to_string();
+        assert_eq!(
+            audio_channels_note(&config, Some(&metadata)),
+            "Mixes down to 1 channel"
+        );
+    }
+
+    #[test]
+    fn reset_restores_recommended_audio() {
+        let mut config = ConversionConfig {
+            audio_codec: "mp3".to_string(),
+            audio_channels: "mono".to_string(),
+            audio_bitrate: "320".to_string(),
+            ..ConversionConfig::default()
+        };
+        assert!(!is_recommended(&config));
+        assert!(reset_to_recommended(&mut config));
+        assert!(is_recommended(&config));
+        assert_eq!(config.audio_codec, "aac");
+        assert_eq!(config.audio_channels, "original");
     }
 }

@@ -1,26 +1,33 @@
 //! The export dialog, opened by the workspace header's Export button. It edits the selected
-//! file's encoding settings (format, size, frame rate, quality and the advanced encoder options
-//! that used to live in the Video settings tab), then starts the export and shows its progress.
+//! file's encoding settings (format, size, frame rate, quality, audio and the advanced encoder
+//! options that used to live in the Video settings tab), then starts the export and shows its
+//! progress.
 
 use super::accessibility::handle_modal_tab_navigation;
 use super::input::{FrameTextInputColors, FrameTextInputSpec, m3_text_input};
 use super::m3::{self, M3Text};
-use super::settings_panel::{range_value_for_key, range_value_from_fraction};
+use super::settings_panel::{
+    is_lossless_audio_codec, range_value_for_key, range_value_from_fraction,
+};
 use super::*;
 use crate::material::{self, ColorScheme, Symbol, shape, state, typography};
 use crate::numeric::u32_to_u8;
-use crate::settings::{VideoCodecOption, is_audio_only_container, source_kind_for};
+use crate::settings::{
+    AudioCodecOption, VideoCodecOption, is_audio_only_container, source_kind_for,
+};
 
 mod model;
 
 use model::{
-    EXPORT_FORMATS, ExportPhase, GIF_COLOR_OPTIONS, GIF_DITHER_OPTIONS, QualityTarget,
-    RESOLUTION_OPTIONS, SCALING_OPTIONS, advanced_summary, apply_export_format, audio_summary,
-    custom_dimensions_error, encoder_description, estimate_size_bytes, export_phase, format_clock,
-    format_dimensions, format_rate, format_size, fps_note, fps_option_label, fps_options,
-    is_recommended, output_dimensions, output_duration_seconds, output_fps, parse_dimension,
-    pixel_format_text, quality_control, reset_to_recommended, resolution_note, scaled_even,
-    scaling_note, source_dimensions, speed_presets,
+    AUDIO_CHANNEL_OPTIONS, EXPORT_FORMATS, ExportPhase, GIF_COLOR_OPTIONS, GIF_DITHER_OPTIONS,
+    QualityTarget, RESOLUTION_OPTIONS, SCALING_OPTIONS, advanced_summary, apply_export_format,
+    audio_bitrate_error, audio_channels_note, audio_codec_description, audio_codec_label,
+    audio_quality_for_position, audio_section_summary, audio_summary, audio_vbr_control,
+    custom_dimensions_error, encoder_description, encodes_audio, estimate_size_bytes, export_phase,
+    exports_audio, format_clock, format_dimensions, format_rate, format_size, fps_note,
+    fps_option_label, fps_options, is_recommended, output_dimensions, output_duration_seconds,
+    output_fps, parse_dimension, pixel_format_text, quality_control, reset_to_recommended,
+    resolution_note, scaled_even, scaling_note, source_dimensions, speed_presets,
 };
 
 const DIALOG_WIDTH: f32 = 920.0;
@@ -36,11 +43,12 @@ const SUMMARY_ROW_HEIGHT: f32 = 32.0;
 
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "Each flag is an independent piece of dialog state: visibility, presence during the close animation, the advanced section, and the aspect link."
+    reason = "Each flag is an independent piece of dialog state: visibility, presence during the close animation, the audio and advanced sections, and the aspect link."
 )]
 pub(super) struct ExportUiState {
     pub(super) open: bool,
     pub(super) present: bool,
+    pub(super) audio: bool,
     pub(super) advanced: bool,
     /// Typing a custom width fills in the height from the source aspect, and the reverse.
     pub(super) lock_aspect: bool,
@@ -54,6 +62,7 @@ impl Default for ExportUiState {
         Self {
             open: false,
             present: false,
+            audio: true,
             advanced: false,
             lock_aspect: true,
             task_ids: Vec::new(),
@@ -68,6 +77,8 @@ enum ExportSlider {
     Quality(QualityTarget),
     /// Index into the encoder's `speed_presets`.
     Speed,
+    /// VBR position, smaller file to higher quality. See `audio_vbr_control`.
+    AudioQuality,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,6 +106,8 @@ fn apply_export_slider(config: &mut ConversionConfig, slider: ExportSlider, valu
         ExportSlider::Speed => speed_presets(&config.video_codec)
             .get(value as usize)
             .is_some_and(|(preset, _)| apply_video_preset(config, preset)),
+        ExportSlider::AudioQuality => audio_quality_for_position(&config.audio_codec, value)
+            .is_some_and(|quality| apply_audio_quality(config, &quality.to_string())),
     }
 }
 
@@ -277,6 +290,8 @@ impl FrameRoot {
                     height: self.ensure_text_input_focus(FrameTextInputKind::VideoCustomHeight, cx),
                     name: self.ensure_text_input_focus(FrameTextInputKind::ExportName, cx),
                     gif_loop: self.ensure_text_input_focus(FrameTextInputKind::GifLoop, cx),
+                    audio_bitrate: self
+                        .ensure_text_input_focus(FrameTextInputKind::AudioBitrate, cx),
                 };
                 vec![
                     div()
@@ -353,6 +368,7 @@ impl FrameRoot {
             .into_iter()
             .filter(|option| !option.is_disabled)
             .collect();
+        let audio_codecs = audio_codec_options(&config, &self.available_encoders, false);
         let duration = if self.project.enabled {
             self.project_duration()
         } else {
@@ -382,6 +398,7 @@ impl FrameRoot {
             kind,
             video_controls,
             encoders,
+            audio_codecs,
             duration,
             queued: if self.project.enabled {
                 usize::from(!self.project.clips.is_empty())
@@ -402,6 +419,7 @@ impl FrameRoot {
                 .and_then(|path| path.file_name())
                 .map(|name| name.to_string_lossy().into_owned()),
             can_start: self.app_state().can_start_conversion(),
+            audio: self.export_ui.audio,
             advanced: self.export_ui.advanced,
             lock_aspect: self.export_ui.lock_aspect,
             scroll_handle: self.export_ui.scroll_handle.clone(),
@@ -468,6 +486,9 @@ impl FrameRoot {
             .child(resolution_section(view, focuses, window, cx))
             .child(fps_section(view, window, cx))
             .child(quality_section(view, window, cx))
+            .when(view.shows_audio(), |this| {
+                this.child(audio_section(view, focuses, window, cx))
+            })
             .child(advanced_section(view, focuses, window, cx))
     }
 
@@ -661,6 +682,8 @@ struct ExportView {
     /// The source is video being re-encoded, so size, rate and quality apply.
     video_controls: bool,
     encoders: Vec<VideoCodecOption>,
+    /// Every audio codec, including ones the container can't hold.
+    audio_codecs: Vec<AudioCodecOption>,
     /// Exported length in seconds, after trims and cuts.
     duration: f64,
     /// Files the Export button will start.
@@ -668,6 +691,7 @@ struct ExportView {
     has_output_directory: bool,
     output_directory: Option<String>,
     can_start: bool,
+    audio: bool,
     advanced: bool,
     lock_aspect: bool,
     scroll_handle: ScrollHandle,
@@ -698,10 +722,18 @@ impl ExportView {
             .map_or("Default encoder", |option| option.label)
     }
 
+    /// Whether the dialog shows the audio section: re-encoded video into a container with sound.
+    fn shows_audio(&self) -> bool {
+        self.video_controls
+            && encodes_audio(&self.config)
+            && !is_gif_container(&self.config.container)
+    }
+
     fn export_enabled(&self) -> bool {
         self.can_start
             && self.name_error().is_none()
             && (!self.video_controls || custom_dimensions_error(&self.config).is_none())
+            && (!self.shows_audio() || audio_bitrate_error(&self.config).is_none())
     }
 }
 
@@ -710,6 +742,7 @@ struct ExportInputFocuses {
     height: FocusHandle,
     name: FocusHandle,
     gif_loop: FocusHandle,
+    audio_bitrate: FocusHandle,
 }
 
 fn done_detail(view: &ExportView, completed: usize) -> String {
@@ -900,7 +933,7 @@ struct ExportTextField {
     kind: FrameTextInputKind,
     suffix: Option<String>,
     supporting: Option<&'static str>,
-    error: Option<&'static str>,
+    error: Option<String>,
     container: crate::theme::RgbaToken,
 }
 
@@ -1276,20 +1309,23 @@ fn quality_section(
         .child(range_labels(control.lower, control.upper, scheme))
 }
 
-fn advanced_section(
-    view: &ExportView,
-    focuses: &ExportInputFocuses,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
+/// A collapsible section: a full-width header row with a one-line summary, then its content
+/// while expanded.
+fn expandable_section(
+    id: &'static str,
+    title: &'static str,
+    summary: String,
+    expanded: bool,
+    toggle: fn(&mut ExportUiState),
+    scheme: &'static ColorScheme,
+    cx: &Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
-    let config = &view.config;
     let hover = state::state_layer(scheme.transparent, scheme.on_surface, state::HOVER_OPACITY);
-    let toggle = div()
-        .id("export-advanced-toggle")
+    let header = div()
+        .id(id)
         .role(gpui::Role::Button)
-        .aria_label("Advanced encoding")
-        .aria_expanded(view.advanced)
+        .aria_label(title)
+        .aria_expanded(expanded)
         .focusable()
         .tab_stop(true)
         .focus_visible(move |style| {
@@ -1306,15 +1342,15 @@ fn advanced_section(
         .mx(theme::ui_rem(-8.0))
         .rounded(theme::ui_rem(shape::CORNER_MEDIUM))
         .hover(move |style| style.bg(color(hover)))
-        .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
-            root.export_ui.advanced = !root.export_ui.advanced;
+        .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
+            toggle(&mut root.export_ui);
             cx.notify();
         }))
         .on_key_down(
-            cx.listener(|root, event: &gpui::KeyDownEvent, _window, cx| {
+            cx.listener(move |root, event: &gpui::KeyDownEvent, _window, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     cx.stop_propagation();
-                    root.export_ui.advanced = !root.export_ui.advanced;
+                    toggle(&mut root.export_ui);
                     cx.notify();
                 }
             }),
@@ -1325,21 +1361,17 @@ fn advanced_section(
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .child(
-                    div()
-                        .m3_type(typography::TITLE_SMALL)
-                        .child("Advanced encoding"),
-                )
+                .child(div().m3_type(typography::TITLE_SMALL).child(title))
                 .child(
                     div()
                         .m3_type(typography::BODY_SMALL)
                         .text_color(color(scheme.on_surface_variant))
                         .truncate()
-                        .child(advanced_summary(config, view.encoder_label())),
+                        .child(summary),
                 ),
         )
         .child(m3::m3_icon(
-            if view.advanced {
+            if expanded {
                 Symbol::ExpandLess
             } else {
                 Symbol::ExpandMore
@@ -1356,10 +1388,261 @@ fn advanced_section(
         .pt(theme::ui_rem(8.0))
         .border_t_1()
         .border_color(color(scheme.outline_variant))
-        .child(toggle)
-        .when(view.advanced, |this| {
-            this.child(advanced_options(view, focuses, window, cx))
+        .child(header)
+}
+
+/// A subsection heading with a short note at the trailing edge.
+fn noted_subsection_label(
+    label: &'static str,
+    note: impl Into<SharedString>,
+    scheme: &'static ColorScheme,
+) -> gpui::Div {
+    div()
+        .flex()
+        .items_baseline()
+        .justify_between()
+        .gap(theme::ui_rem(12.0))
+        .child(subsection_label(label, scheme).flex_none())
+        .child(
+            div()
+                .min_w_0()
+                .text_right()
+                .m3_type(typography::BODY_SMALL)
+                .text_color(color(scheme.on_surface_variant))
+                .child(note.into()),
+        )
+}
+
+fn audio_section(
+    view: &ExportView,
+    focuses: &ExportInputFocuses,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    expandable_section(
+        "export-audio-toggle",
+        "Audio",
+        audio_section_summary(&view.config, view.metadata()),
+        view.audio,
+        |ui| ui.audio = !ui.audio,
+        view.scheme,
+        cx,
+    )
+    .when(view.audio, |this| {
+        this.child(audio_options(view, focuses, window, cx))
+    })
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "The audio options keep channels, codec and bitrate in UI order."
+)]
+fn audio_options(
+    view: &ExportView,
+    focuses: &ExportInputFocuses,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    let scheme = view.scheme;
+    let config = &view.config;
+    let enabled = !view.disabled;
+    let options = div()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(24.0))
+        .pt(theme::ui_rem(8.0));
+    if !exports_audio(config, view.metadata()) {
+        return options.child(info_note(
+            "No source audio tracks are selected. Choose tracks in the Audio settings.",
+            scheme,
+        ));
+    }
+
+    let channels = div()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(12.0))
+        .child(noted_subsection_label(
+            "Channels",
+            audio_channels_note(config, view.metadata()),
+            scheme,
+        ))
+        .child(
+            m3::SegmentedButton::new(
+                "export-audio-channels",
+                "Channels",
+                AUDIO_CHANNEL_OPTIONS.iter().map(|(_, label)| *label),
+            )
+            .selected(
+                AUDIO_CHANNEL_OPTIONS
+                    .iter()
+                    .position(|(id, _)| *id == config.audio_channels),
+            )
+            .enabled(enabled)
+            .on_select(cx.listener(|root, index: &usize, _window, cx| {
+                if let Some((channels, _)) = AUDIO_CHANNEL_OPTIONS.get(*index)
+                    && root.update_selected_config(|config| apply_audio_channels(config, channels))
+                {
+                    cx.notify();
+                }
+            }))
+            .build(scheme, window, cx),
+        );
+
+    let container = config.container.to_uppercase();
+    let compatible = view
+        .audio_codecs
+        .iter()
+        .filter(|option| option.disabled_reason.is_none())
+        .count();
+    let codecs: Vec<_> = view
+        .audio_codecs
+        .iter()
+        .map(|option| {
+            let codec = option.codec;
+            let supported = option.disabled_reason.is_none();
+            m3::RadioItem::new(
+                format!("export-audio-codec-{codec}"),
+                audio_codec_label(codec),
+                option.is_selected,
+            )
+            .supporting(if supported {
+                audio_codec_description(codec).to_string()
+            } else {
+                format!("Not supported in {container}")
+            })
+            .enabled(enabled && supported)
+            .build(scheme, window, cx)
+            .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
+                if root.update_selected_config(|config| apply_audio_codec(config, codec)) {
+                    cx.notify();
+                }
+            }))
         })
+        .collect();
+    let codec_list = div()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(4.0))
+        .child(
+            noted_subsection_label(
+                "Codec",
+                format!(
+                    "{compatible} of {} work with {container}",
+                    view.audio_codecs.len()
+                ),
+                scheme,
+            )
+            .pb(theme::ui_rem(4.0)),
+        )
+        .children(codecs);
+
+    let options = options.child(channels).child(codec_list);
+    if is_lossless_audio_codec(&config.audio_codec) {
+        return options.child(info_note(
+            "Lossless audio keeps every detail, so there's no bitrate to set.",
+            scheme,
+        ));
+    }
+
+    let vbr = (config.audio_bitrate_mode == "vbr")
+        .then(|| audio_vbr_control(config))
+        .flatten();
+    let mut quality = div()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(12.0))
+        .child(subsection_label("Quality control", scheme));
+    if audio_codec_supports_vbr(&config.audio_codec) {
+        quality = quality.child(
+            m3::SegmentedButton::new(
+                "export-audio-bitrate-mode",
+                "Quality control",
+                ["Target bitrate", "Variable bitrate"],
+            )
+            .selected(Some(usize::from(vbr.is_some())))
+            .enabled(enabled)
+            .on_select(cx.listener(|root, index: &usize, _window, cx| {
+                let mode = if *index == 0 { "bitrate" } else { "vbr" };
+                if root.update_selected_config(|config| apply_audio_bitrate_mode(config, mode)) {
+                    cx.notify();
+                }
+            }))
+            .build(scheme, window, cx),
+        );
+    }
+    let quality = if let Some(control) = vbr {
+        quality
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(theme::ui_rem(12.0))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .m3_type(typography::BODY_MEDIUM)
+                            .text_color(color(scheme.on_surface_variant))
+                            .child("Spends more bits on complex sounds, fewer on silence."),
+                    )
+                    .child(value_badge(control.badge.clone(), scheme)),
+            )
+            .child(export_slider(
+                "export-audio-quality-slider",
+                "Audio quality",
+                control.position,
+                control.min,
+                control.max,
+                control.badge,
+                ExportSlider::AudioQuality,
+                enabled,
+                scheme,
+                cx,
+            ))
+            .child(range_labels("Smaller file", "Higher quality", scheme))
+    } else {
+        let error = audio_bitrate_error(config);
+        quality.child(export_text_field(
+            ExportTextField {
+                id: "export-audio-bitrate",
+                input_id: "export-audio-bitrate-input",
+                label: "Bitrate",
+                value: config.audio_bitrate.clone(),
+                kind: FrameTextInputKind::AudioBitrate,
+                suffix: Some("kb/s".to_string()),
+                supporting: error.is_none().then_some("128–192 kb/s suits most videos"),
+                error,
+                container: scheme.surface_container_high,
+            },
+            &focuses.audio_bitrate,
+            view.disabled,
+            scheme,
+            window,
+            cx,
+        ))
+    };
+    options.child(quality)
+}
+
+fn advanced_section(
+    view: &ExportView,
+    focuses: &ExportInputFocuses,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    expandable_section(
+        "export-advanced-toggle",
+        "Advanced encoding",
+        advanced_summary(&view.config, view.encoder_label()),
+        view.advanced,
+        |ui| ui.advanced = !ui.advanced,
+        view.scheme,
+        cx,
+    )
+    .when(view.advanced, |this| {
+        this.child(advanced_options(view, focuses, window, cx))
+    })
 }
 
 #[expect(
@@ -1790,7 +2073,7 @@ fn export_side_panel(
                 kind: FrameTextInputKind::ExportName,
                 suffix: Some(format!(".{}", config.container)),
                 supporting: None,
-                error: view.name_error(),
+                error: view.name_error().map(str::to_string),
                 container: scheme.surface_container,
             },
             &focuses.name,
