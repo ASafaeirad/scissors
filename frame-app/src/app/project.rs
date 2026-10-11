@@ -83,7 +83,7 @@ impl FrameRoot {
     }
 
     pub(super) const fn editing_project_output(&self) -> bool {
-        self.project.enabled && (self.export_ui.open || self.workspace_ui.tool == 4)
+        self.project.enabled && self.export_ui.open
     }
 
     pub(super) fn project_output_metadata(&self) -> Option<SourceMetadata> {

@@ -102,17 +102,17 @@ impl FrameRoot {
         self.workspace_ui.tool = match fixture {
             Some(VisualFixture::SettingsAudio | VisualFixture::SettingsAudioFilters) => 2,
             Some(VisualFixture::SettingsSubtitles | VisualFixture::SettingsSubtitlesPopover) => 3,
-            Some(VisualFixture::SettingsOutput) => 4,
             Some(
                 VisualFixture::ProjectTimeline
                 | VisualFixture::PreviewCrop
                 | VisualFixture::SettingsVideoFilters
                 | VisualFixture::SettingsImages
                 | VisualFixture::SettingsMetadata
+                | VisualFixture::SettingsOutput
                 | VisualFixture::SettingsPresets
                 | VisualFixture::SettingsSource,
             ) => 1,
-            Some(VisualFixture::WorkspaceLargeQueue) => 5,
+            Some(VisualFixture::WorkspaceLargeQueue) => 4,
             _ => 0,
         };
     }

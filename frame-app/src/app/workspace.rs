@@ -247,12 +247,11 @@ pub(super) struct WorkspaceState {
     pub(super) export_enabled: bool,
 }
 
-const TOOLS: [(Symbol, &str); 7] = [
+const TOOLS: [(Symbol, &str); 6] = [
     (Symbol::VideoLibrary, "Library"),
     (Symbol::Movie, "Video"),
     (Symbol::VolumeUp, "Audio"),
     (Symbol::ClosedCaption, "Captions"),
-    (Symbol::FileExport, "Output"),
     (Symbol::Layers, "Queue"),
     (Symbol::Info, "Logs"),
 ];
@@ -284,7 +283,7 @@ pub(super) fn workspace_view(
     let project = preview_props.project.as_ref();
     let project_enabled = project.is_some();
     let rail = navigation_rail(state.tool, scheme, window, cx);
-    if state.tool == 5 {
+    if state.tool == 4 {
         let queue = project.map_or(file_queue, |project| &project.exports);
         return div()
             .size_full()
@@ -327,15 +326,13 @@ pub(super) fn workspace_view(
         )
     } else if file_queue.selected_file().is_some() {
         let mut panel = div().size_full().min_h_0().flex().flex_col();
-        if state.tool != 4
-            && let Some(clip) = project.and_then(|project| {
-                project
-                    .timeline
-                    .clips
-                    .iter()
-                    .find(|clip| file_queue.selected_file_id() == Some(clip.id.as_str()))
-            })
-        {
+        if let Some(clip) = project.and_then(|project| {
+            project
+                .timeline
+                .clips
+                .iter()
+                .find(|clip| file_queue.selected_file_id() == Some(clip.id.as_str()))
+        }) {
             panel = panel.child(track_speed_control(
                 clip,
                 !settings.settings_disabled,
@@ -550,7 +547,7 @@ fn navigation_rail(
         cx.notify();
     }))
     .on_select(cx.listener(|root, index: &usize, _, cx| {
-        if *index == 6 {
+        if *index == 5 {
             root.active_view = ActiveView::Logs;
             cx.notify();
             return;
@@ -561,7 +558,6 @@ fn navigation_rail(
             1 => SettingsTab::VideoFilters,
             2 => SettingsTab::Audio,
             3 => SettingsTab::Subtitles,
-            4 => SettingsTab::Output,
             _ => root.settings_ui.active_tab,
         };
         cx.notify();

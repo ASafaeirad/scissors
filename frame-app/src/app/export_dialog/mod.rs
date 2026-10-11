@@ -463,22 +463,31 @@ impl FrameRoot {
             .text_color(color(scheme.on_surface));
 
         if view.kind != SourceKind::Video {
-            return column.child(info_note(
-                match view.kind {
-                    SourceKind::Audio => {
-                        "Choose the audio format and quality in the Output and Audio settings."
-                    }
-                    _ => "Choose the image format and size in the Output and Images settings.",
-                },
-                scheme,
-            ));
+            column = column
+                .child(container_section(view, window, cx))
+                .when_some(processing_section(view, window, cx), ParentElement::child);
+            return match view.kind {
+                SourceKind::Audio => column.when(view.shows_audio(), |this| {
+                    this.child(audio_section(view, focuses, window, cx))
+                }),
+                _ => column.child(info_note(
+                    "Choose the image size in the Images settings.",
+                    scheme,
+                )),
+            };
         }
 
-        column = column.child(format_section(view, window, cx));
+        column = column
+            .child(format_section(view, window, cx))
+            .when_some(processing_section(view, window, cx), ParentElement::child);
         if !view.video_controls {
             return column.child(info_note(
-                "Stream copy keeps the source encoding, so size, frame rate and quality can't \
-                 change. Switch to re-encoding in the Output settings to adjust them.",
+                if view.config.processing_mode == ProcessingMode::Copy {
+                    "Stream copy keeps the source encoding, so size, frame rate and quality can't \
+                     change. Switch to re-encode to adjust them."
+                } else {
+                    "Choose a video format to adjust size, frame rate and quality."
+                },
                 scheme,
             ));
         }
@@ -722,9 +731,10 @@ impl ExportView {
             .map_or("Default encoder", |option| option.label)
     }
 
-    /// Whether the dialog shows the audio section: re-encoded video into a container with sound.
+    /// Whether the dialog shows the audio section: re-encoded audio, or re-encoded video into a
+    /// container with sound.
     fn shows_audio(&self) -> bool {
-        self.video_controls
+        (self.video_controls || self.kind == SourceKind::Audio)
             && encodes_audio(&self.config)
             && !is_gif_container(&self.config.container)
     }
@@ -1070,6 +1080,96 @@ fn format_section(
             .grid_cols(4)
             .gap(theme::ui_rem(8.0))
             .children(cards),
+    )
+}
+
+/// Format choice for audio and image exports: every container the source can go into.
+fn container_section(
+    view: &ExportView,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    let scheme = &view.scheme;
+    let chips: Vec<_> = output_container_options(&view.config, view.metadata(), false)
+        .into_iter()
+        .filter(|option| !option.is_disabled)
+        .map(|option| {
+            let container = option.container;
+            m3::Chip::new(
+                format!("export-container-{container}"),
+                container.to_uppercase(),
+                m3::ChipKind::Filter,
+            )
+            .selected(option.is_selected)
+            .enabled(!view.disabled)
+            .build(scheme, window, cx)
+            .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
+                let metadata = root.selected_source_metadata();
+                if root.update_selected_config(|config| {
+                    apply_output_container(config, &container)
+                        | normalize_output_config(config, metadata.as_ref())
+                }) {
+                    cx.notify();
+                }
+            }))
+        })
+        .collect();
+    section("Format", scheme).child(
+        div()
+            .id("export-containers")
+            .role(gpui::Role::RadioGroup)
+            .aria_label("Format")
+            .flex()
+            .flex_wrap()
+            .gap(theme::ui_rem(8.0))
+            .children(chips),
+    )
+}
+
+/// Re-encode or stream copy. Hidden when the source can only be re-encoded.
+fn processing_section(
+    view: &ExportView,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> Option<gpui::Div> {
+    let options = output_processing_mode_options(&view.config, view.metadata(), false);
+    if options.iter().any(|option| option.is_disabled) {
+        return None;
+    }
+    let modes = options.each_ref().map(|option| option.mode);
+    let hint = view.config.processing_mode.hint();
+    Some(
+        section("Processing", &view.scheme)
+            .child(
+                m3::SegmentedButton::new(
+                    "export-processing-mode",
+                    "Processing",
+                    modes.map(|mode| match mode {
+                        ProcessingMode::Reencode => "Re-encode",
+                        ProcessingMode::Copy => "Stream copy",
+                    }),
+                )
+                .selected(options.iter().position(|option| option.is_selected))
+                .enabled(!view.disabled)
+                .on_select(cx.listener(move |root, index: &usize, _window, cx| {
+                    let Some(mode) = modes.get(*index).copied() else {
+                        return;
+                    };
+                    let metadata = root.selected_source_metadata();
+                    if root.update_selected_config(|config| {
+                        apply_processing_mode(config, metadata.as_ref(), mode)
+                    }) {
+                        cx.notify();
+                    }
+                }))
+                .build(&view.scheme, window, cx),
+            )
+            .child(
+                div()
+                    .m3_type(typography::BODY_SMALL)
+                    .text_color(color(view.scheme.on_surface_variant))
+                    .child(hint),
+            ),
     )
 }
 
