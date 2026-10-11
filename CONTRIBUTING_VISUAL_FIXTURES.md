@@ -72,7 +72,7 @@ the final GPUI rendering.
 
 | Fixture | Visual scenario | What it is useful for checking |
 | --- | --- | --- |
-| `app-settings` | Runtime app settings sheet | Settings modal layout, concurrency draft value, modal focus treatment, close action, and app-level settings spacing. |
+| `app-settings` | Runtime app settings sheet | Settings modal layout, accent presets and custom hex field, concurrency draft value, modal focus treatment, close action, and app-level settings spacing. |
 | `app-settings-theme-open` | App settings with the Theme select open | Dark/Light option order, selected checkmark, keyboard focus treatment, popover placement, and equal-width Appearance columns. |
 | `app-settings-ui-open` | App settings with UI scale open at 200% | Scaled geometry and typography, scrollable sheet body, popover placement, and titlebar coexistence. |
 | `export-dialog` | Export dialog for a ready video with a stereo audio track, a custom size, and the audio and advanced sections open | M3 dialog, scrim and focus trap, format cards, custom width and height fields with the aspect link, frame rate and quality controls, audio channels, codec radios and bitrate field, encoder and pixel format radios, encoding speed slider, file name field, summary panel, and footer actions. |

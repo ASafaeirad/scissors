@@ -15,6 +15,7 @@ impl Render for FrameRoot {
         window.set_rem_size(px(
             crate::appearance::BASE_REM_PX * self.appearance.ui_scale.factor()
         ));
+        m3::update_color_schemes(self.appearance.accent_color, cx);
         let palette = theme::palette(self.appearance.color_theme);
         self.begin_accessibility_frame();
         let app_root_focus = self.ensure_focus(
@@ -486,7 +487,7 @@ impl Render for FrameRoot {
                     &self.file_list_scroll_handle,
                     &settings,
                     PreviewPanelProps {
-                        project: self.project_render_state(),
+                        project: self.project_render_state(cx),
                         canvas: preview_canvas,
                         crop: preview_crop,
                         overlay: preview_overlay,
@@ -549,7 +550,7 @@ impl Render for FrameRoot {
                         },
                         ..self.workspace_ui
                     },
-                    crate::material::scheme(self.appearance.color_theme),
+                    &crate::app::m3::scheme(self.appearance.color_theme, cx),
                     window,
                     cx,
                 ))
@@ -673,6 +674,19 @@ impl Render for FrameRoot {
                 })
                 .collect::<Vec<_>>();
             let value_focus = self.ensure_text_input_focus(FrameTextInputKind::MaxConcurrency, cx);
+            let accent_color_focus =
+                self.ensure_text_input_focus(FrameTextInputKind::AccentColor, cx);
+            let accent_preset_focuses = crate::appearance::AccentColor::PRESETS
+                .iter()
+                .enumerate()
+                .map(|(index, _)| {
+                    self.ensure_focus(
+                        FrameFocusKey::Control(format!("app-settings-accent-{index}")),
+                        true,
+                        cx,
+                    )
+                })
+                .collect::<Vec<_>>();
             let output_directory_focus = self.ensure_focus(
                 FrameFocusKey::Control("app-settings-output-directory".to_string()),
                 true,
@@ -750,6 +764,9 @@ impl Render for FrameRoot {
                         .and_then(std::path::Path::to_str),
                     output_directory_error: self.settings_ui.output_directory_error.as_deref(),
                     appearance: self.appearance,
+                    accent_color_draft: &self.settings_ui.accent_color_draft,
+                    accent_color_focus: &accent_color_focus,
+                    accent_preset_focuses: &accent_preset_focuses,
                     palette,
                     appearance_error: self.settings_ui.appearance_error.as_deref(),
                     theme_popover: self.settings_ui.theme_popover,

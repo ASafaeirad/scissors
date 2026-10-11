@@ -87,6 +87,7 @@ impl FrameRoot {
         let presets = merged_presets(persisted_settings.custom_presets);
         let settings_ui = SettingsUiState {
             max_concurrency_draft: max_concurrency.to_string(),
+            accent_color_draft: persisted_settings.appearance.accent_color.hex(),
             next_custom_preset_sequence: next_custom_preset_sequence(&presets),
             ..SettingsUiState::default()
         };

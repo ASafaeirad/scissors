@@ -114,7 +114,7 @@ pub(super) struct LibrarySourceDrag(pub(super) String);
 
 pub(super) struct LibraryDragPreview {
     pub(super) name: String,
-    pub(super) scheme: &'static material::ColorScheme,
+    pub(super) scheme: material::ColorScheme,
 }
 
 impl Render for LibraryDragPreview {
@@ -154,7 +154,7 @@ impl Render for MediaDragPreview {
 }
 
 pub(super) struct ProjectTimelineState {
-    pub(super) scheme: &'static material::ColorScheme,
+    pub(super) scheme: material::ColorScheme,
     pub(super) clips: Vec<super::project::ClipPlacement>,
     pub(super) sources: Vec<frame_core::types::TimelineSource>,
     pub(super) files: Vec<FileItem>,
@@ -185,7 +185,7 @@ pub(super) fn project_timeline(
         enabled,
         ..
     } = state;
-    let scheme = *scheme;
+    let surface_container_high = scheme.surface_container_high;
     let current = *current;
     let enabled = *enabled;
     let duration = state.duration.max(1.0);
@@ -215,7 +215,7 @@ pub(super) fn project_timeline(
         }))
         .drag_over::<LibrarySourceDrag>(move |style, _, _, _| {
             if enabled {
-                style.bg(color(scheme.surface_container_high))
+                style.bg(color(surface_container_high))
             } else {
                 style
             }
@@ -308,7 +308,7 @@ fn empty_track_row(
     audio: bool,
     view: TimelineView,
     current: f64,
-    scheme: &'static material::ColorScheme,
+    scheme: &material::ColorScheme,
     cx: &Context<FrameRoot>,
 ) -> gpui::Div {
     let (id, label, symbol) = if audio {
@@ -369,7 +369,7 @@ fn project_timeline_toolbar(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = state.scheme;
+    let scheme = &state.scheme;
     let audio_count = state
         .clips
         .iter()
@@ -445,7 +445,7 @@ fn track_row(
     view: TimelineView,
     current: f64,
     enabled: bool,
-    scheme: &'static material::ColorScheme,
+    scheme: &material::ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -771,7 +771,7 @@ mod tests {
     impl Render for TimelineTestView {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             self.root.update(cx, |root, cx| {
-                let state = root.project_render_state().unwrap();
+                let state = root.project_render_state(cx).unwrap();
                 project_timeline(&state.timeline, &self.focus, window, cx)
             })
         }

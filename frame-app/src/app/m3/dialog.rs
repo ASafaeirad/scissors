@@ -32,7 +32,7 @@ pub(in crate::app) fn dialog_colors(scheme: &ColorScheme, visibility: f32) -> Di
 pub(in crate::app) fn scrim(
     id: impl Into<SharedString>,
     visibility: f32,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
 ) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id.into())
@@ -65,7 +65,7 @@ impl Dialog {
         }
     }
 
-    pub(in crate::app) fn build(self, scheme: &'static ColorScheme) -> gpui::Stateful<gpui::Div> {
+    pub(in crate::app) fn build(self, scheme: &ColorScheme) -> gpui::Stateful<gpui::Div> {
         let colors = dialog_colors(scheme, 1.0);
         div()
             .id(self.id)

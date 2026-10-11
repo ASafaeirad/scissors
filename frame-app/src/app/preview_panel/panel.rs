@@ -201,11 +201,14 @@ pub(in crate::app) fn preview_panel(
             });
         }
     }
-    let scheme = material::scheme(if state.palette.is_light() {
-        ColorTheme::Light
-    } else {
-        ColorTheme::Dark
-    });
+    let scheme = &crate::app::m3::scheme(
+        if state.palette.is_light() {
+            ColorTheme::Light
+        } else {
+            ColorTheme::Dark
+        },
+        cx,
+    );
     div()
         .flex()
         .flex_col()

@@ -12,7 +12,7 @@ use crate::app::{
     Context, FrameRoot, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled,
     Window,
 };
-use crate::material::{self, shape, typography};
+use crate::material::{shape, typography};
 use gpui::{prelude::FluentBuilder, relative};
 
 const TOOLS: [(Symbol, &str, &str); 5] = [
@@ -93,7 +93,8 @@ impl FrameRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let scheme = material::scheme(self.appearance.color_theme);
+        super::update_color_schemes(self.appearance.accent_color, cx);
+        let scheme = &crate::app::m3::scheme(self.appearance.color_theme, cx);
         let rail = NavigationRail::new(
             "m3-rail",
             TOOLS
@@ -159,7 +160,7 @@ impl FrameRoot {
 
     fn tool_panel(
         state: &M3GalleryState,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -212,7 +213,7 @@ impl FrameRoot {
     )]
     fn library_panel(
         state: &M3GalleryState,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -340,7 +341,7 @@ impl FrameRoot {
 
     fn crop_panel(
         state: &M3GalleryState,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -409,7 +410,7 @@ impl FrameRoot {
 
     fn audio_panel(
         state: &M3GalleryState,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -450,7 +451,7 @@ impl FrameRoot {
 
     fn captions_panel(
         state: &M3GalleryState,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -502,7 +503,7 @@ impl FrameRoot {
     )]
     fn output_panel(
         state: &M3GalleryState,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -612,7 +613,7 @@ impl FrameRoot {
 
     fn preview_area(
         state: &M3GalleryState,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -715,7 +716,7 @@ impl FrameRoot {
     )]
     fn timeline(
         state: &M3GalleryState,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -862,11 +863,7 @@ impl FrameRoot {
     }
 }
 
-fn top_bar(
-    scheme: &'static ColorScheme,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Div {
+fn top_bar(scheme: &ColorScheme, window: &mut Window, cx: &mut Context<FrameRoot>) -> gpui::Div {
     div()
         .flex()
         .items_center()
@@ -902,7 +899,7 @@ fn top_bar(
 }
 
 fn timeline_header(
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {

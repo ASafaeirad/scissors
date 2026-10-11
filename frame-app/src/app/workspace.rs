@@ -10,7 +10,7 @@ use super::{
     preview_panel::preview_panel,
     settings_panel::settings_panel,
 };
-use crate::material::{self, ColorScheme, Symbol, shape, spacing, typography};
+use crate::material::{ColorScheme, Symbol, shape, spacing, typography};
 use gpui::{AppContext, StyledImage, prelude::FluentBuilder};
 
 #[cfg(test)]
@@ -27,7 +27,7 @@ mod drag_drop_tests {
     impl Render for MediaTimelineTestView {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             self.root.update(cx, |root, cx| {
-                let project = root.project_render_state().unwrap();
+                let project = root.project_render_state(cx).unwrap();
                 let file = project.library.files().first().unwrap();
                 div()
                     .flex()
@@ -37,7 +37,7 @@ mod drag_drop_tests {
                             file,
                             false,
                             Some(&project),
-                            project.timeline.scheme,
+                            &project.timeline.scheme,
                             MediaAssetsProps {
                                 state: &root.media_assets,
                                 delete_enabled: !root.is_processing,
@@ -273,11 +273,14 @@ pub(super) fn workspace_view(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = material::scheme(if settings.palette.is_light() {
-        crate::appearance::ColorTheme::Light
-    } else {
-        crate::appearance::ColorTheme::Dark
-    });
+    let scheme = &crate::app::m3::scheme(
+        if settings.palette.is_light() {
+            crate::appearance::ColorTheme::Light
+        } else {
+            crate::appearance::ColorTheme::Dark
+        },
+        cx,
+    );
     let project = preview_props.project.as_ref();
     let project_enabled = project.is_some();
     let rail = navigation_rail(state.tool, scheme, window, cx);
@@ -398,7 +401,7 @@ struct TrackSpeedDrag(String);
 fn track_speed_control(
     clip: &super::project::ClipPlacement,
     enabled: bool,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -492,7 +495,7 @@ pub(super) fn logs_workspace_view(
     logs: gpui::Div,
     queue: &FileQueue,
     state: WorkspaceState,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -530,7 +533,7 @@ pub(super) fn logs_workspace_view(
 
 fn navigation_rail(
     selected: usize,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -569,7 +572,7 @@ fn navigation_rail(
 fn project_header(
     queue: &FileQueue,
     export_enabled: bool,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -630,7 +633,7 @@ fn library_panel(
     filter: usize,
     assets: MediaAssetsProps<'_>,
     project: Option<&super::project::ProjectRenderState>,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -768,7 +771,7 @@ fn media_card(
     file: &FileItem,
     selected: bool,
     project: Option<&super::project::ProjectRenderState>,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     assets: MediaAssetsProps<'_>,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
@@ -865,6 +868,7 @@ fn media_card(
             }),
             |preview| {
                 let name = file.name.clone();
+                let scheme = *scheme;
                 preview.cursor_grab().on_drag(
                     super::project_timeline::LibrarySourceDrag(file.id.clone()),
                     move |_, _, _, cx| {
@@ -904,7 +908,7 @@ fn media_card(
 fn library_asset_actions(
     file: &FileItem,
     project: Option<&super::project::ProjectRenderState>,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     assets: MediaAssetsProps<'_>,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
@@ -1083,11 +1087,14 @@ pub(super) fn welcome_view(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = material::scheme(if palette.is_light() {
-        crate::appearance::ColorTheme::Light
-    } else {
-        crate::appearance::ColorTheme::Dark
-    });
+    let scheme = &crate::app::m3::scheme(
+        if palette.is_light() {
+            crate::appearance::ColorTheme::Light
+        } else {
+            crate::appearance::ColorTheme::Dark
+        },
+        cx,
+    );
     div()
         .size_full()
         .flex()

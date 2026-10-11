@@ -47,7 +47,7 @@ impl LinearProgress {
         }
     }
 
-    pub(in crate::app) fn build(self, scheme: &'static ColorScheme) -> gpui::Stateful<gpui::Div> {
+    pub(in crate::app) fn build(self, scheme: &ColorScheme) -> gpui::Stateful<gpui::Div> {
         let colors = progress_colors(scheme);
         let value = progress_fraction(self.value);
         let corner = theme::ui_rem(TRACK_HEIGHT / 2.0);

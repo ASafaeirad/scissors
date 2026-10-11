@@ -2,7 +2,7 @@
 //!
 //! These live alongside the Frame components in `app::components` so screens can migrate one
 //! control at a time. Each component takes the M3 [`ColorScheme`] for the active theme
-//! (`material::scheme(color_theme)`).
+//! (`m3::scheme(color_theme, cx)` for the active accent).
 //!
 //! Single-target controls (buttons, chips, switches) return a `Stateful<Div>` and the caller
 //! attaches `.on_click(...)`, the same way as the Frame components. Multi-target controls
@@ -98,6 +98,39 @@ impl M3Colors {
     }
 }
 
+/// Cached color roles shared by views in the GPUI application.
+struct ActiveColorSchemes {
+    accent: crate::appearance::AccentColor,
+    light: ColorScheme,
+    dark: ColorScheme,
+}
+
+impl gpui::Global for ActiveColorSchemes {}
+
+pub(in crate::app) fn update_color_schemes(accent: crate::appearance::AccentColor, cx: &mut App) {
+    if cx
+        .try_global::<ActiveColorSchemes>()
+        .is_some_and(|current| current.accent == accent)
+    {
+        return;
+    }
+    cx.set_global(ActiveColorSchemes {
+        accent,
+        light: crate::material::scheme_from_accent(crate::appearance::ColorTheme::Light, accent),
+        dark: crate::material::scheme_from_accent(crate::appearance::ColorTheme::Dark, accent),
+    });
+}
+
+pub(in crate::app) fn scheme(theme: crate::appearance::ColorTheme, cx: &App) -> ColorScheme {
+    cx.try_global::<ActiveColorSchemes>().map_or_else(
+        || *crate::material::scheme(theme),
+        |schemes| match theme {
+            crate::appearance::ColorTheme::Light => schemes.light,
+            crate::appearance::ColorTheme::Dark => schemes.dark,
+        },
+    )
+}
+
 /// Sets the M3 typeface, size, line height and weight for a type scale role.
 pub(in crate::app) trait M3Text: Styled + Sized {
     fn m3_type(self, style: TypeStyle) -> Self {
@@ -190,18 +223,19 @@ fn apply_focus(
     element: gpui::Stateful<gpui::Div>,
     enabled: bool,
     focus: Option<&FocusHandle>,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
 ) -> gpui::Stateful<gpui::Div> {
     let element = match focus {
         Some(focus) => element.track_focus(focus),
         None if enabled => element.focusable(),
         None => element,
     };
+    let secondary = scheme.secondary;
     if enabled {
         element.tab_stop(true).focus_visible(move |style| {
             style
                 .ring_width(px(state::FOCUS_INDICATOR_THICKNESS))
-                .ring_color(color(scheme.secondary))
+                .ring_color(color(secondary))
         })
     } else {
         element.tab_stop(false).aria_disabled(true)
@@ -214,7 +248,7 @@ fn apply_accessible(
     label: impl Into<SharedString>,
     enabled: bool,
     focus: Option<&FocusHandle>,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
 ) -> gpui::Stateful<gpui::Div> {
     apply_focus(element.role(role).aria_label(label), enabled, focus, scheme)
 }

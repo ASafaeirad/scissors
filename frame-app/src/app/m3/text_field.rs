@@ -151,7 +151,7 @@ impl TextField {
 
     pub(in crate::app) fn build(
         self,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::Stateful<gpui::Div> {
@@ -232,19 +232,21 @@ impl TextField {
                         .text_color(color(colors.affix))
                         .child(suffix),
                 )
-            })
-            .child(label);
+            });
 
         let supporting = error.or(supporting);
         let field = div()
             .id(id)
+            .relative()
             .flex()
             .flex_col()
             .min_w_0()
             .when(!enabled, |this| {
                 this.opacity(state::DISABLED_CONTENT_OPACITY)
             })
-            .child(field_box)
+            // GPUI paints a div's border after its children. Paint the floating label as a
+            // sibling of the bordered box so its background actually cuts the outline.
+            .child(div().relative().w_full().child(field_box).child(label))
             .when_some(supporting, |this, supporting| {
                 this.child(
                     div()

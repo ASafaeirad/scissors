@@ -72,7 +72,7 @@ pub mod palette {
 }
 
 /// Resolved M3 system color roles (`--md-sys-color-*`).
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ColorScheme {
     color_theme: ColorTheme,
     pub primary: RgbaToken,
@@ -261,6 +261,102 @@ pub fn scheme(color_theme: ColorTheme) -> &'static ColorScheme {
     }
 }
 
+/// Preset previews are immutable and generated once, rather than on every UI frame.
+#[must_use]
+pub fn accent_preset_schemes(theme: ColorTheme) -> &'static [ColorScheme; 6] {
+    use crate::appearance::AccentColor;
+    use std::sync::LazyLock;
+    static LIGHT_PRESETS: LazyLock<[ColorScheme; 6]> = LazyLock::new(|| {
+        AccentColor::PRESETS.map(|(_, accent)| scheme_from_accent(ColorTheme::Light, accent))
+    });
+    static DARK_PRESETS: LazyLock<[ColorScheme; 6]> = LazyLock::new(|| {
+        AccentColor::PRESETS.map(|(_, accent)| scheme_from_accent(ColorTheme::Dark, accent))
+    });
+    match theme {
+        ColorTheme::Light => &LIGHT_PRESETS,
+        ColorTheme::Dark => &DARK_PRESETS,
+    }
+}
+
+/// Resolves a complete tonal-spot scheme from an opaque accent seed.
+/// The default seed preserves Frame's original baseline exactly.
+#[must_use]
+pub fn scheme_from_accent(
+    color_theme: ColorTheme,
+    accent: crate::appearance::AccentColor,
+) -> ColorScheme {
+    use material_colors::{
+        color::Argb,
+        hct::Hct,
+        scheme::{Scheme, variant::SchemeTonalSpot},
+    };
+    if accent == crate::appearance::AccentColor::default() {
+        return *scheme(color_theme);
+    }
+    let generated = Scheme::from(
+        SchemeTonalSpot::new(
+            Hct::new(Argb::from_u32(accent.argb())),
+            color_theme == ColorTheme::Dark,
+            Some(0.0),
+        )
+        .scheme,
+    );
+    let token = |value: Argb| RgbaToken::from_rgb(value.red, value.green, value.blue);
+    ColorScheme {
+        color_theme,
+        primary: token(generated.primary),
+        on_primary: token(generated.on_primary),
+        primary_container: token(generated.primary_container),
+        on_primary_container: token(generated.on_primary_container),
+        secondary: token(generated.secondary),
+        on_secondary: token(generated.on_secondary),
+        secondary_container: token(generated.secondary_container),
+        on_secondary_container: token(generated.on_secondary_container),
+        tertiary: token(generated.tertiary),
+        on_tertiary: token(generated.on_tertiary),
+        tertiary_container: token(generated.tertiary_container),
+        on_tertiary_container: token(generated.on_tertiary_container),
+        error: token(generated.error),
+        on_error: token(generated.on_error),
+        error_container: token(generated.error_container),
+        on_error_container: token(generated.on_error_container),
+        primary_fixed: token(generated.primary_fixed),
+        primary_fixed_dim: token(generated.primary_fixed_dim),
+        on_primary_fixed: token(generated.on_primary_fixed),
+        on_primary_fixed_variant: token(generated.on_primary_fixed_variant),
+        secondary_fixed: token(generated.secondary_fixed),
+        secondary_fixed_dim: token(generated.secondary_fixed_dim),
+        on_secondary_fixed: token(generated.on_secondary_fixed),
+        on_secondary_fixed_variant: token(generated.on_secondary_fixed_variant),
+        tertiary_fixed: token(generated.tertiary_fixed),
+        tertiary_fixed_dim: token(generated.tertiary_fixed_dim),
+        on_tertiary_fixed: token(generated.on_tertiary_fixed),
+        on_tertiary_fixed_variant: token(generated.on_tertiary_fixed_variant),
+        background: token(generated.background),
+        on_background: token(generated.on_background),
+        surface: token(generated.surface),
+        surface_dim: token(generated.surface_dim),
+        surface_bright: token(generated.surface_bright),
+        surface_container_lowest: token(generated.surface_container_lowest),
+        surface_container_low: token(generated.surface_container_low),
+        surface_container: token(generated.surface_container),
+        surface_container_high: token(generated.surface_container_high),
+        surface_container_highest: token(generated.surface_container_highest),
+        on_surface: token(generated.on_surface),
+        surface_variant: token(generated.surface_variant),
+        on_surface_variant: token(generated.on_surface_variant),
+        inverse_surface: token(generated.inverse_surface),
+        inverse_on_surface: token(generated.inverse_on_surface),
+        inverse_primary: token(generated.inverse_primary),
+        outline: token(generated.outline),
+        outline_variant: token(generated.outline_variant),
+        surface_tint: token(generated.surface_tint),
+        shadow: token(generated.shadow),
+        scrim: token(generated.scrim),
+        transparent: scheme(color_theme).transparent,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -290,6 +386,47 @@ mod tests {
         let foreground = relative_luminance(foreground);
         let background = relative_luminance(background);
         (foreground.max(background) + 0.05) / (foreground.min(background) + 0.05)
+    }
+
+    #[test]
+    fn custom_accents_keep_content_legible_in_both_themes() {
+        use crate::appearance::AccentColor;
+        for hex in [
+            "#000000", "#FFFFFF", "#FF0000", "#00FF00", "#0000FF", "#00FFFF", "#FF00FF", "#FFFF00",
+            "#808080", "#006A60",
+        ] {
+            for theme in ColorTheme::ALL {
+                let custom = scheme_from_accent(theme, AccentColor::from_hex(hex).unwrap());
+                assert_eq!(custom.color_theme(), theme);
+                for (foreground, background) in [
+                    (custom.on_primary, custom.primary),
+                    (custom.on_primary_container, custom.primary_container),
+                    (custom.on_secondary, custom.secondary),
+                    (custom.on_secondary_container, custom.secondary_container),
+                    (custom.on_tertiary, custom.tertiary),
+                    (custom.on_tertiary_container, custom.tertiary_container),
+                    (custom.on_surface, custom.surface),
+                    (custom.on_surface_variant, custom.surface_container_high),
+                    (custom.on_error, custom.error),
+                ] {
+                    assert!(
+                        contrast_ratio(foreground, background) >= 4.5,
+                        "{hex} {theme:?}"
+                    );
+                }
+                assert_ne!(custom.primary, scheme(theme).primary);
+            }
+        }
+    }
+
+    #[test]
+    fn default_accent_preserves_the_baseline() {
+        for theme in ColorTheme::ALL {
+            assert_eq!(
+                scheme_from_accent(theme, crate::appearance::AccentColor::default()),
+                *scheme(theme)
+            );
+        }
     }
 
     #[test]

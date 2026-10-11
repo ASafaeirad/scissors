@@ -97,14 +97,17 @@ impl FrameRoot {
 
     pub(in crate::app) fn text_input_disabled(&self, kind: FrameTextInputKind) -> bool {
         self.update_installation_in_progress()
-            || (kind != FrameTextInputKind::MaxConcurrency
-                && (self.file_queue.selected_file_locked()
-                    || (self.project.enabled && self.is_processing)))
+            || (!matches!(
+                kind,
+                FrameTextInputKind::MaxConcurrency | FrameTextInputKind::AccentColor
+            ) && (self.file_queue.selected_file_locked()
+                || (self.project.enabled && self.is_processing)))
     }
 
     pub(in crate::app) fn text_input_value(&self, kind: FrameTextInputKind) -> String {
         match kind {
             FrameTextInputKind::MaxConcurrency => self.settings_ui.max_concurrency_draft.clone(),
+            FrameTextInputKind::AccentColor => self.settings_ui.accent_color_draft.clone(),
             FrameTextInputKind::OutputName | FrameTextInputKind::ExportName => {
                 if self.editing_project_output() {
                     self.project.output_name.clone()
@@ -194,6 +197,17 @@ impl FrameRoot {
         candidate: &str,
     ) -> Option<String> {
         match kind {
+            FrameTextInputKind::AccentColor => {
+                let next = candidate.trim().to_string();
+                self.settings_ui.accent_color_draft.clone_from(&next);
+                self.settings_ui.appearance_error = None;
+                if let Some(accent) = crate::appearance::AccentColor::from_hex(&next) {
+                    let mut appearance = self.appearance;
+                    appearance.accent_color = accent;
+                    self.set_appearance(appearance);
+                }
+                Some(next)
+            }
             FrameTextInputKind::MaxConcurrency => {
                 let next = sanitize_number_input(candidate);
                 if self.settings_ui.max_concurrency_draft != next {

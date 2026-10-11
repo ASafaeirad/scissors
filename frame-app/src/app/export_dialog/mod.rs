@@ -10,7 +10,7 @@ use super::settings_panel::{
     is_lossless_audio_codec, range_value_for_key, range_value_from_fraction,
 };
 use super::*;
-use crate::material::{self, ColorScheme, Symbol, shape, state, typography};
+use crate::material::{ColorScheme, Symbol, shape, state, typography};
 use crate::numeric::u32_to_u8;
 use crate::settings::{
     AudioCodecOption, VideoCodecOption, is_audio_only_container, source_kind_for,
@@ -242,7 +242,7 @@ impl FrameRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let scheme = material::scheme(self.appearance.color_theme);
+        let scheme = &crate::app::m3::scheme(self.appearance.color_theme, cx);
         let is_open = self.export_ui.open;
         let transition = window
             .use_keyed_transition(
@@ -348,7 +348,7 @@ impl FrameRoot {
             .child(dialog)
     }
 
-    fn export_view(&self, scheme: &'static ColorScheme) -> ExportView {
+    fn export_view(&self, scheme: &ColorScheme) -> ExportView {
         let metadata = if self.project.enabled {
             self.project_output_metadata()
         } else {
@@ -375,7 +375,7 @@ impl FrameRoot {
             output_duration_seconds(&config, preview_duration_seconds(metadata.as_ref()))
         };
         ExportView {
-            scheme,
+            scheme: *scheme,
             title: match kind {
                 SourceKind::Audio => "Export audio",
                 SourceKind::Image => "Export image",
@@ -447,7 +447,7 @@ impl FrameRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let scheme = view.scheme;
+        let scheme = &view.scheme;
         let mut column = div()
             .id("export-dialog-settings")
             .flex_1()
@@ -503,7 +503,7 @@ impl FrameRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let scheme = view.scheme;
+        let scheme = &view.scheme;
         let count = view.tasks.len();
         let (symbol, icon_color, title, detail) = match phase {
             ExportPhase::Running { progress } => (
@@ -671,7 +671,7 @@ impl FrameRoot {
     reason = "The snapshot mirrors independent facts about the selection and app state."
 )]
 struct ExportView {
-    scheme: &'static ColorScheme,
+    scheme: ColorScheme,
     title: &'static str,
     config: ConversionConfig,
     metadata: Option<SourceMetadata>,
@@ -762,7 +762,7 @@ fn export_header(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let mut subtitle = vec![view.source_name.clone()];
     if view.duration > 0.0 {
         subtitle.push(format_clock(view.duration));
@@ -817,7 +817,7 @@ fn export_header(
         )
 }
 
-fn section(title: &'static str, scheme: &'static ColorScheme) -> gpui::Div {
+fn section(title: &'static str, scheme: &ColorScheme) -> gpui::Div {
     div().flex().flex_col().gap(theme::ui_rem(12.0)).child(
         div()
             .m3_type(typography::TITLE_SMALL)
@@ -831,7 +831,7 @@ fn noted_section(
     title: &'static str,
     note: impl Into<SharedString>,
     note_color: crate::theme::RgbaToken,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
 ) -> gpui::Div {
     div().flex().flex_col().gap(theme::ui_rem(12.0)).child(
         div()
@@ -857,14 +857,14 @@ fn noted_section(
     )
 }
 
-fn subsection_label(label: &'static str, scheme: &'static ColorScheme) -> gpui::Div {
+fn subsection_label(label: &'static str, scheme: &ColorScheme) -> gpui::Div {
     div()
         .m3_type(typography::LABEL_LARGE)
         .text_color(color(scheme.on_surface_variant))
         .child(label)
 }
 
-fn info_note(text: &'static str, scheme: &'static ColorScheme) -> gpui::Div {
+fn info_note(text: &'static str, scheme: &ColorScheme) -> gpui::Div {
     div()
         .flex()
         .items_center()
@@ -884,7 +884,7 @@ fn info_note(text: &'static str, scheme: &'static ColorScheme) -> gpui::Div {
         .child(div().flex_1().min_w_0().child(text))
 }
 
-fn value_badge(text: String, scheme: &'static ColorScheme) -> gpui::Div {
+fn value_badge(text: String, scheme: &ColorScheme) -> gpui::Div {
     div()
         .flex_none()
         .px(theme::ui_rem(10.0))
@@ -897,11 +897,7 @@ fn value_badge(text: String, scheme: &'static ColorScheme) -> gpui::Div {
 }
 
 /// Labels under a slider, one at each end.
-fn range_labels(
-    lower: &'static str,
-    upper: &'static str,
-    scheme: &'static ColorScheme,
-) -> gpui::Div {
+fn range_labels(lower: &'static str, upper: &'static str, scheme: &ColorScheme) -> gpui::Div {
     div()
         .flex()
         .justify_between()
@@ -941,7 +937,7 @@ fn export_text_field(
     field: ExportTextField,
     focus: &FocusHandle,
     disabled: bool,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -988,7 +984,7 @@ fn export_slider(
     value_text: String,
     slider: ExportSlider,
     enabled: bool,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     cx: &Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
     let drag = ExportSliderDrag { slider, min, max };
@@ -1040,7 +1036,7 @@ fn format_section(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let available = output_container_options(&view.config, view.metadata(), view.disabled);
     let cards: Vec<_> = EXPORT_FORMATS
         .iter()
@@ -1087,7 +1083,7 @@ fn resolution_section(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let config = &view.config;
     let error = custom_dimensions_error(config);
     let fill = output_dimensions(config, view.metadata());
@@ -1207,7 +1203,7 @@ fn resolution_section(
 }
 
 fn fps_section(view: &ExportView, window: &mut Window, cx: &mut Context<FrameRoot>) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let config = &view.config;
     let options = fps_options(&config.container);
     let source_fps = view.metadata().and_then(|metadata| metadata.frame_rate);
@@ -1246,7 +1242,7 @@ fn quality_section(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let config = &view.config;
     let section = section("Quality", scheme);
     if is_gif_container(&config.container) {
@@ -1317,7 +1313,7 @@ fn expandable_section(
     summary: String,
     expanded: bool,
     toggle: fn(&mut ExportUiState),
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     cx: &Context<FrameRoot>,
 ) -> gpui::Div {
     let hover = state::state_layer(scheme.transparent, scheme.on_surface, state::HOVER_OPACITY);
@@ -1395,7 +1391,7 @@ fn expandable_section(
 fn noted_subsection_label(
     label: &'static str,
     note: impl Into<SharedString>,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
 ) -> gpui::Div {
     div()
         .flex()
@@ -1425,7 +1421,7 @@ fn audio_section(
         audio_section_summary(&view.config, view.metadata()),
         view.audio,
         |ui| ui.audio = !ui.audio,
-        view.scheme,
+        &view.scheme,
         cx,
     )
     .when(view.audio, |this| {
@@ -1443,7 +1439,7 @@ fn audio_options(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let config = &view.config;
     let enabled = !view.disabled;
     let options = div()
@@ -1637,7 +1633,7 @@ fn advanced_section(
         advanced_summary(&view.config, view.encoder_label()),
         view.advanced,
         |ui| ui.advanced = !ui.advanced,
-        view.scheme,
+        &view.scheme,
         cx,
     )
     .when(view.advanced, |this| {
@@ -1655,7 +1651,7 @@ fn advanced_options(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let config = &view.config;
     let enabled = !view.disabled;
     let is_gif = is_gif_container(&config.container);
@@ -1828,7 +1824,7 @@ fn gif_options(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let config = &view.config;
     let enabled = !view.disabled;
     div()
@@ -1919,7 +1915,7 @@ fn hardware_options(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let config = &view.config;
     let enabled = !view.disabled;
     let codec = config.video_codec.as_str();
@@ -1998,7 +1994,7 @@ struct SwitchRow {
 
 fn switch_row(
     row: SwitchRow,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -2045,7 +2041,7 @@ fn export_side_panel(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let config = &view.config;
     let dimensions = if view.kind == SourceKind::Audio {
         None
@@ -2135,7 +2131,7 @@ fn export_side_panel(
 fn preview_frame(
     kind: SourceKind,
     dimensions: Option<(u32, u32)>,
-    scheme: &'static ColorScheme,
+    scheme: &ColorScheme,
 ) -> gpui::Div {
     let inner_width = SIDE_PANEL_PADDING.mul_add(-2.0, SIDE_PANEL_WIDTH);
     let (width, height) = dimensions.map_or((16.0, 9.0), |(width, height)| {
@@ -2222,7 +2218,7 @@ fn export_footer(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = view.scheme;
+    let scheme = &view.scheme;
     let note = if view.has_output_directory {
         let mut parts = Vec::new();
         if let Some(size) = view.size_estimate() {

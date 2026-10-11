@@ -80,7 +80,7 @@ impl Slider {
         self
     }
 
-    pub(in crate::app) fn build(self, scheme: &'static ColorScheme) -> gpui::Stateful<gpui::Div> {
+    pub(in crate::app) fn build(self, scheme: &ColorScheme) -> gpui::Stateful<gpui::Div> {
         let Self {
             id,
             label,

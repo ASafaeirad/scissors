@@ -169,11 +169,52 @@ pub fn scale_preset_from_env_value(value: Option<&str>) -> Option<ScalePreset> {
         .and_then(ScalePreset::from_percent)
 }
 
+/// An opaque sRGB seed used to generate the application's Material color roles.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AccentColor(u32);
+
+impl Default for AccentColor {
+    fn default() -> Self {
+        Self(0x0067_50A4)
+    }
+}
+
+impl AccentColor {
+    pub const PRESETS: [(&'static str, Self); 6] = [
+        ("Purple", Self(0x0067_50A4)),
+        ("Blue", Self(0x0000_61A4)),
+        ("Teal", Self(0x0000_6A60)),
+        ("Green", Self(0x0038_6A20)),
+        ("Orange", Self(0x00A2_4B00)),
+        ("Pink", Self(0x0098_4061)),
+    ];
+
+    #[must_use]
+    pub fn from_hex(value: &str) -> Option<Self> {
+        let value = value.trim();
+        let value = value.strip_prefix('#').unwrap_or(value);
+        (value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| u32::from_str_radix(value, 16).ok().map(Self))
+            .flatten()
+    }
+
+    #[must_use]
+    pub fn hex(self) -> String {
+        format!("#{:06X}", self.0)
+    }
+
+    #[must_use]
+    pub const fn argb(self) -> u32 {
+        self.0 | 0xFF00_0000
+    }
+}
+
 /// User-configurable appearance settings.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AppearanceSettings {
     pub ui_scale: ScalePreset,
     pub color_theme: ColorTheme,
+    pub accent_color: AccentColor,
 }
 
 #[must_use]
@@ -191,12 +232,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn accent_hex_accepts_opaque_srgb_and_rejects_invalid_values() {
+        let expected = AccentColor::default();
+        assert_eq!(AccentColor::from_hex(" #6750a4 "), Some(expected));
+        assert_eq!(AccentColor::from_hex("6750A4"), Some(expected));
+        assert_eq!(expected.hex(), "#6750A4");
+        for invalid in ["", "#abc", "#6750A400", "#GGGGGG", "##6750A4", "é6750"] {
+            assert_eq!(AccentColor::from_hex(invalid), None, "{invalid}");
+        }
+    }
+
+    #[test]
     fn default_appearance_uses_unscaled_ui() {
         assert_eq!(
             AppearanceSettings::default(),
             AppearanceSettings {
                 ui_scale: ScalePreset::Percent100,
                 color_theme: ColorTheme::Dark,
+                accent_color: crate::appearance::AccentColor::default(),
             }
         );
     }

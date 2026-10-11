@@ -13,6 +13,7 @@ impl FrameRoot {
         self.settings_ui.is_open = true;
         self.settings_ui.is_present = true;
         self.settings_ui.max_concurrency_draft = self.max_concurrency.to_string();
+        self.settings_ui.accent_color_draft = self.appearance.accent_color.hex();
         self.settings_ui.max_concurrency_error = None;
         self.settings_ui.output_directory_error = None;
         self.settings_ui.appearance_error = None;
@@ -29,8 +30,14 @@ impl FrameRoot {
         self.close_app_settings_appearance_popover(AppearancePopover::UiScale);
         self.text_input_ui
             .focuses
+            .clear(FrameTextInputKind::AccentColor);
+        self.text_input_ui
+            .focuses
             .clear(FrameTextInputKind::MaxConcurrency);
-        if self.text_input_ui.active == Some(FrameTextInputKind::MaxConcurrency) {
+        if matches!(
+            self.text_input_ui.active,
+            Some(FrameTextInputKind::MaxConcurrency | FrameTextInputKind::AccentColor)
+        ) {
             self.stop_text_input_cursor();
         }
     }
@@ -156,6 +163,16 @@ impl FrameRoot {
         self.set_appearance(appearance)
     }
 
+    pub(super) fn set_accent_color(&mut self, accent: crate::appearance::AccentColor) -> bool {
+        let mut appearance = self.appearance;
+        appearance.accent_color = accent;
+        let changed = self.set_appearance(appearance);
+        if changed || self.appearance.accent_color == accent {
+            self.settings_ui.accent_color_draft = accent.hex();
+        }
+        changed
+    }
+
     pub(super) fn set_color_theme(&mut self, color_theme: ColorTheme) -> bool {
         let mut appearance = self.appearance;
         appearance.color_theme = color_theme;
@@ -201,7 +218,7 @@ impl FrameRoot {
         }
     }
 
-    fn set_appearance(&mut self, appearance: AppearanceSettings) -> bool {
+    pub(in crate::app) fn set_appearance(&mut self, appearance: AppearanceSettings) -> bool {
         if self.update_installation_in_progress() || self.appearance == appearance {
             return false;
         }

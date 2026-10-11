@@ -296,11 +296,14 @@ pub(in crate::app) fn preview_viewport(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let scheme = crate::material::scheme(if state.palette.is_light() {
-        ColorTheme::Light
-    } else {
-        ColorTheme::Dark
-    });
+    let scheme = &crate::app::m3::scheme(
+        if state.palette.is_light() {
+            ColorTheme::Light
+        } else {
+            ColorTheme::Dark
+        },
+        cx,
+    );
     let mut viewport = div()
         .id("preview-viewport")
         .relative()

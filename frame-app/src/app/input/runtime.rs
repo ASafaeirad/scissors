@@ -23,6 +23,7 @@ impl FrameTextInputMetrics {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::app) enum FrameTextInputKind {
     MaxConcurrency,
+    AccentColor,
     OutputName,
     AudioBitrate,
     VideoCustomWidth,
@@ -47,8 +48,9 @@ pub(in crate::app) enum FrameTextInputKind {
 }
 
 impl FrameTextInputKind {
-    pub(in crate::app) const ALL: [Self; 22] = [
+    pub(in crate::app) const ALL: [Self; 23] = [
         Self::MaxConcurrency,
+        Self::AccentColor,
         Self::OutputName,
         Self::AudioBitrate,
         Self::VideoCustomWidth,
@@ -75,6 +77,7 @@ impl FrameTextInputKind {
     pub(in crate::app) const fn accessibility_label(self) -> &'static str {
         match self {
             Self::MaxConcurrency => "Maximum concurrent conversions",
+            Self::AccentColor => "Accent color",
             Self::OutputName => "Output name",
             Self::AudioBitrate => "Audio bitrate",
             Self::VideoCustomWidth => "Video width",
@@ -195,6 +198,7 @@ mod metrics_tests {
 #[derive(Default)]
 pub(in crate::app) struct FrameTextInputStore {
     max_concurrency: FrameTextInputRuntime,
+    accent_color: FrameTextInputRuntime,
     output_name: FrameTextInputRuntime,
     audio_bitrate: FrameTextInputRuntime,
     video_width: FrameTextInputRuntime,
@@ -222,6 +226,7 @@ impl FrameTextInputStore {
     pub(in crate::app) const fn runtime(&self, kind: FrameTextInputKind) -> &FrameTextInputRuntime {
         match kind {
             FrameTextInputKind::MaxConcurrency => &self.max_concurrency,
+            FrameTextInputKind::AccentColor => &self.accent_color,
             FrameTextInputKind::OutputName => &self.output_name,
             FrameTextInputKind::AudioBitrate => &self.audio_bitrate,
             FrameTextInputKind::VideoCustomWidth => &self.video_width,
@@ -252,6 +257,7 @@ impl FrameTextInputStore {
     ) -> &mut FrameTextInputRuntime {
         match kind {
             FrameTextInputKind::MaxConcurrency => &mut self.max_concurrency,
+            FrameTextInputKind::AccentColor => &mut self.accent_color,
             FrameTextInputKind::OutputName => &mut self.output_name,
             FrameTextInputKind::AudioBitrate => &mut self.audio_bitrate,
             FrameTextInputKind::VideoCustomWidth => &mut self.video_width,
@@ -280,6 +286,7 @@ impl FrameTextInputStore {
 #[derive(Default)]
 pub(in crate::app) struct FrameTextInputFocusStore {
     max_concurrency: Option<FocusHandle>,
+    accent_color: Option<FocusHandle>,
     output_name: Option<FocusHandle>,
     audio_bitrate: Option<FocusHandle>,
     video_width: Option<FocusHandle>,
@@ -307,6 +314,7 @@ impl FrameTextInputFocusStore {
     pub(in crate::app) const fn focus(&self, kind: FrameTextInputKind) -> Option<&FocusHandle> {
         match kind {
             FrameTextInputKind::MaxConcurrency => self.max_concurrency.as_ref(),
+            FrameTextInputKind::AccentColor => self.accent_color.as_ref(),
             FrameTextInputKind::OutputName => self.output_name.as_ref(),
             FrameTextInputKind::AudioBitrate => self.audio_bitrate.as_ref(),
             FrameTextInputKind::VideoCustomWidth => self.video_width.as_ref(),
@@ -339,6 +347,7 @@ impl FrameTextInputFocusStore {
     ) -> &mut Option<FocusHandle> {
         match kind {
             FrameTextInputKind::MaxConcurrency => &mut self.max_concurrency,
+            FrameTextInputKind::AccentColor => &mut self.accent_color,
             FrameTextInputKind::OutputName => &mut self.output_name,
             FrameTextInputKind::AudioBitrate => &mut self.audio_bitrate,
             FrameTextInputKind::VideoCustomWidth => &mut self.video_width,

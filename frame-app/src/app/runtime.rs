@@ -28,10 +28,18 @@ pub fn init_app(cx: &mut App, name: impl Into<SharedString>) {
         KeyBinding::new("end", TextInputEnd, Some(FRAME_TEXT_INPUT_CONTEXT)),
         KeyBinding::new("cmd-left", TextInputHome, Some(FRAME_TEXT_INPUT_CONTEXT)),
         KeyBinding::new("cmd-right", TextInputEnd, Some(FRAME_TEXT_INPUT_CONTEXT)),
-        KeyBinding::new("cmd-a", TextInputSelectAll, Some(FRAME_TEXT_INPUT_CONTEXT)),
-        KeyBinding::new("cmd-c", TextInputCopy, Some(FRAME_TEXT_INPUT_CONTEXT)),
-        KeyBinding::new("cmd-x", TextInputCut, Some(FRAME_TEXT_INPUT_CONTEXT)),
-        KeyBinding::new("cmd-v", TextInputPaste, Some(FRAME_TEXT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "secondary-a",
+            TextInputSelectAll,
+            Some(FRAME_TEXT_INPUT_CONTEXT),
+        ),
+        KeyBinding::new("secondary-c", TextInputCopy, Some(FRAME_TEXT_INPUT_CONTEXT)),
+        KeyBinding::new("secondary-x", TextInputCut, Some(FRAME_TEXT_INPUT_CONTEXT)),
+        KeyBinding::new(
+            "secondary-v",
+            TextInputPaste,
+            Some(FRAME_TEXT_INPUT_CONTEXT),
+        ),
         KeyBinding::new("enter", TextInputCommit, Some(FRAME_TIMECODE_INPUT_CONTEXT)),
         KeyBinding::new(
             "escape",

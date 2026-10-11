@@ -16,7 +16,7 @@ pub mod spacing;
 pub mod state;
 pub mod typography;
 
-pub use color::{ColorScheme, scheme};
+pub use color::{ColorScheme, accent_preset_schemes, scheme, scheme_from_accent};
 pub use elevation::Elevation;
 pub use icons::Symbol;
 pub use typography::TypeStyle;

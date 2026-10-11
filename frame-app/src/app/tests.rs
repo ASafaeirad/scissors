@@ -602,6 +602,7 @@ mod frame_root_conversion {
                 appearance: AppearanceSettings {
                     ui_scale: ScalePreset::Percent175,
                     color_theme: crate::appearance::ColorTheme::Light,
+                    accent_color: crate::appearance::AccentColor::default(),
                 },
                 ..AppSettings::default()
             })
@@ -614,6 +615,7 @@ mod frame_root_conversion {
             AppearanceSettings {
                 ui_scale: ScalePreset::Percent175,
                 color_theme: crate::appearance::ColorTheme::Light,
+                accent_color: crate::appearance::AccentColor::default(),
             }
         );
     }
@@ -711,8 +713,52 @@ mod frame_root_conversion {
             AppearanceSettings {
                 ui_scale: ScalePreset::Percent125,
                 color_theme: crate::appearance::ColorTheme::Dark,
+                accent_color: crate::appearance::AccentColor::default(),
             }
         );
+    }
+
+    #[test]
+    fn accent_changes_persist_and_preserve_theme_and_scale() {
+        let persistence = AppPersistence::from_settings_path(test_settings_path());
+        let mut root = FrameRoot::new_with_persistence(persistence.clone());
+        root.appearance.color_theme = ColorTheme::Light;
+        root.appearance.ui_scale = ScalePreset::Percent150;
+        root.open_app_settings();
+        root.write_text_input_value(FrameTextInputKind::AccentColor, "#006A60");
+        let expected = crate::appearance::AccentColor::from_hex("#006A60").unwrap();
+        assert_eq!(root.appearance.accent_color, expected);
+        assert_eq!(root.appearance.color_theme, ColorTheme::Light);
+        assert_eq!(root.appearance.ui_scale, ScalePreset::Percent150);
+        assert_eq!(persistence.load().unwrap().appearance, root.appearance);
+        // Incomplete edits must not replace the active palette or saved settings.
+        root.write_text_input_value(FrameTextInputKind::AccentColor, "#006");
+        assert_eq!(root.appearance.accent_color, expected);
+        assert_eq!(
+            persistence.load().unwrap().appearance.accent_color,
+            expected
+        );
+        root.close_app_settings();
+        root.open_app_settings();
+        assert_eq!(root.settings_ui.accent_color_draft, "#006A60");
+        assert!(root.set_accent_color(crate::appearance::AccentColor::default()));
+        assert_eq!(root.settings_ui.accent_color_draft, "#6750A4");
+    }
+
+    #[test]
+    fn accent_save_failure_keeps_the_previous_palette() {
+        let blocker = test_settings_path();
+        std::fs::create_dir_all(blocker.parent().unwrap()).unwrap();
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let mut root = FrameRoot::new_with_persistence(AppPersistence::from_settings_path(
+            blocker.join("settings.json"),
+        ));
+        root.write_text_input_value(FrameTextInputKind::AccentColor, "#006A60");
+        assert_eq!(
+            root.appearance.accent_color,
+            crate::appearance::AccentColor::default()
+        );
+        assert!(root.settings_ui.appearance_error.is_some());
     }
 
     #[test]
@@ -732,6 +778,7 @@ mod frame_root_conversion {
             AppearanceSettings {
                 ui_scale: ScalePreset::Percent150,
                 color_theme: crate::appearance::ColorTheme::Light,
+                accent_color: crate::appearance::AccentColor::default(),
             }
         );
     }

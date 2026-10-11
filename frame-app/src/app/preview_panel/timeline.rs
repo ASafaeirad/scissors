@@ -143,7 +143,7 @@ pub(in crate::app) fn preview_timeline(
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
-    let scheme = timeline_scheme(palette);
+    let scheme = &timeline_scheme(palette, cx);
     let tracks = preview_timeline_tracks(state);
 
     m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
@@ -242,7 +242,7 @@ fn preview_timeline_track_labels(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let scheme = timeline_scheme(state.palette);
+    let scheme = &timeline_scheme(state.palette, cx);
     div()
         .flex_none()
         .w(theme::ui_rem(if state.audio_tracks.is_empty() {
@@ -348,7 +348,7 @@ fn preview_timeline_lanes(
     cx: &Context<FrameRoot>,
 ) -> impl IntoElement {
     let palette = state.palette;
-    let scheme = timeline_scheme(palette);
+    let scheme = &timeline_scheme(palette, cx);
     let enabled = preview_trim_enabled(state);
     let duration = state.playback.duration();
     let current_time = state.playback.current_time();
@@ -475,7 +475,7 @@ fn preview_timeline_lanes(
             cx.stop_propagation();
         }),
     )
-    .child(preview_timeline_ruler(duration, palette))
+    .child(preview_timeline_ruler(duration, palette, cx))
     .children(
         tracks
             .iter()
@@ -505,8 +505,12 @@ fn preview_timeline_lanes(
     )
 }
 
-fn preview_timeline_ruler(duration: f64, palette: &'static theme::ThemePalette) -> gpui::Div {
-    let scheme = timeline_scheme(palette);
+fn preview_timeline_ruler(
+    duration: f64,
+    palette: &'static theme::ThemePalette,
+    cx: &gpui::App,
+) -> gpui::Div {
+    let scheme = &timeline_scheme(palette, cx);
     div()
         .relative()
         .w_full()
@@ -535,7 +539,7 @@ fn preview_timeline_lane(
     cx: &Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
-    let scheme = timeline_scheme(palette);
+    let scheme = &timeline_scheme(palette, cx);
     let current_time = state.playback.current_time();
     let active_clip = track
         .clips
@@ -597,6 +601,7 @@ fn preview_timeline_lane(
                 Some(*clip) == active_clip,
                 &clip_name,
                 track.icon,
+                cx,
             )
             .id(format!("timeline-clip-{track_index}-{clip_index}"))
             .when(
@@ -619,7 +624,9 @@ fn preview_timeline_lane(
                     .cuts()
                     .iter()
                     .enumerate()
-                    .map(|(index, cut)| preview_timeline_cut_region(state, index, cut, enabled)),
+                    .map(|(index, cut)| {
+                        preview_timeline_cut_region(state, index, cut, enabled, cx)
+                    }),
             )
         })
         .children(edges.into_iter().map(|(target, value)| {
@@ -683,9 +690,10 @@ fn preview_timeline_clip(
     active: bool,
     name: &str,
     icon: Symbol,
+    cx: &gpui::App,
 ) -> gpui::Div {
     let palette = state.palette;
-    let scheme = timeline_scheme(palette);
+    let scheme = &timeline_scheme(palette, cx);
     let start_fraction =
         timeline_fraction_from_percent(state.playback.to_timeline_percent(clip.start));
     let end_fraction = timeline_fraction_from_percent(state.playback.to_timeline_percent(clip.end));
@@ -738,9 +746,10 @@ fn preview_timeline_cut_region(
     index: usize,
     cut: &CutRange,
     enabled: bool,
+    cx: &gpui::App,
 ) -> gpui::Stateful<gpui::Div> {
     let palette = state.palette;
-    let scheme = timeline_scheme(palette);
+    let scheme = &timeline_scheme(palette, cx);
     let start_fraction =
         timeline_fraction_from_percent(state.playback.to_timeline_percent(cut.start));
     let end_fraction = timeline_fraction_from_percent(state.playback.to_timeline_percent(cut.end));
@@ -801,7 +810,7 @@ pub(in crate::app) fn preview_cut_button(
     } else {
         preview_cut_enabled(state)
     })
-    .build(timeline_scheme(state.palette), window, cx)
+    .build(&timeline_scheme(state.palette, cx), window, cx)
     .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
         if root.toggle_preview_cut_at_playhead() {
             cx.notify();
@@ -829,7 +838,7 @@ pub(in crate::app) fn preview_timeline_handle(
     palette: &'static theme::ThemePalette,
     cx: &Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let scheme = timeline_scheme(palette);
+    let scheme = &timeline_scheme(palette, cx);
     let duration = playback.duration();
     let fraction = timeline_fraction_from_percent(playback.to_timeline_percent(value));
     let (handle_id, label): (ElementId, SharedString) = match target {
@@ -872,7 +881,7 @@ pub(in crate::app) fn preview_timeline_handle(
         .flex()
         .items_center()
         .justify_center()
-        .child(preview_timeline_handle_grip(active, palette))
+        .child(preview_timeline_handle_grip(active, palette, cx))
         .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
             cx.stop_propagation();
         })
@@ -931,8 +940,12 @@ pub(in crate::app) fn preview_timeline_handle(
     )
 }
 
-fn preview_timeline_handle_grip(active: bool, palette: &'static theme::ThemePalette) -> gpui::Div {
-    let scheme = timeline_scheme(palette);
+fn preview_timeline_handle_grip(
+    active: bool,
+    palette: &'static theme::ThemePalette,
+    cx: &gpui::App,
+) -> gpui::Div {
+    let scheme = &timeline_scheme(palette, cx);
     div()
         .w(px(2.0))
         .h(theme::ui_rem(14.0))
@@ -1036,7 +1049,7 @@ pub(in crate::app) fn preview_play_button(
     )
     .variant(m3::IconButtonVariant::Filled)
     .enabled(enabled)
-    .build(timeline_scheme(state.palette), window, cx)
+    .build(&timeline_scheme(state.palette, cx), window, cx)
     .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
         if root.toggle_preview_playback_with_context(cx) {
             cx.notify();
@@ -1092,10 +1105,13 @@ pub(in crate::app) fn timeline_keyboard_key_is_handled(key: &str) -> bool {
     )
 }
 
-fn timeline_scheme(palette: &theme::ThemePalette) -> &'static material::ColorScheme {
-    material::scheme(if palette.is_light() {
-        ColorTheme::Light
-    } else {
-        ColorTheme::Dark
-    })
+fn timeline_scheme(palette: &theme::ThemePalette, cx: &gpui::App) -> material::ColorScheme {
+    crate::app::m3::scheme(
+        if palette.is_light() {
+            ColorTheme::Light
+        } else {
+            ColorTheme::Dark
+        },
+        cx,
+    )
 }

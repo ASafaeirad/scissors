@@ -67,7 +67,7 @@ impl Menu {
     }
     pub(in crate::app) fn build(
         self,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         _window: &mut Window,
         _cx: &mut App,
     ) -> gpui::Stateful<gpui::Div> {

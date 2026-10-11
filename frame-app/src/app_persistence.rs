@@ -283,6 +283,8 @@ struct PersistedAppSettings {
     ui_scale_percent: u16,
     #[serde(deserialize_with = "deserialize_optional_string")]
     color_theme: Option<String>,
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    accent_color: Option<String>,
     max_concurrency: usize,
     default_output_directory: Option<PathBuf>,
     custom_presets: Vec<PresetDefinition>,
@@ -311,6 +313,7 @@ impl PersistedAppSettings {
             version: APP_SETTINGS_VERSION,
             ui_scale_percent: settings.appearance.ui_scale.percent(),
             color_theme: Some(settings.appearance.color_theme.persisted().to_string()),
+            accent_color: Some(settings.appearance.accent_color.hex()),
             max_concurrency: valid_max_concurrency(settings.max_concurrency),
             default_output_directory: settings.default_output_directory.clone(),
             custom_presets: normalize_custom_presets(settings.custom_presets.clone()),
@@ -326,6 +329,11 @@ impl PersistedAppSettings {
             appearance: AppearanceSettings {
                 ui_scale: ScalePreset::from_percent(self.ui_scale_percent).unwrap_or_default(),
                 color_theme: ColorTheme::from_persisted(self.color_theme.as_deref()),
+                accent_color: self
+                    .accent_color
+                    .as_deref()
+                    .and_then(crate::appearance::AccentColor::from_hex)
+                    .unwrap_or_default(),
             },
             max_concurrency: valid_max_concurrency(self.max_concurrency),
             default_output_directory: self.default_output_directory,
@@ -344,6 +352,7 @@ impl Default for PersistedAppSettings {
             version: APP_SETTINGS_VERSION,
             ui_scale_percent: ScalePreset::Percent100.percent(),
             color_theme: None,
+            accent_color: None,
             max_concurrency: DEFAULT_MAX_CONCURRENCY,
             default_output_directory: None,
             custom_presets: Vec::new(),
@@ -646,6 +655,7 @@ mod tests {
             appearance: AppearanceSettings {
                 ui_scale: ScalePreset::Percent125,
                 color_theme: ColorTheme::Light,
+                accent_color: crate::appearance::AccentColor::default(),
             },
             max_concurrency: 4,
             default_output_directory: Some(PathBuf::from("/tmp/frame-output")),
@@ -685,6 +695,7 @@ mod tests {
                 appearance: AppearanceSettings {
                     ui_scale,
                     color_theme: ColorTheme::Dark,
+                    accent_color: crate::appearance::AccentColor::default(),
                 },
                 ..AppSettings::default()
             };
@@ -791,12 +802,37 @@ mod tests {
     }
 
     #[test]
+    fn custom_accent_round_trips_and_invalid_or_missing_values_use_purple() {
+        let mut settings = AppSettings::default();
+        settings.appearance.accent_color =
+            crate::appearance::AccentColor::from_hex("#006A60").unwrap();
+        let persisted = PersistedAppSettings::from_app_settings(&settings);
+        let json = serde_json::to_value(persisted).unwrap();
+        assert_eq!(json["accentColor"], "#006A60");
+        let loaded: PersistedAppSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(loaded.into_app_settings().appearance, settings.appearance);
+        for json in [
+            r"{}",
+            r##"{"accentColor":"#xyzxyz"}"##,
+            r#"{"accentColor":42}"#,
+            r#"{"accentColor":null}"#,
+        ] {
+            let persisted: PersistedAppSettings = serde_json::from_str(json).unwrap();
+            assert_eq!(
+                persisted.into_app_settings().appearance.accent_color,
+                crate::appearance::AccentColor::default()
+            );
+        }
+    }
+
+    #[test]
     fn every_supported_color_theme_round_trips() {
         for color_theme in ColorTheme::ALL {
             let settings = AppSettings {
                 appearance: AppearanceSettings {
                     ui_scale: ScalePreset::Percent100,
                     color_theme,
+                    accent_color: crate::appearance::AccentColor::default(),
                 },
                 ..AppSettings::default()
             };

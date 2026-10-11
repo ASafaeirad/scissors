@@ -104,7 +104,7 @@ impl Radio {
 
     pub(in crate::app) fn build(
         self,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::Stateful<gpui::Div> {
@@ -182,7 +182,7 @@ impl RadioItem {
 
     pub(in crate::app) fn build(
         self,
-        scheme: &'static ColorScheme,
+        scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::Stateful<gpui::Div> {

@@ -29,7 +29,7 @@ pub(super) struct ProjectRenderState {
 }
 
 impl FrameRoot {
-    pub(super) fn project_render_state(&self) -> Option<ProjectRenderState> {
+    pub(super) fn project_render_state(&self, cx: &gpui::App) -> Option<ProjectRenderState> {
         if !self.project.enabled {
             return None;
         }
@@ -51,7 +51,7 @@ impl FrameRoot {
                 .map(|file| file.id.clone())
                 .collect(),
             timeline: super::project_timeline::ProjectTimelineState {
-                scheme: crate::material::scheme(self.appearance.color_theme),
+                scheme: super::m3::scheme(self.appearance.color_theme, cx),
                 clips: self.project.clips.clone(),
                 sources: self.project_sources(),
                 files: self.file_queue.files().to_vec(),

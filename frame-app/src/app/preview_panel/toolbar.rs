@@ -38,7 +38,7 @@ pub(in crate::app) fn preview_toolbar(
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
-    let scheme = toolbar_scheme(palette);
+    let scheme = &toolbar_scheme(palette, cx);
     let transform_enabled = preview_visual_controls_enabled(state);
     let crop_enabled = transform_enabled && state.crop.has_crop_dimensions;
     let overlay_enabled = transform_enabled && state.availability.overlay_available;
@@ -159,7 +159,7 @@ pub(in crate::app) fn preview_zoom_toolbar(
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = state.palette;
-    let scheme = toolbar_scheme(palette);
+    let scheme = &toolbar_scheme(palette, cx);
     let enabled = preview_visual_controls_enabled(state);
 
     div()
@@ -325,7 +325,7 @@ fn preview_tool_button_inner(
         .aria_disabled(!enabled)
         .child(
             button
-                .build(toolbar_scheme(palette), window, cx)
+                .build(&toolbar_scheme(palette, cx), window, cx)
                 .tab_stop(false),
         );
     FrameTooltip {
@@ -338,10 +338,13 @@ fn preview_tool_button_inner(
     .for_control(button, focus, enabled, palette, window, cx)
 }
 
-fn toolbar_scheme(palette: &theme::ThemePalette) -> &'static material::ColorScheme {
-    material::scheme(if palette.is_light() {
-        crate::appearance::ColorTheme::Light
-    } else {
-        crate::appearance::ColorTheme::Dark
-    })
+fn toolbar_scheme(palette: &theme::ThemePalette, cx: &gpui::App) -> material::ColorScheme {
+    crate::app::m3::scheme(
+        if palette.is_light() {
+            crate::appearance::ColorTheme::Light
+        } else {
+            crate::appearance::ColorTheme::Dark
+        },
+        cx,
+    )
 }
