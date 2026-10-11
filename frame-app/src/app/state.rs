@@ -9,10 +9,16 @@ impl FrameRoot {
     #[must_use]
     pub fn new_with_platform_persistence() -> Self {
         let notifier = AppNotifier::system();
-        match AppPersistence::platform() {
+        let mut root = match AppPersistence::platform() {
             Ok(persistence) => Self::new_with_persistence_and_notifier(persistence, notifier),
             Err(_) => Self::new_inner(None, AppSettings::default(), notifier),
+        };
+        if visual_fixture_from_env_value(std::env::var("FRAME_GPUI_VISUAL_FIXTURE").ok().as_deref())
+            .is_none()
+        {
+            root.project.enabled = true;
         }
+        root
     }
 
     pub fn load_runtime_capabilities(&mut self, cx: &mut Context<Self>) {

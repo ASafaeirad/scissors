@@ -275,30 +275,93 @@ pub(super) fn project_timeline(
                         .child(format!("{:.1}s", view.time(f64::from(step) / 4.0)))
                 })),
         )
-        .when(clips.is_empty(), |panel| {
-            panel.child(
-                div()
-                    .p(theme::ui_rem(24.0))
-                    .text_color(color(scheme.on_surface_variant))
-                    .m3_type(typography::BODY_MEDIUM)
-                    .child("Drag media here to start editing, or use Add to timeline."),
-            )
-        })
-        .children(clips.iter().zip(sources).filter_map(|(placement, source)| {
-            let file = files.iter().find(|file| file.id == placement.id)?;
-            Some(track_row(
-                placement,
-                source,
-                file,
-                selected.as_deref() == Some(&placement.id),
-                view,
-                current,
-                enabled,
-                scheme,
-                window,
-                cx,
-            ))
+        .children([false, true].into_iter().flat_map(|audio| {
+            let rows: Vec<_> = clips
+                .iter()
+                .zip(sources)
+                .filter(|(placement, _)| (placement.kind == SourceKind::Audio) == audio)
+                .filter_map(|(placement, source)| {
+                    let file = files.iter().find(|file| file.id == placement.id)?;
+                    Some(track_row(
+                        placement,
+                        source,
+                        file,
+                        selected.as_deref() == Some(&placement.id),
+                        view,
+                        current,
+                        enabled,
+                        scheme,
+                        window,
+                        cx,
+                    ))
+                })
+                .collect();
+            if rows.is_empty() {
+                vec![empty_track_row(audio, view, current, scheme, cx)]
+            } else {
+                rows
+            }
         }))
+}
+
+fn empty_track_row(
+    audio: bool,
+    view: TimelineView,
+    current: f64,
+    scheme: &'static material::ColorScheme,
+    cx: &Context<FrameRoot>,
+) -> gpui::Div {
+    let (id, label, symbol) = if audio {
+        ("project-empty-audio", "Audio", Symbol::MusicNote)
+    } else {
+        ("project-empty-video", "Video", Symbol::Movie)
+    };
+    div()
+        .flex()
+        .items_center()
+        .gap(theme::ui_rem(12.0))
+        .child(
+            div()
+                .w(theme::ui_rem(200.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(theme::ui_rem(8.0))
+                .px(theme::ui_rem(12.0))
+                .m3_type(typography::LABEL_LARGE)
+                .child(m3::m3_icon(symbol, false, 18.0, color(scheme.on_surface)))
+                .child(label),
+        )
+        .child(
+            div()
+                .id(id)
+                .debug_selector(move || id.to_string())
+                .aria_label(format!("Empty {label} track"))
+                .flex_1()
+                .min_w_0()
+                .h(theme::ui_rem(40.0))
+                .relative()
+                .overflow_hidden()
+                .rounded(theme::ui_rem(shape::CORNER_SMALL))
+                .bg(color(scheme.surface_container_highest))
+                .cursor_pointer()
+                .on_click(cx.listener(|root, event: &gpui::ClickEvent, _, cx| {
+                    if let gpui::ClickEvent::Mouse(event) = event
+                        && root.seek_project_timeline(event.up.position, cx)
+                    {
+                        cx.notify();
+                    }
+                }))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .w(theme::ui_rem(2.0))
+                        .left(relative(view.fraction(current)))
+                        .bg(color(scheme.on_surface)),
+                ),
+        )
 }
 
 fn project_timeline_toolbar(
@@ -307,7 +370,12 @@ fn project_timeline_toolbar(
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let scheme = state.scheme;
-    let count = state.clips.len();
+    let audio_count = state
+        .clips
+        .iter()
+        .filter(|clip| clip.kind == SourceKind::Audio)
+        .count();
+    let count = audio_count.max(1) + (state.clips.len() - audio_count).max(1);
     div()
         .w_full()
         .min_w_0()
@@ -326,9 +394,7 @@ fn project_timeline_toolbar(
                 .truncate()
                 .m3_type(typography::BODY_SMALL)
                 .text_color(color(scheme.on_surface_variant))
-                .child(format!(
-                    "{count} tracks • Ctrl+wheel or pinch to zoom. Shift+wheel to pan."
-                )),
+                .child(format!("{count} tracks")),
         )
         .children(
             [
@@ -709,6 +775,64 @@ mod tests {
                 project_timeline(&state.timeline, &self.focus, window, cx)
             })
         }
+    }
+
+    #[test]
+    fn video_and_audio_rows_remain_after_their_last_clips_are_removed() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|_, cx| {
+            let root = cx.new(|_| {
+                let mut root = FrameRoot::new();
+                root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                let ids: Vec<_> = root
+                    .project
+                    .clips
+                    .iter()
+                    .map(|clip| clip.id.clone())
+                    .collect();
+                for id in ids {
+                    assert!(root.remove_project_clip(&id));
+                }
+                root
+            });
+            TimelineTestView {
+                root,
+                focus: cx.focus_handle(),
+            }
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("project-empty-video").is_some());
+        assert!(cx.debug_bounds("project-empty-audio").is_some());
+
+        root.update(cx, |root, _| {
+            assert!(root.add_library_clip("library-video"));
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("project-empty-video").is_none());
+        assert!(cx.debug_bounds("project-empty-audio").is_some());
+
+        root.update(cx, |root, _| {
+            assert!(root.add_library_clip("library-audio"));
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("project-empty-video").is_none());
+        assert!(cx.debug_bounds("project-empty-audio").is_none());
+
+        root.update(cx, |root, _| {
+            let ids: Vec<_> = root
+                .project
+                .clips
+                .iter()
+                .map(|clip| clip.id.clone())
+                .collect();
+            for id in ids {
+                assert!(root.remove_project_clip(&id));
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("project-empty-video").is_some());
+        assert!(cx.debug_bounds("project-empty-audio").is_some());
     }
 
     #[test]
