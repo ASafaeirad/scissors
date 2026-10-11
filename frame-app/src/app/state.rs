@@ -129,6 +129,7 @@ impl FrameRoot {
             update_ui: UpdateUiState::default(),
             m3_gallery: None,
             workspace_ui: workspace::WorkspaceState::default(),
+            media_assets: media_assets::MediaAssetsState::default(),
             export_ui: export_dialog::ExportUiState::default(),
         };
 

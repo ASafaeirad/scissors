@@ -223,6 +223,7 @@ impl FrameRoot {
         if removed {
             self.project.clips.retain(|clip| clip.id != id);
             self.source_metadata.remove(id);
+            self.media_assets.thumbnails.remove(id);
             self.conversion_events.remove_logs(id);
             self.refresh_processing_state_from_queue();
         }

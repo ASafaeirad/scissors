@@ -1,3 +1,4 @@
+use super::media_assets::MediaAssetsProps;
 use super::{
     ActiveView, ClickEvent, Context, FileItem, FileQueue, FrameRoot, InteractiveElement,
     ParentElement, PreviewPanelProps, SettingsRenderState, SettingsTab, StatefulInteractiveElement,
@@ -10,7 +11,7 @@ use super::{
     settings_panel::settings_panel,
 };
 use crate::material::{self, ColorScheme, Symbol, shape, spacing, typography};
-use gpui::{AppContext, prelude::FluentBuilder};
+use gpui::{AppContext, StyledImage, prelude::FluentBuilder};
 
 #[cfg(test)]
 mod drag_drop_tests {
@@ -37,11 +38,16 @@ mod drag_drop_tests {
                             false,
                             Some(&project),
                             project.timeline.scheme,
+                            MediaAssetsProps {
+                                state: &root.media_assets,
+                                delete_enabled: !root.is_processing,
+                            },
                             window,
                             cx,
                         )
                         .debug_selector(|| "drag-source".to_string())
-                        .w(theme::ui_rem(180.0)),
+                        .w(theme::ui_rem(180.0))
+                        .ml(theme::ui_rem(220.0)),
                     )
                     .child(super::super::project_timeline::project_timeline(
                         &project.timeline,
@@ -51,6 +57,112 @@ mod drag_drop_tests {
                     ))
             })
         }
+    }
+
+    #[test]
+    fn media_menu_adds_deletes_and_restores_keyboard_focus() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|_, cx| {
+            let root = cx.new(|_| {
+                let mut root = FrameRoot::new();
+                root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                root
+            });
+            MediaTimelineTestView {
+                root,
+                focus: cx.focus_handle(),
+            }
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let trigger_bounds = cx.debug_bounds("library-menu-library-video").unwrap();
+        let trigger = trigger_bounds.center();
+        cx.simulate_click(trigger, Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear());
+        root.read_with(cx, |root, _| assert!(root.media_assets.menu.is_some()));
+        let menu_bounds = cx.debug_bounds("library-context-library-video").unwrap();
+        let gap = cx.update(|window, _| theme::ui_rem(4.0).to_pixels(window.rem_size()));
+        assert!((menu_bounds.right() - trigger_bounds.right()).abs() < px(1.0));
+        assert!((menu_bounds.top() - trigger_bounds.bottom() - gap).abs() < px(1.0));
+        let count = root.read_with(cx, |root, _| root.project.clips.len());
+        let add = cx
+            .debug_bounds("library-context-library-video-0")
+            .unwrap()
+            .center();
+        cx.simulate_click(add, Modifiers::default());
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.project.clips.len(), count + 1);
+            assert!(root.media_assets.menu.is_none());
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_click(trigger, Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let focus = root.read_with(cx, |root, _| {
+            root.media_assets.menu.as_ref().unwrap().trigger.clone()
+        });
+        cx.simulate_keystrokes("escape");
+        root.read_with(cx, |root, _| assert!(root.media_assets.menu.is_none()));
+        cx.update(|window, _| assert!(focus.is_focused(window)));
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_keystrokes("enter");
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_keystrokes("down");
+        cx.simulate_keystrokes("enter");
+        root.read_with(cx, |root, _| {
+            assert!(root.project.library.file_by_id("library-video").is_none());
+            assert_eq!(root.project.clips.len(), count + 1);
+            assert!(root.media_assets.menu.is_none());
+        });
+    }
+
+    struct LibraryTestView {
+        root: Entity<FrameRoot>,
+    }
+
+    impl Render for LibraryTestView {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.root.update(cx, |root, cx| {
+                library_panel(
+                    &root.project.library,
+                    root.workspace_ui.filter,
+                    MediaAssetsProps {
+                        state: &root.media_assets,
+                        delete_enabled: true,
+                    },
+                    None,
+                    crate::material::scheme(crate::appearance::ColorTheme::Dark),
+                    window,
+                    cx,
+                )
+            })
+        }
+    }
+
+    #[test]
+    fn drop_zone_only_appears_when_the_library_is_empty() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|_, cx| LibraryTestView {
+            root: cx.new(|_| {
+                let mut root = FrameRoot::new();
+                root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                root
+            }),
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("library-drop-zone").is_none());
+        root.update(cx, |root, cx| {
+            root.workspace_ui.filter = 3;
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("library-drop-zone").is_none());
+        root.update(cx, |root, cx| {
+            root.project.library = FileQueue::new();
+            cx.notify();
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("library-drop-zone").is_some());
     }
 
     #[test]
@@ -148,9 +260,11 @@ const FILTERS: [&str; 4] = ["All", "Video", "Audio", "Images"];
 
 #[expect(
     clippy::too_many_lines,
-    reason = "The workspace composes navigation, track properties, preview, and project controls in layout order."
+    clippy::too_many_arguments,
+    reason = "The workspace composes navigation, track properties, preview, and project controls from explicit render inputs."
 )]
 pub(super) fn workspace_view(
+    assets: MediaAssetsProps<'_>,
     file_queue: &FileQueue,
     file_list_scroll_handle: &UniformListScrollHandle,
     settings: &SettingsRenderState<'_>,
@@ -202,6 +316,7 @@ pub(super) fn workspace_view(
                 file_queue
             },
             state.filter,
+            assets,
             project,
             scheme,
             window,
@@ -516,6 +631,7 @@ fn media_symbol(file: &FileItem) -> Symbol {
 fn library_panel(
     queue: &FileQueue,
     filter: usize,
+    assets: MediaAssetsProps<'_>,
     project: Option<&super::project::ProjectRenderState>,
     scheme: &'static ColorScheme,
     window: &mut Window,
@@ -553,6 +669,7 @@ fn library_panel(
                 queue.selected_file_id() == Some(file.id.as_str()),
                 project,
                 scheme,
+                assets,
                 window,
                 cx,
             )
@@ -614,32 +731,35 @@ fn library_panel(
                     .gap(theme::ui_rem(12.0))
                     .children(cards),
             )
-            .child(
-                div()
-                    .flex_none()
-                    .min_w_0()
-                    .border_1()
-                    .border_dashed()
-                    .border_color(color(scheme.outline))
-                    .rounded(theme::ui_rem(shape::CORNER_LARGE))
-                    .p(theme::ui_rem(16.0))
-                    .flex()
-                    .items_center()
-                    .gap(theme::ui_rem(12.0))
-                    .text_color(color(scheme.on_surface_variant))
-                    .child(m3::m3_icon(
-                        Symbol::Upload,
-                        false,
-                        24.0,
-                        color(scheme.on_surface_variant),
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child("Drop video, audio, images or GIFs here"),
-                    ),
-            ),
+            .when(queue.files().is_empty(), |panel| {
+                panel.child(
+                    div()
+                        .flex_none()
+                        .min_w_0()
+                        .border_1()
+                        .debug_selector(|| "library-drop-zone".to_string())
+                        .border_dashed()
+                        .border_color(color(scheme.outline))
+                        .rounded(theme::ui_rem(shape::CORNER_LARGE))
+                        .p(theme::ui_rem(16.0))
+                        .flex()
+                        .items_center()
+                        .gap(theme::ui_rem(12.0))
+                        .text_color(color(scheme.on_surface_variant))
+                        .child(m3::m3_icon(
+                            Symbol::Upload,
+                            false,
+                            24.0,
+                            color(scheme.on_surface_variant),
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child("Drop video, audio, images or GIFs here"),
+                        ),
+                )
+            }),
     )
 }
 
@@ -652,11 +772,13 @@ fn media_card(
     selected: bool,
     project: Option<&super::project::ProjectRenderState>,
     scheme: &'static ColorScheme,
+    assets: MediaAssetsProps<'_>,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
     let id = file.id.clone();
     let symbol = media_symbol(file);
+    let thumbnail = assets.state.thumbnails.get(&id).cloned();
     let preview = div()
         .id(format!("library-media-{id}"))
         .flex()
@@ -701,12 +823,22 @@ fn media_card(
                 .when(selected, |card| {
                     card.border_2().border_color(color(scheme.primary))
                 })
-                .child(m3::m3_icon(
-                    symbol,
-                    false,
-                    28.0,
-                    color(scheme.on_surface_variant),
-                ))
+                .overflow_hidden()
+                .when_some(thumbnail.clone(), |card, thumbnail| {
+                    card.child(
+                        gpui::img(thumbnail)
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Cover),
+                    )
+                })
+                .when(thumbnail.is_none(), |card| {
+                    card.child(m3::m3_icon(
+                        symbol,
+                        false,
+                        28.0,
+                        color(scheme.on_surface_variant),
+                    ))
+                })
                 .child(
                     m3::m3_surface(scheme.surface_container_lowest, shape::CORNER_EXTRA_SMALL)
                         .absolute()
@@ -727,6 +859,7 @@ fn media_card(
         );
     div()
         .id(format!("library-card-{}", file.id))
+        .group(format!("library-card-{}", file.id))
         .relative()
         .min_w_0()
         .child(preview.when(
@@ -748,25 +881,6 @@ fn media_card(
         ))
         .when_some(project, |card, project| {
             card.child(
-                m3::Button::new(
-                    format!("library-add-{}", file.id),
-                    "Add to timeline",
-                    m3::ButtonVariant::Tonal,
-                )
-                .size(m3::ButtonSize::ExtraSmall)
-                .icon(Symbol::Add)
-                .enabled(project.ready_sources.contains(&file.id) && project.timeline.enabled)
-                .build(scheme, window, cx)
-                .on_click(cx.listener({
-                    let id = file.id.clone();
-                    move |root, _, _, cx| {
-                        if root.add_library_clip(&id) {
-                            cx.notify();
-                        }
-                    }
-                })),
-            )
-            .child(
                 div()
                     .m3_type(typography::LABEL_SMALL)
                     .text_color(color(scheme.on_surface_variant))
@@ -781,48 +895,190 @@ fn media_card(
                     )),
             )
         })
-        .child(remove_library_button(file, scheme, window, cx))
+        .child(library_asset_actions(
+            file, project, scheme, assets, window, cx,
+        ))
 }
 
-fn remove_library_button(
+#[expect(
+    clippy::too_many_lines,
+    reason = "The asset action trigger and its anchored menu share focus and dismissal handlers."
+)]
+fn library_asset_actions(
     file: &FileItem,
+    project: Option<&super::project::ProjectRenderState>,
     scheme: &'static ColorScheme,
+    assets: MediaAssetsProps<'_>,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
+    let trigger = window
+        .use_keyed_state(format!("library-menu-focus-{}", file.id), cx, |_, cx| {
+            cx.focus_handle()
+        })
+        .read(cx)
+        .clone();
+    let menu = assets
+        .state
+        .menu
+        .clone()
+        .filter(|menu| menu.source_id == file.id);
+    let can_add = project.is_some_and(|project| {
+        project.ready_sources.contains(&file.id) && project.timeline.enabled
+    });
+    let can_delete = assets.delete_enabled;
     let id = file.id.clone();
+    let click_trigger = trigger.clone();
+    let key_trigger = trigger.clone();
     let key_id = id.clone();
-    m3::IconButton::new(
-        format!("library-remove-{id}"),
-        Symbol::Close,
-        format!("Remove {} from library", file.name),
+    let button = m3::IconButton::new(
+        format!("library-menu-{id}"),
+        Symbol::MoreVert,
+        format!("Actions for {}", file.name),
     )
     .variant(m3::IconButtonVariant::Tonal)
+    .size(m3::IconButtonSize::ExtraSmall)
+    .focus(&trigger)
     .build(scheme, window, cx)
-    .absolute()
-    .top(theme::ui_rem(4.0))
-    .right(theme::ui_rem(4.0))
-    .on_click(cx.listener(move |root, _, _, cx| {
-        if if root.project.enabled {
-            root.remove_library_source(&id)
-        } else {
-            root.remove_file_from_queue(&id)
-        } {
+    .debug_selector({
+        let id = file.id.clone();
+        move || format!("library-menu-{id}")
+    })
+    .aria_expanded(menu.is_some())
+    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    .on_click(cx.listener(move |root, _, window, cx| {
+        cx.stop_propagation();
+        root.toggle_asset_menu(&id, click_trigger.clone(), can_add, window, cx);
+    }))
+    .on_key_down(
+        cx.listener(move |root, event: &gpui::KeyDownEvent, window, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space" | "down") {
+                cx.stop_propagation();
+                root.toggle_asset_menu(&key_id, key_trigger.clone(), can_add, window, cx);
+            }
+        }),
+    );
+    div()
+        .id(format!("library-actions-{}", file.id))
+        .size(theme::ui_rem(32.0))
+        .absolute()
+        .top(theme::ui_rem(4.0))
+        .right(theme::ui_rem(4.0))
+        .child(
+            div()
+                .id(format!("library-actions-trigger-{}", file.id))
+                .opacity(if menu.is_some() { 1.0 } else { 0.0 })
+                .group_hover(format!("library-card-{}", file.id), |style| {
+                    style.opacity(1.0)
+                })
+                .contains_focus(|style| style.opacity(1.0))
+                .child(button),
+        )
+        .when_some(menu, |actions, menu| {
+            let id = file.id.clone();
+            let action_menu = m3::Menu::new(
+                format!("library-context-{}", file.id),
+                vec![
+                    m3::MenuItem::new("Add to timeline", Symbol::Add)
+                        .enabled(can_add)
+                        .focus(&menu.focuses[0]),
+                    m3::MenuItem::new("Delete", Symbol::Delete)
+                        .enabled(can_delete)
+                        .focus(&menu.focuses[1]),
+                ],
+            )
+            .on_select(cx.listener(move |root, index: &usize, window, cx| {
+                root.dismiss_asset_menu(true, window, cx);
+                if *index == 0 {
+                    root.add_library_clip(&id);
+                } else if root.project.enabled {
+                    root.remove_library_source(&id);
+                } else {
+                    root.remove_file_from_queue(&id);
+                }
+                cx.notify();
+            }))
+            .build(scheme, window, cx)
+            .debug_selector({
+                let id = file.id.clone();
+                move || format!("library-context-{id}")
+            })
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down_out(cx.listener(|root, _, window, cx| {
+                root.dismiss_asset_menu(false, window, cx);
+            }))
+            .on_key_down(cx.listener(
+                |root, event: &gpui::KeyDownEvent, window, cx| {
+                    if matches!(event.keystroke.key.as_str(), "escape" | "tab") {
+                        if event.keystroke.key == "escape" {
+                            cx.stop_propagation();
+                        }
+                        root.dismiss_asset_menu(true, window, cx);
+                    }
+                },
+            ));
+            // A zero-size anchor keeps the menu out of the trigger's layout.
+            // Its origin is the button's bottom-right corner plus a 4px gap.
+            actions.child(
+                div()
+                    .absolute()
+                    .size_0()
+                    .right_0()
+                    .top(theme::ui_rem(36.0))
+                    .child(
+                        gpui::deferred(
+                            gpui::anchored()
+                                .anchor(gpui::Anchor::TopRight)
+                                .snap_to_window()
+                                .child(action_menu),
+                        )
+                        .with_priority(20),
+                    ),
+            )
+        })
+}
+
+impl FrameRoot {
+    fn toggle_asset_menu(
+        &mut self,
+        id: &str,
+        trigger: gpui::FocusHandle,
+        can_add: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .media_assets
+            .menu
+            .as_ref()
+            .is_some_and(|menu| menu.source_id == id)
+        {
+            self.dismiss_asset_menu(true, window, cx);
+            return;
+        }
+        let focuses = [cx.focus_handle(), cx.focus_handle()];
+        focuses[usize::from(!can_add)].focus(window, cx);
+        self.media_assets.menu = Some(super::media_assets::AssetMenu {
+            source_id: id.to_string(),
+            focuses,
+            trigger,
+        });
+        cx.notify();
+    }
+
+    fn dismiss_asset_menu(
+        &mut self,
+        restore_focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(menu) = self.media_assets.menu.take() {
+            if restore_focus {
+                menu.trigger.focus(window, cx);
+            }
             cx.notify();
         }
-    }))
-    .on_key_down(cx.listener(move |root, event: &gpui::KeyDownEvent, _, cx| {
-        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-            cx.stop_propagation();
-            if if root.project.enabled {
-                root.remove_library_source(&key_id)
-            } else {
-                root.remove_file_from_queue(&key_id)
-            } {
-                cx.notify();
-            }
-        }
-    }))
+    }
 }
 
 pub(super) fn welcome_view(

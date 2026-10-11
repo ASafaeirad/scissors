@@ -4,9 +4,9 @@
 
 use super::{
     Button, ButtonVariant, Chip, ChipKind, ColorScheme, Dialog, IconButton, IconButtonVariant,
-    LinearProgress, M3Text, NavigationItem, NavigationRail, RadioItem, SegmentedButton, SelectCard,
-    Slider, Switch, Symbol, TextField, ToolbarColor, ToolbarVariant, color, div, m3_icon,
-    m3_surface, theme, toolbar,
+    LinearProgress, M3Text, Menu, MenuItem, NavigationItem, NavigationRail, RadioItem,
+    SegmentedButton, SelectCard, Slider, Switch, Symbol, TextField, ToolbarColor, ToolbarVariant,
+    color, div, m3_icon, m3_surface, theme, toolbar,
 };
 use crate::app::{
     Context, FrameRoot, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled,
@@ -239,6 +239,7 @@ impl FrameRoot {
             })
             .map(|(index, (icon, name, badge))| {
                 div()
+                    .group(format!("m3-media-{index}"))
                     .flex()
                     .flex_col()
                     .gap(theme::ui_rem(6.0))
@@ -276,12 +277,18 @@ impl FrameRoot {
                                     .right(theme::ui_rem(2.0))
                                     .child(
                                         IconButton::new(
-                                            format!("m3-media-add-{index}"),
-                                            Symbol::Add,
-                                            "Add to timeline",
+                                            format!("m3-media-actions-{index}"),
+                                            Symbol::MoreVert,
+                                            "Media actions",
                                         )
-                                        .variant(IconButtonVariant::Filled)
-                                        .build(scheme, window, cx),
+                                        .variant(IconButtonVariant::Tonal)
+                                        .size(super::IconButtonSize::ExtraSmall)
+                                        .build(scheme, window, cx)
+                                        .opacity(0.0)
+                                        .group_hover(format!("m3-media-{index}"), |style| {
+                                            style.opacity(1.0)
+                                        })
+                                        .focus_visible(|style| style.opacity(1.0)),
                                     ),
                             ),
                     )
@@ -320,28 +327,14 @@ impl FrameRoot {
                     .children(media),
             )
             .child(
-                div()
-                    .border_1()
-                    .border_dashed()
-                    .border_color(color(scheme.outline))
-                    .rounded(theme::ui_rem(shape::CORNER_LARGE))
-                    .p(theme::ui_rem(16.0))
-                    .flex()
-                    .items_center()
-                    .gap(theme::ui_rem(12.0))
-                    .text_color(color(scheme.on_surface_variant))
-                    .child(m3_icon(
-                        Symbol::Upload,
-                        false,
-                        24.0,
-                        color(scheme.on_surface_variant),
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child("Drop video, audio, images or GIFs here"),
-                    ),
+                Menu::new(
+                    "m3-media-menu",
+                    vec![
+                        MenuItem::new("Add to timeline", Symbol::Add),
+                        MenuItem::new("Delete", Symbol::Delete),
+                    ],
+                )
+                .build(scheme, window, cx),
             )
     }
 

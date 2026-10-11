@@ -477,6 +477,11 @@ impl Render for FrameRoot {
                     available_filters: &self.available_filters,
                 };
                 content.child(workspace_view(
+                    super::media_assets::MediaAssetsProps {
+                        state: &self.media_assets,
+                        delete_enabled: !self.update_installation_in_progress()
+                            && (!self.project.enabled || !self.is_processing),
+                    },
                     &self.file_queue,
                     &self.file_list_scroll_handle,
                     &settings,

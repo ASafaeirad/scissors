@@ -51,10 +51,27 @@ impl FrameRoot {
 
         cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async move { probe_source_metadata(&file_path) })
+                .background_spawn(async move {
+                    let metadata = probe_source_metadata(&file_path);
+                    let thumbnail = metadata
+                        .as_ref()
+                        .ok()
+                        .filter(|metadata| metadata.media_kind == Some(SourceKind::Video))
+                        .and_then(|_| super::media_assets::video_thumbnail(&file_path));
+                    (metadata, thumbnail)
+                })
                 .await;
 
             this.update(cx, |root, cx| {
+                let (result, thumbnail) = result;
+                if let Some(thumbnail) = thumbnail
+                    && (root.project.library.file_by_id(&file_id).is_some()
+                        || root.file_queue.file_by_id(&file_id).is_some())
+                {
+                    root.media_assets
+                        .thumbnails
+                        .insert(file_id.clone(), thumbnail);
+                }
                 match result {
                     Ok(metadata) => {
                         if normalize_selected_config

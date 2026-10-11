@@ -12,6 +12,7 @@ mod input;
 mod logs_panel;
 mod logs_state;
 mod m3;
+mod media_assets;
 mod metadata;
 mod motion;
 mod preview_actions;
@@ -298,6 +299,7 @@ pub struct FrameRoot {
     /// Set only by the `m3-gallery` visual fixture.
     m3_gallery: Option<m3::M3GalleryState>,
     workspace_ui: workspace::WorkspaceState,
+    media_assets: media_assets::MediaAssetsState,
     export_ui: export_dialog::ExportUiState,
 }
 

@@ -226,7 +226,11 @@ impl FrameRoot {
             return false;
         }
         // Instances keep their own path and metadata when a library entry is removed.
-        self.project.library.remove_file(id).is_some()
+        let removed = self.project.library.remove_file(id).is_some();
+        if removed {
+            self.media_assets.thumbnails.remove(id);
+        }
+        removed
     }
 
     pub(super) fn remove_project_clip(&mut self, id: &str) -> bool {
