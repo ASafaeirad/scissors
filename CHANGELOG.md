@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **HEVC Apple Compatibility:** Tags HEVC video as `hvc1` in MP4 and MOV outputs, including stream copies of HEVC sources, so macOS Quick Look, QuickTime, and AVFoundation can open them. Resolves [#211](https://github.com/66HEX/frame/issues/211).
+- **Preset Audio Selection:** Applying a preset that moves a file from a format without audio (GIF or image) back to one with audio selects the source's first audio track again instead of exporting silence. Audio that was turned off for an audio-capable format stays off. Together with the default audio selection from 0.33.1, resolves [#166](https://github.com/66HEX/frame/issues/166).
 
 ## [0.33.1] - 2026-08-27
 

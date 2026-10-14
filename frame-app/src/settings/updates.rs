@@ -403,6 +403,15 @@ pub fn apply_preset(
     config.subtitle_burn_path = subtitle_burn_path;
     config.cut_segments = cut_segments;
     normalize_output_config(config, metadata);
+    // A format without audio (GIF, images) clears the track selection. Moving back to a format
+    // with audio restores the default first track rather than exporting silence.
+    if !container_supports_audio(&before.container)
+        && container_supports_audio(&config.container)
+        && config.selected_audio_tracks.is_empty()
+        && let Some(first_track) = metadata.and_then(|metadata| metadata.audio_tracks.first())
+    {
+        config.selected_audio_tracks.push(first_track.index);
+    }
 
     before != *config
 }
