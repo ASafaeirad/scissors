@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Preview Control Tooltips:** Adds tooltips to preview tools, zoom, and playback controls on pointer hover and keyboard focus. Escape dismisses the tooltip. Resolves [#176](https://github.com/66HEX/frame/issues/176).
 - **Removed Segments:** The preview timeline can mark segments to drop from the export. The scissors button removes a segment starting at the playhead, or restores the segment under it. Segments can be dragged to a new position, and their edges can be dragged or adjusted from the keyboard. Preview playback skips removed segments, and FFmpeg drops them while re-encoding without leaving gaps.
 - **4:3 Crop Ratio:** Adds a 4:3 preset to the preview crop ratios and shows the crop's output size in pixels above the crop toolbar while editing. Resolves [#167](https://github.com/66HEX/frame/issues/167).
+- **SVT-AV1 Preset Numbers:** The export dialog's encoding speed readout and advanced summary show SVT-AV1's own preset number (for example, Slower · preset 4) next to Frame's speed name. Resolves [#200](https://github.com/66HEX/frame/issues/200).
 
 ### Fixed
 

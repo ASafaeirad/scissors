@@ -375,6 +375,13 @@ pub(super) fn speed_presets(codec: &str) -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+/// The encoder's own name for a speed preset when Frame's label hides it. SVT-AV1 takes
+/// numbered presets, which its users know better than the x264-style names.
+pub(super) fn native_speed_preset(codec: &str, preset: &str) -> Option<String> {
+    frame_core::utils::is_svt_av1_codec(codec)
+        .then(|| format!("preset {}", frame_core::utils::map_svt_av1_preset(preset)))
+}
+
 pub(super) fn encoder_description(codec: &str) -> &'static str {
     match codec {
         "libx264" => "Plays everywhere",
@@ -414,11 +421,14 @@ pub(super) fn advanced_summary(config: &ConversionConfig, encoder_label: &str) -
             pixel_format_text(&config.pixel_format).0.to_string()
         });
     }
-    if let Some((_, label)) = speed_presets(&config.video_codec)
+    if let Some((preset, label)) = speed_presets(&config.video_codec)
         .into_iter()
         .find(|(preset, _)| *preset == config.preset)
     {
-        parts.push(format!("{} preset", label.to_lowercase()));
+        parts.push(
+            native_speed_preset(&config.video_codec, preset)
+                .unwrap_or_else(|| format!("{} preset", label.to_lowercase())),
+        );
     }
     parts.join(" · ")
 }
@@ -1053,6 +1063,36 @@ mod tests {
         let mpeg2 = quality_control(&config);
         assert_eq!(mpeg2.target, QualityTarget::Bitrate);
         assert!(!mpeg2.mode_selectable);
+    }
+
+    #[test]
+    fn svt_av1_speed_presets_show_the_encoder_preset_number() {
+        assert_eq!(
+            native_speed_preset("libsvtav1", "slower").as_deref(),
+            Some("preset 4")
+        );
+        assert_eq!(
+            native_speed_preset("libsvtav1", "medium").as_deref(),
+            Some("preset 8")
+        );
+        assert_eq!(native_speed_preset("libx264", "slower"), None);
+        assert_eq!(native_speed_preset("hevc_nvenc", "slow"), None);
+    }
+
+    #[test]
+    fn advanced_summary_names_the_svt_av1_preset_number() {
+        let config = ConversionConfig {
+            container: "mkv".to_string(),
+            video_codec: "libsvtav1".to_string(),
+            preset: "slower".to_string(),
+            pixel_format: "yuv420p10le".to_string(),
+            ..ConversionConfig::default()
+        };
+
+        assert_eq!(
+            advanced_summary(&config, "AV1"),
+            "AV1 · 4:2:0 · 10-bit · preset 4"
+        );
     }
 
     #[test]
