@@ -941,6 +941,53 @@ mod preset_options {
     }
 
     #[test]
+    fn apply_preset_restores_default_audio_after_a_silent_format() {
+        let presets = default_presets();
+        let preset = |id: &str| {
+            presets
+                .iter()
+                .find(|preset| preset.id == id)
+                .expect("preset should exist")
+                .clone()
+        };
+        let mut config = ConversionConfig {
+            selected_audio_tracks: vec![1],
+            ..ConversionConfig::default()
+        };
+
+        apply_preset(
+            &mut config,
+            &preset("gif-web-small"),
+            Some(&video_metadata()),
+        );
+        assert!(config.selected_audio_tracks.is_empty());
+
+        apply_preset(
+            &mut config,
+            &preset("balanced-mp4"),
+            Some(&video_metadata()),
+        );
+        assert_eq!(config.selected_audio_tracks, [1]);
+    }
+
+    #[test]
+    fn apply_preset_keeps_audio_off_when_it_was_turned_off() {
+        let preset = default_presets()
+            .into_iter()
+            .find(|preset| preset.id == "archive-hq")
+            .expect("archive preset should exist");
+        let mut config = ConversionConfig {
+            container: "mp4".to_string(),
+            selected_audio_tracks: Vec::new(),
+            ..ConversionConfig::default()
+        };
+
+        apply_preset(&mut config, &preset, Some(&video_metadata()));
+
+        assert!(config.selected_audio_tracks.is_empty());
+    }
+
+    #[test]
     fn apply_preset_preserves_source_subtitle_files() {
         let preset = default_presets()
             .into_iter()
