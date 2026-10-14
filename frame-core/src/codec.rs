@@ -15,6 +15,9 @@ pub fn add_video_codec_args(args: &mut Vec<String>, config: &ConversionConfig) {
 
     args.push("-c:v".to_string());
     args.push(config.video_codec.clone());
+    if is_hevc_codec(&config.video_codec) {
+        add_hevc_quicktime_tag_args(args, &config.container);
+    }
 
     if config.video_codec == "mpeg2video" {
         args.push("-b:v".to_string());
@@ -74,6 +77,33 @@ pub fn add_video_codec_args(args: &mut Vec<String>, config: &ConversionConfig) {
     if is_videotoolbox && config.videotoolbox_allow_sw {
         args.push("-allow_sw".to_string());
         args.push("1".to_string());
+    }
+}
+
+fn is_hevc_codec(codec: &str) -> bool {
+    matches!(
+        codec,
+        "hevc" | "libx265" | "hevc_nvenc" | "hevc_videotoolbox"
+    )
+}
+
+/// Tags HEVC as `hvc1` in MP4/MOV. `FFmpeg` defaults to `hev1`, which Apple's
+/// players (`QuickTime`, Quick Look, `AVFoundation`) refuse to open.
+fn add_hevc_quicktime_tag_args(args: &mut Vec<String>, container: &str) {
+    if matches!(container, "mp4" | "mov") {
+        args.push("-tag:v".to_string());
+        args.push("hvc1".to_string());
+    }
+}
+
+/// Adds the `hvc1` tag when stream copying an HEVC source into MP4/MOV.
+pub fn add_stream_copy_video_tag_args(
+    args: &mut Vec<String>,
+    container: &str,
+    source_codec: Option<&str>,
+) {
+    if source_codec.is_some_and(is_hevc_codec) {
+        add_hevc_quicktime_tag_args(args, container);
     }
 }
 
