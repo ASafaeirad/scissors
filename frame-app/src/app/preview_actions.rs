@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::preview_panel::preview_presented_frame;
+use crate::app::preview_panel::{CropSourceDimensions, preview_presented_frame};
 use crate::conversion_runner::core_config_from_gpui;
 use crate::numeric::rounded_f64_to_u64;
 use crate::preview_engine::{PreviewEngineError, PreviewSourceKind};
@@ -772,6 +772,24 @@ impl FrameRoot {
             crop_aspect: self.preview_ui.crop_aspect.clone(),
             has_crop_dimensions: preview_crop_source_dimensions(metadata, &config.rotation)
                 .is_some(),
+            draft_size: self
+                .preview_ui
+                .draft_crop
+                .filter(|_| self.preview_ui.crop_mode)
+                .and_then(|rect| {
+                    crop_settings_from_rect(
+                        rect,
+                        &self.preview_ui.crop_aspect,
+                        &config.rotation,
+                        config.flip_horizontal,
+                        config.flip_vertical,
+                        metadata,
+                    )
+                })
+                .map(|crop| CropSourceDimensions {
+                    width: crop.width,
+                    height: crop.height,
+                }),
             rotation: config.rotation.clone(),
             flip_horizontal: config.flip_horizontal,
             flip_vertical: config.flip_vertical,
