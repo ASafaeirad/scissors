@@ -3,7 +3,7 @@
 //! Frame samples a few short stretches spread across the source and keeps the union of what each
 //! one detects, so a dark scene in one sample can't crop away picture that another sample shows.
 
-/// Frames decoded per sample. `cropdetect` skips the first two frames it sees.
+/// Frames decoded per sample.
 const SAMPLE_FRAMES: u32 = 8;
 /// Points across the source to sample, as fractions of its duration.
 const SAMPLE_POSITIONS: [f64; 5] = [0.1, 0.3, 0.5, 0.7, 0.9];
@@ -62,7 +62,9 @@ pub fn cropdetect_args(input: &str, seek_seconds: f64) -> Vec<String> {
         "-frames:v".to_string(),
         SAMPLE_FRAMES.to_string(),
         "-vf".to_string(),
-        "cropdetect=limit=24:round=2:reset=0".to_string(),
+        // The default fractional limit scales with bit depth; an absolute one misses 10-bit
+        // black. `skip=0` keeps single-frame images from producing no report.
+        "cropdetect=round=2:reset=0:skip=0".to_string(),
         "-an".to_string(),
         "-sn".to_string(),
         "-dn".to_string(),

@@ -1,5 +1,5 @@
 use super::*;
-use crate::app::crop_detect::crop_status_label;
+use crate::app::crop_detect::{CropDetectState, crop_status_label};
 use crate::app::preview_panel::{CropSourceDimensions, preview_presented_frame};
 use crate::conversion_runner::core_config_from_gpui;
 use crate::numeric::rounded_f64_to_u64;
@@ -749,6 +749,7 @@ impl FrameRoot {
             self.preview_ui.crop_mode = false;
             self.preview_ui.draft_crop = None;
             self.preview_ui.crop_drag = None;
+            self.preview_ui.crop_detect = CropDetectState::Idle;
         }
 
         if !self.preview_ui.crop_mode {
@@ -1246,6 +1247,7 @@ impl FrameRoot {
             .and_then(|crop| crop.aspect_ratio.clone())
             .unwrap_or_else(|| "free".to_string());
 
+        self.preview_ui.crop_detect = CropDetectState::Idle;
         if self.preview_ui.crop_mode {
             self.preview_ui.crop_mode = false;
             self.preview_ui.draft_crop = None;
