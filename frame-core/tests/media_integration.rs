@@ -2506,6 +2506,56 @@ fn encoder_available(tools: &Toolchain, encoder: &str) -> Result<bool, String> {
     }))
 }
 
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn cropdetect_finds_letterbox_bars_across_samples() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("cropdetect_letterbox")?;
+    let source = sandbox.path("letterboxed.mp4");
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=640x272:rate=24:duration=4,pad=640:360:0:44:black",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            &path_arg(&source),
+        ]),
+    )?;
+
+    let samples = frame_core::cropdetect::sample_times(Some(4.0))
+        .into_iter()
+        .map(|seek| {
+            let output = Command::new(&tools.ffmpeg)
+                .args(frame_core::cropdetect::cropdetect_args(
+                    &path_arg(&source),
+                    seek,
+                ))
+                .output()
+                .map_err(|error| format!("failed to run cropdetect: {error}"))?;
+            Ok(frame_core::cropdetect::parse_cropdetect_output(
+                &String::from_utf8_lossy(&output.stderr),
+            ))
+        })
+        .collect::<TestResult<Vec<_>>>()?;
+
+    assert_eq!(
+        frame_core::cropdetect::merge_samples(samples),
+        Some(frame_core::cropdetect::DetectedCrop {
+            x: 0,
+            y: 44,
+            width: 640,
+            height: 272,
+        })
+    );
+    Ok(())
+}
+
 fn run_tool(tool: &Path, args: &[String]) -> TestResult {
     run_tool_output(tool, args).map(|_| ())
 }

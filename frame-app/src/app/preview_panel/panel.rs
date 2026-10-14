@@ -16,6 +16,9 @@ pub(in crate::app) struct PreviewCropRenderState {
     pub(in crate::app) has_crop_dimensions: bool,
     /// Output pixel size of the draft crop while crop mode is open.
     pub(in crate::app) draft_size: Option<CropSourceDimensions>,
+    /// Status pill text: black-bar detection progress or the draft crop's size.
+    pub(in crate::app) status: Option<String>,
+    pub(in crate::app) can_detect_bars: bool,
     pub(in crate::app) rotation: String,
     pub(in crate::app) flip_horizontal: bool,
     pub(in crate::app) flip_vertical: bool,

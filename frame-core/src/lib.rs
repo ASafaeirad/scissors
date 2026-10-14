@@ -5,6 +5,7 @@ pub mod audio_timeline;
 pub mod capabilities;
 pub mod codec;
 pub mod container;
+pub mod cropdetect;
 pub mod cuts;
 pub mod error;
 pub mod events;

@@ -371,6 +371,21 @@ pub(in crate::app) fn preview_crop_aspect_bar(
     let bar = bar
         .child(preview_toolbar_vertical_separator(palette))
         .child(
+            compact_text_button(
+                "Detect bars",
+                false,
+                state.crop.can_detect_bars,
+                palette,
+                window,
+                cx,
+            )
+            .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
+                if root.detect_preview_crop_bars(cx) {
+                    cx.notify();
+                }
+            })),
+        )
+        .child(
             compact_text_button("Reset", false, true, palette, window, cx).on_click(cx.listener(
                 |root, _: &ClickEvent, _window, cx| {
                     if root.reset_preview_crop_selection() {
@@ -398,10 +413,11 @@ pub(in crate::app) fn preview_crop_aspect_bar(
             })),
         );
 
-    let size = state
+    let status = state
         .crop
-        .draft_size
-        .map(|size| crop_status_pill(crop_size_label(size), palette, cx));
+        .status
+        .clone()
+        .map(|status| crop_status_pill(status, palette, cx));
 
     div()
         .absolute()
@@ -412,7 +428,7 @@ pub(in crate::app) fn preview_crop_aspect_bar(
         .flex_col()
         .items_center()
         .gap(theme::ui_rem(spacing::SPACE_2))
-        .children(size)
+        .children(status)
         .child(bar)
 }
 
@@ -450,7 +466,7 @@ fn crop_aspect_buttons(
         .collect()
 }
 
-/// Shows the crop's output size above the crop toolbar.
+/// Shows black-bar detection progress or the crop's output size above the crop toolbar.
 fn crop_status_pill(
     status: String,
     palette: &theme::ThemePalette,

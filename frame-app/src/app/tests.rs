@@ -4115,6 +4115,8 @@ mod preview_shell {
             crop_aspect: "free".to_string(),
             has_crop_dimensions: false,
             draft_size: None,
+            status: None,
+            can_detect_bars: false,
             rotation: "0".to_string(),
             flip_horizontal: false,
             flip_vertical: false,
