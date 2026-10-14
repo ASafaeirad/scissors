@@ -13,11 +13,11 @@ use super::preview_actions::{
     preview_overlay_keyboard_delta, preview_runtime_dimensions,
 };
 use super::preview_panel::{
-    format_clip_duration, format_timeline_ruler_time, format_timeline_time,
-    preview_crop_visual_rect, preview_presented_frame, preview_shell_state, preview_timeline_info,
-    preview_timeline_tracks, preview_trim_enabled, preview_visual_controls_visible,
-    timeline_fraction_from_percent, timeline_keyboard_time_for_key, timeline_ruler_ticks,
-    timeline_slider_percent_from_bounds,
+    CropSourceDimensions, crop_size_label, format_clip_duration, format_timeline_ruler_time,
+    format_timeline_time, preview_crop_visual_rect, preview_presented_frame, preview_shell_state,
+    preview_timeline_info, preview_timeline_tracks, preview_trim_enabled,
+    preview_visual_controls_visible, timeline_fraction_from_percent,
+    timeline_keyboard_time_for_key, timeline_ruler_ticks, timeline_slider_percent_from_bounds,
 };
 use super::primitives::frame_highlight_px;
 use super::settings_panel::{hex_to_subtitle_hsv, subtitle_hsv_to_hex};
@@ -2440,6 +2440,62 @@ mod frame_root_config {
     }
 
     #[test]
+    fn four_by_three_crop_of_full_hd_reports_output_pixel_size() {
+        let mut root = FrameRoot::new();
+        root.file_queue
+            .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
+        root.source_metadata.mark_ready(
+            "video".to_string(),
+            SourceMetadata {
+                media_kind: Some(SourceKind::Video),
+                width: Some(1920),
+                height: Some(1080),
+                ..SourceMetadata::default()
+            },
+        );
+
+        assert!(root.toggle_selected_crop_mode());
+        assert!(root.reset_preview_crop_selection());
+        assert!(root.select_preview_crop_aspect("4:3"));
+
+        let config = &root.file_queue.file_by_id("video").unwrap().config;
+        let metadata_entry = root.source_metadata.entry_for("video");
+        let crop_state = root.preview_crop_render_state(metadata_entry.metadata.as_ref(), config);
+        assert_eq!(
+            crop_state.draft_size,
+            Some(CropSourceDimensions {
+                width: 1440,
+                height: 1080,
+            })
+        );
+        assert_eq!(
+            crop_state.draft_size.map(crop_size_label),
+            Some("1440 × 1080".to_string())
+        );
+    }
+
+    #[test]
+    fn crop_render_state_has_no_draft_size_outside_crop_mode() {
+        let mut root = FrameRoot::new();
+        root.file_queue
+            .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
+        root.source_metadata.mark_ready(
+            "video".to_string(),
+            SourceMetadata {
+                media_kind: Some(SourceKind::Video),
+                width: Some(1920),
+                height: Some(1080),
+                ..SourceMetadata::default()
+            },
+        );
+
+        let config = &root.file_queue.file_by_id("video").unwrap().config;
+        let metadata_entry = root.source_metadata.entry_for("video");
+        let crop_state = root.preview_crop_render_state(metadata_entry.metadata.as_ref(), config);
+        assert_eq!(crop_state.draft_size, None);
+    }
+
+    #[test]
     fn apply_selected_crop_writes_selected_file_crop_pixels() {
         let mut root = FrameRoot::new();
         root.file_queue
@@ -4058,6 +4114,7 @@ mod preview_shell {
             applied_crop: None,
             crop_aspect: "free".to_string(),
             has_crop_dimensions: false,
+            draft_size: None,
             rotation: "0".to_string(),
             flip_horizontal: false,
             flip_vertical: false,

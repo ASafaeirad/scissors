@@ -53,7 +53,7 @@ pub struct AspectOption {
     pub ratio: Option<f64>,
 }
 
-pub const ASPECT_OPTIONS: [AspectOption; 5] = [
+pub const ASPECT_OPTIONS: [AspectOption; 6] = [
     AspectOption {
         id: "free",
         display: "Free",
@@ -63,6 +63,11 @@ pub const ASPECT_OPTIONS: [AspectOption; 5] = [
         id: "1:1",
         display: "1:1",
         ratio: Some(1.0),
+    },
+    AspectOption {
+        id: "4:3",
+        display: "4:3",
+        ratio: Some(4.0 / 3.0),
     },
     AspectOption {
         id: "4:5",

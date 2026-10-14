@@ -1,4 +1,6 @@
 use super::*;
+use crate::app::m3::M3Text;
+use crate::material::{shape, spacing, typography};
 use crate::numeric::unit_f64_to_f32;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -347,7 +349,7 @@ pub(in crate::app) fn preview_crop_aspect_bar(
     let palette = state.palette;
     let first_focus = focuses.first.clone();
     let last_focus = focuses.last.clone();
-    let mut bar = div()
+    let bar = div()
         .id("preview-crop-toolbar")
         .track_focus(focuses.panel)
         .tab_stop(false)
@@ -364,36 +366,7 @@ pub(in crate::app) fn preview_crop_aspect_bar(
             }),
         );
 
-    for option in ASPECT_OPTIONS {
-        let id = option.id;
-        let button = if id == "free" {
-            compact_text_button_with_focus(
-                option.display,
-                state.crop.crop_aspect == id,
-                true,
-                focuses.first,
-                palette,
-                window,
-                cx,
-            )
-        } else {
-            compact_text_button(
-                option.display,
-                state.crop.crop_aspect == id,
-                true,
-                palette,
-                window,
-                cx,
-            )
-        };
-        bar = bar.child(
-            button.on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                if root.select_preview_crop_aspect(id) {
-                    cx.notify();
-                }
-            })),
-        );
-    }
+    let bar = bar.children(crop_aspect_buttons(state, focuses.first, window, cx));
 
     let bar = bar
         .child(preview_toolbar_vertical_separator(palette))
@@ -425,14 +398,80 @@ pub(in crate::app) fn preview_crop_aspect_bar(
             })),
         );
 
+    let size = state
+        .crop
+        .draft_size
+        .map(|size| crop_status_pill(crop_size_label(size), palette, cx));
+
     div()
         .absolute()
         .bottom(theme::ui_rem(16.0))
         .left_0()
         .right_0()
         .flex()
-        .justify_center()
+        .flex_col()
+        .items_center()
+        .gap(theme::ui_rem(spacing::SPACE_2))
+        .children(size)
         .child(bar)
+}
+
+fn crop_aspect_buttons(
+    state: &PreviewShellState,
+    first_focus: &FocusHandle,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> Vec<gpui::Stateful<gpui::Div>> {
+    let palette = state.palette;
+    ASPECT_OPTIONS
+        .into_iter()
+        .map(|option| {
+            let id = option.id;
+            let selected = state.crop.crop_aspect == id;
+            let button = if id == "free" {
+                compact_text_button_with_focus(
+                    option.display,
+                    selected,
+                    true,
+                    first_focus,
+                    palette,
+                    window,
+                    cx,
+                )
+            } else {
+                compact_text_button(option.display, selected, true, palette, window, cx)
+            };
+            button.on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
+                if root.select_preview_crop_aspect(id) {
+                    cx.notify();
+                }
+            }))
+        })
+        .collect()
+}
+
+/// Shows the crop's output size above the crop toolbar.
+fn crop_status_pill(
+    status: String,
+    palette: &theme::ThemePalette,
+    cx: &Context<FrameRoot>,
+) -> gpui::Stateful<gpui::Div> {
+    let scheme = crate::app::m3::scheme(
+        if palette.is_light() {
+            ColorTheme::Light
+        } else {
+            ColorTheme::Dark
+        },
+        cx,
+    );
+    crate::app::m3::m3_surface(scheme.surface_container_high, shape::CORNER_FULL)
+        .id("preview-crop-status")
+        .px(theme::ui_rem(spacing::SPACE_3))
+        .py(theme::ui_rem(spacing::SPACE_1))
+        .m3_type(typography::LABEL_MEDIUM)
+        .text_color(color(scheme.on_surface))
+        .whitespace_nowrap()
+        .child(status)
 }
 
 pub(in crate::app) fn compact_text_button(

@@ -164,6 +164,11 @@ pub(in crate::app) fn crop_rect_is_full(rect: CropRect) -> bool {
     rect.x <= 0.001 && rect.y <= 0.001 && rect.width >= 0.999 && rect.height >= 0.999
 }
 
+/// Formats a crop's output size as `width × height` pixels.
+pub(in crate::app) fn crop_size_label(size: CropSourceDimensions) -> String {
+    format!("{} × {}", size.width, size.height)
+}
+
 pub(in crate::app) fn crop_aspect_id(crop: Option<&CropSettings>) -> &str {
     crop.and_then(|crop| crop.aspect_ratio.as_deref())
         .unwrap_or("free")

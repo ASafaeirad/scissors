@@ -34,6 +34,11 @@ mod aspect_value {
     }
 
     #[test]
+    fn returns_classic_four_by_three_ratio() {
+        assert_close(aspect_value("4:3").unwrap(), 4.0 / 3.0);
+    }
+
+    #[test]
     fn returns_none_for_unknown_ratio() {
         assert_eq!(aspect_value("2:1"), None);
     }

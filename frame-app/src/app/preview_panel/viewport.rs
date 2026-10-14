@@ -735,6 +735,7 @@ mod tests {
                 applied_crop: None,
                 crop_aspect: "free".to_string(),
                 has_crop_dimensions: false,
+                draft_size: None,
                 rotation: "0".to_string(),
                 flip_horizontal: false,
                 flip_vertical: false,
