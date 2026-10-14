@@ -2528,12 +2528,29 @@ fn cropdetect_finds_letterbox_bars_across_samples() -> TestResult {
         ]),
     )?;
 
-    let samples = frame_core::cropdetect::sample_times(Some(4.0))
+    assert_eq!(
+        detect_bars(&tools, &source, Some(4.0))?,
+        Some(frame_core::cropdetect::DetectedCrop {
+            x: 0,
+            y: 44,
+            width: 640,
+            height: 272,
+        })
+    );
+    Ok(())
+}
+
+fn detect_bars(
+    tools: &Toolchain,
+    source: &Path,
+    duration: Option<f64>,
+) -> TestResult<Option<frame_core::cropdetect::DetectedCrop>> {
+    let samples = frame_core::cropdetect::sample_times(duration)
         .into_iter()
         .map(|seek| {
             let output = Command::new(&tools.ffmpeg)
                 .args(frame_core::cropdetect::cropdetect_args(
-                    &path_arg(&source),
+                    &path_arg(source),
                     seek,
                 ))
                 .output()
@@ -2543,14 +2560,61 @@ fn cropdetect_finds_letterbox_bars_across_samples() -> TestResult {
             ))
         })
         .collect::<TestResult<Vec<_>>>()?;
+    Ok(frame_core::cropdetect::merge_samples(samples))
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn cropdetect_finds_bars_in_ten_bit_video_and_still_images() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("cropdetect_ten_bit_image")?;
+    let ten_bit = sandbox.path("letterboxed-10bit.mkv");
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=640x272:rate=24:duration=4,pad=640:360:0:44:black",
+            "-c:v",
+            "libx265",
+            "-pix_fmt",
+            "yuv420p10le",
+            "-y",
+            &path_arg(&ten_bit),
+        ]),
+    )?;
+    let image = sandbox.path("pillarboxed.png");
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=480x360:rate=1:duration=1,pad=640:360:80:0:black",
+            "-frames:v",
+            "1",
+            "-y",
+            &path_arg(&image),
+        ]),
+    )?;
 
     assert_eq!(
-        frame_core::cropdetect::merge_samples(samples),
+        detect_bars(&tools, &ten_bit, Some(4.0))?,
         Some(frame_core::cropdetect::DetectedCrop {
             x: 0,
             y: 44,
             width: 640,
             height: 272,
+        })
+    );
+    assert_eq!(
+        detect_bars(&tools, &image, None)?,
+        Some(frame_core::cropdetect::DetectedCrop {
+            x: 80,
+            y: 0,
+            width: 480,
+            height: 360,
         })
     );
     Ok(())

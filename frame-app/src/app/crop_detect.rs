@@ -45,23 +45,36 @@ pub(in crate::app) fn detected_crop_rect(crop: DetectedCrop, width: u32, height:
     })
 }
 
-/// Runs `cropdetect` over samples of `input`. Blocks; call it from a background task.
+/// Runs `cropdetect` over samples of `input`, one `FFmpeg` process per sample in parallel.
+/// Blocks; call it from a background task.
 fn detect_black_bars(input: &str, duration: Option<f64>) -> Result<Option<DetectedCrop>, String> {
     let ffmpeg = crate::runtime_binaries::ffmpeg_executable();
-    let samples = cropdetect::sample_times(duration)
-        .into_iter()
-        .map(|seek| {
-            let output = std::process::Command::new(&ffmpeg)
-                .args(cropdetect::cropdetect_args(input, seek))
-                .output()
-                .map_err(|error| error.to_string())?;
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !output.status.success() {
-                return Err(stderr.lines().last().unwrap_or_default().to_string());
-            }
-            Ok(cropdetect::parse_cropdetect_output(&stderr))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let sample = |seek: f64| {
+        let output = std::process::Command::new(&ffmpeg)
+            .args(cropdetect::cropdetect_args(input, seek))
+            .output()
+            .map_err(|error| error.to_string())?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success() {
+            return Err(stderr.lines().last().unwrap_or_default().to_string());
+        }
+        Ok(cropdetect::parse_cropdetect_output(&stderr))
+    };
+    let samples = std::thread::scope(|scope| {
+        // Spawn every sample before joining any, so the processes run side by side.
+        let mut workers = Vec::new();
+        for seek in cropdetect::sample_times(duration) {
+            workers.push(scope.spawn(move || sample(seek)));
+        }
+        workers
+            .into_iter()
+            .map(|worker| {
+                worker
+                    .join()
+                    .unwrap_or_else(|_| Err("cropdetect worker panicked".to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
     Ok(cropdetect::merge_samples(samples))
 }
 
@@ -259,16 +272,40 @@ mod tests {
     }
 
     #[test]
-    fn stale_detection_is_ignored_after_leaving_crop_mode() {
+    fn leaving_crop_mode_drops_a_running_detection() {
         let mut root = root_with_video();
         root.preview_ui.crop_detect = CropDetectState::Running("video".to_string());
         assert!(root.toggle_selected_crop_mode());
 
-        assert!(root.finish_crop_detection("video", &Ok(Some(LETTERBOX))));
-
-        assert_eq!(root.preview_ui.draft_crop, None);
         assert_eq!(root.preview_ui.crop_detect, CropDetectState::Idle);
         assert!(!root.finish_crop_detection("video", &Ok(Some(LETTERBOX))));
+        assert_eq!(root.preview_ui.draft_crop, None);
+    }
+
+    #[test]
+    fn a_new_crop_session_does_not_show_an_old_notice() {
+        let mut root = root_with_video();
+        root.preview_ui.crop_detect = CropDetectState::Notice {
+            draft: Some(default_crop_rect()),
+            message: "No black bars found",
+        };
+        assert!(root.toggle_selected_crop_mode());
+        assert!(root.toggle_selected_crop_mode());
+
+        assert_eq!(root.preview_ui.crop_detect, CropDetectState::Idle);
+    }
+
+    #[test]
+    fn switching_files_drops_a_running_detection() {
+        let mut root = root_with_video();
+        root.file_queue
+            .add_file(FileItem::from_path("other", "/tmp/two.mp4", 1));
+        root.preview_ui.crop_detect = CropDetectState::Running("video".to_string());
+
+        let config = ConversionConfig::default();
+        root.sync_preview_crop_for_selection(Some("other"), &config);
+
+        assert_eq!(root.preview_ui.crop_detect, CropDetectState::Idle);
     }
 
     #[test]
