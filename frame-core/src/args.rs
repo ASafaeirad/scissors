@@ -1,8 +1,8 @@
 use std::{collections::HashSet, path::Path};
 
 use crate::codec::{
-    add_audio_codec_args, add_fps_args, add_video_codec_args, audio_codec_supports_vbr,
-    subtitle_output_codec,
+    add_audio_codec_args, add_fps_args, add_stream_copy_video_tag_args, add_video_codec_args,
+    audio_codec_supports_vbr, subtitle_output_codec,
 };
 use crate::container::{
     TransportStreamProfile, is_transport_stream_container, transport_stream_profile,
@@ -705,6 +705,13 @@ pub fn build_ffmpeg_args(
         } else {
             args.push("-c".to_string());
             args.push("copy".to_string());
+        }
+        if !is_audio_only {
+            add_stream_copy_video_tag_args(
+                &mut args,
+                &config.container,
+                probe.video_codec.as_deref(),
+            );
         }
         args.push("-dn".to_string());
         add_container_output_args(&mut args, &config.container);
@@ -1761,6 +1768,48 @@ mod tests {
 
         assert!(args_contains_pair(&args, "-map", "0:4"));
         assert!(!args.iter().any(|arg| arg == "0:v?"));
+    }
+
+    #[test]
+    fn hevc_in_mp4_and_mov_is_tagged_hvc1_for_apple_players() {
+        for container in ["mp4", "mov"] {
+            for codec in ["libx265", "hevc_nvenc", "hevc_videotoolbox"] {
+                let config = sample_config(container, codec);
+                let args =
+                    build_ffmpeg_args("input.mkv", "output", &config, &sample_probe()).unwrap();
+                assert!(
+                    args_contains_pair(&args, "-tag:v", "hvc1"),
+                    "{codec} in {container} should be tagged hvc1"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hvc1_tag_is_limited_to_hevc_in_quicktime_family_containers() {
+        for (container, codec) in [("mkv", "libx265"), ("mp4", "libx264"), ("mov", "libsvtav1")] {
+            let config = sample_config(container, codec);
+            let args = build_ffmpeg_args("input.mkv", "output", &config, &sample_probe()).unwrap();
+            assert!(
+                !args.iter().any(|arg| arg == "-tag:v"),
+                "{codec} in {container} should keep the muxer default tag"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_copy_tags_hevc_sources_hvc1_in_mp4() {
+        let mut config = sample_config("mp4", "libx264");
+        config.processing_mode = "copy".to_string();
+        let mut probe = sample_probe();
+        probe.video_codec = Some("hevc".to_string());
+
+        let args = build_ffmpeg_args("input.mkv", "output.mp4", &config, &probe).unwrap();
+        assert!(args_contains_pair(&args, "-tag:v", "hvc1"));
+
+        probe.video_codec = Some("h264".to_string());
+        let args = build_ffmpeg_args("input.mkv", "output.mp4", &config, &probe).unwrap();
+        assert!(!args.iter().any(|arg| arg == "-tag:v"));
     }
 
     #[test]
