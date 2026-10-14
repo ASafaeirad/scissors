@@ -2,6 +2,7 @@ mod accessibility;
 mod chrome;
 mod components;
 mod conversion;
+mod crop_detect;
 mod export_dialog;
 mod file_list_panel;
 mod files;
@@ -475,6 +476,7 @@ struct PreviewUiState {
     draft_crop: Option<CropRect>,
     crop_aspect: String,
     crop_drag: Option<PreviewCropDragState>,
+    crop_detect: crop_detect::CropDetectState,
     overlay_file_id: Option<String>,
     overlay: PreviewOverlayState,
     overlay_dimensions_key: Option<String>,
@@ -513,6 +515,7 @@ impl Default for PreviewUiState {
             draft_crop: None,
             crop_aspect: "free".to_string(),
             crop_drag: None,
+            crop_detect: crop_detect::CropDetectState::Idle,
             overlay_file_id: None,
             overlay: PreviewOverlayState::new(),
             overlay_dimensions_key: None,
