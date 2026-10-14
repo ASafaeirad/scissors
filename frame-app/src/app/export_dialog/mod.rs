@@ -25,9 +25,10 @@ use model::{
     audio_quality_for_position, audio_section_summary, audio_summary, audio_vbr_control,
     custom_dimensions_error, encoder_description, encodes_audio, estimate_size_bytes, export_phase,
     exports_audio, format_clock, format_dimensions, format_rate, format_size, fps_note,
-    fps_option_label, fps_options, is_recommended, output_dimensions, output_duration_seconds,
-    output_fps, parse_dimension, pixel_format_text, quality_control, reset_to_recommended,
-    resolution_note, scaled_even, scaling_note, source_dimensions, speed_presets,
+    fps_option_label, fps_options, is_recommended, native_speed_preset, output_dimensions,
+    output_duration_seconds, output_fps, parse_dimension, pixel_format_text, quality_control,
+    reset_to_recommended, resolution_note, scaled_even, scaling_note, source_dimensions,
+    speed_presets,
 };
 
 const DIALOG_WIDTH: f32 = 920.0;
@@ -1795,7 +1796,9 @@ fn advanced_options(
         .iter()
         .position(|(preset, _)| *preset == config.preset)
     {
-        let label = presets[index].1;
+        let (preset, label) = presets[index];
+        let label = native_speed_preset(&config.video_codec, preset)
+            .map_or_else(|| label.to_string(), |native| format!("{label} · {native}"));
         let default = config.preset == crate::settings::DEFAULT_PRESET;
         let max = u32::try_from(presets.len() - 1).unwrap_or(0);
         options = options.child(
@@ -1813,7 +1816,7 @@ fn advanced_options(
                         .child(div().m3_type(typography::BODY_MEDIUM).child(if default {
                             format!("{label} · default")
                         } else {
-                            label.to_string()
+                            label.clone()
                         })),
                 )
                 .child(export_slider(
@@ -1822,7 +1825,7 @@ fn advanced_options(
                     u32::try_from(index).unwrap_or(0),
                     0,
                     max,
-                    label.to_string(),
+                    label,
                     ExportSlider::Speed,
                     enabled,
                     scheme,
