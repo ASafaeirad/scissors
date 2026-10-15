@@ -246,6 +246,7 @@ pub(super) struct WorkspaceState {
     pub(super) filter: usize,
     pub(super) export_enabled: bool,
     pub(super) video_details: bool,
+    pub(super) audio_details: bool,
 }
 
 const TOOLS: [(Symbol, &str); 5] = [
@@ -369,10 +370,32 @@ pub(super) fn workspace_view(
                 cx,
             )
         });
-        let audio_metadata = settings
+        let audio_header = settings
             .metadata
             .filter(|_| state.tool == AUDIO_TOOL)
-            .map(|metadata| audio_source_information(metadata, scheme));
+            .map(|metadata| {
+                audio_source_header(
+                    metadata,
+                    settings.config,
+                    state.audio_details,
+                    scheme,
+                    window,
+                    cx,
+                )
+            });
+        let audio_filters = (state.tool == AUDIO_TOOL
+            && crate::settings::visible_settings_tabs(settings.config, settings.metadata)
+                .contains(&SettingsTab::AudioFilters))
+        .then(|| {
+            super::settings_panel::settings_audio_filters_tab(
+                settings.config,
+                settings.settings_disabled,
+                settings.available_filters,
+                scheme,
+                window,
+                cx,
+            )
+        });
         div().size_full().min_w_0().child(
             m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
                 .id("workspace-track-properties")
@@ -383,12 +406,14 @@ pub(super) fn workspace_view(
                 .flex_col()
                 .p(theme::ui_rem(spacing::SPACE_3))
                 .children(video_header)
+                .children(audio_header)
                 .children(speed)
-                .children(audio_metadata)
                 .children(video_filters)
-                .when(state.tool != VIDEO_TOOL, |panel| {
-                    panel.child(settings_panel(settings, window, cx).flex_none())
-                }),
+                .children(audio_filters)
+                .when(
+                    state.tool != VIDEO_TOOL && state.tool != AUDIO_TOOL,
+                    |panel| panel.child(settings_panel(settings, window, cx).flex_none()),
+                ),
         )
     } else {
         m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
@@ -517,7 +542,111 @@ fn video_source_header(
         })
 }
 
-/// Source file and audio stream details below the selected clip's speed control.
+fn audio_source_summary(
+    metadata: &crate::settings::SourceMetadata,
+    config: &crate::settings::ConversionConfig,
+) -> String {
+    let track = metadata
+        .audio_tracks
+        .iter()
+        .find(|track| config.selected_audio_tracks.contains(&track.index))
+        .or_else(|| metadata.audio_tracks.first());
+    let Some(track) = track else {
+        return metadata
+            .audio_codec
+            .clone()
+            .unwrap_or_else(|| "No audio stream".to_string());
+    };
+    let mut parts = Vec::new();
+    if !track.codec.trim().is_empty() {
+        parts.push(track.codec.clone());
+    }
+    if let Some(channels) = track
+        .channels
+        .as_deref()
+        .map(str::trim)
+        .filter(|channels| !channels.is_empty())
+    {
+        parts.push(match channels {
+            "1" | "mono" => "Mono".to_string(),
+            "2" | "stereo" => "Stereo".to_string(),
+            value => format!("{value} channels"),
+        });
+    }
+    if let Some(rate) = track
+        .sample_rate
+        .as_deref()
+        .filter(|rate| !rate.trim().is_empty())
+    {
+        parts.push(crate::settings::format_source_hz(Some(rate)));
+    }
+    if track
+        .bitrate_kbps
+        .is_some_and(|bitrate| bitrate.is_finite() && bitrate > 0.0)
+    {
+        parts.push(crate::settings::format_source_bitrate_kbps(
+            track.bitrate_kbps,
+        ));
+    }
+    parts.join(" · ")
+}
+
+fn audio_source_header(
+    metadata: &crate::settings::SourceMetadata,
+    config: &crate::settings::ConversionConfig,
+    expanded: bool,
+    scheme: &ColorScheme,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    div()
+        .debug_selector(|| "audio-source-header".to_string())
+        .flex_none()
+        .flex()
+        .flex_col()
+        .mb(theme::ui_rem(spacing::SPACE_3))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(theme::ui_rem(spacing::SPACE_2))
+                .child(m3::m3_icon(
+                    Symbol::MusicNote,
+                    false,
+                    18.0,
+                    color(scheme.on_surface_variant),
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .m3_type(typography::BODY_SMALL)
+                        .text_color(color(scheme.on_surface_variant))
+                        .child(audio_source_summary(metadata, config)),
+                )
+                .child(
+                    m3::Button::new(
+                        "audio-source-details",
+                        if expanded { "Hide details" } else { "Details" },
+                        m3::ButtonVariant::Text,
+                    )
+                    .size(m3::ButtonSize::ExtraSmall)
+                    .build(scheme, window, cx)
+                    .aria_expanded(expanded)
+                    .debug_selector(|| "audio-source-details".to_string())
+                    .on_click(cx.listener(|root, _, _, cx| {
+                        root.workspace_ui.audio_details = !root.workspace_ui.audio_details;
+                        cx.notify();
+                    })),
+                ),
+        )
+        .when(expanded, |header| {
+            header.child(audio_source_information(metadata, scheme))
+        })
+}
+
+/// File information and all audio streams, expanded from the audio header.
 fn audio_source_information(
     metadata: &crate::settings::SourceMetadata,
     scheme: &ColorScheme,
@@ -525,6 +654,7 @@ fn audio_source_information(
     use crate::settings::SourceInfoSection;
 
     let mut content = div()
+        .debug_selector(|| "audio-source-information".to_string())
         .flex_none()
         .flex()
         .flex_col()
@@ -1222,4 +1352,70 @@ pub(super) fn welcome_view(
                         ),
                 ),
         )
+}
+
+#[cfg(test)]
+mod audio_tests {
+    use super::*;
+    use crate::settings::{AudioTrack, ConversionConfig, SourceMetadata};
+
+    #[test]
+    fn source_summary_follows_the_selected_track() {
+        let metadata = SourceMetadata {
+            audio_tracks: vec![
+                AudioTrack {
+                    index: 0,
+                    codec: "pcm_s16le".to_string(),
+                    ..Default::default()
+                },
+                AudioTrack {
+                    index: 2,
+                    codec: "aac".to_string(),
+                    channels: Some("2".to_string()),
+                    sample_rate: Some("44100".to_string()),
+                    bitrate_kbps: Some(128.0),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut config = ConversionConfig {
+            selected_audio_tracks: vec![2],
+            ..Default::default()
+        };
+        assert_eq!(
+            audio_source_summary(&metadata, &config),
+            "aac · Stereo · 44.1 kHz · 128 kb/s"
+        );
+        config.selected_audio_tracks = vec![99];
+        assert_eq!(audio_source_summary(&metadata, &config), "pcm_s16le");
+    }
+
+    #[test]
+    fn source_summary_handles_sources_without_audio() {
+        assert_eq!(
+            audio_source_summary(&SourceMetadata::default(), &ConversionConfig::default()),
+            "No audio stream"
+        );
+    }
+
+    #[test]
+    fn audio_tool_shows_filters_and_expands_details_without_the_legacy_panel() {
+        let mut app = gpui::TestAppContext::single();
+        let (root, cx) = app.add_window_view(|_, _| {
+            let mut root = FrameRoot::new();
+            root.apply_visual_fixture(Some(super::super::VisualFixture::SettingsAudioFilters));
+            root
+        });
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("audio-source-header").is_some());
+        assert!(cx.debug_bounds("audio-filters").is_some());
+        assert!(cx.debug_bounds("legacy-settings-panel").is_none());
+        assert!(cx.debug_bounds("audio-source-information").is_none());
+        let details = cx.debug_bounds("audio-source-details").unwrap().center();
+        cx.simulate_click(details, gpui::Modifiers::default());
+        cx.update(|window, cx| window.draw(cx).clear());
+        assert!(cx.debug_bounds("audio-source-information").is_some());
+        root.read_with(cx, |root, _| assert!(root.workspace_ui.audio_details));
+    }
 }

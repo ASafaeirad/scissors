@@ -3567,7 +3567,7 @@ mod visual_fixtures {
     }
 
     #[test]
-    fn settings_audio_filters_fixture_opens_audio_filters_tab_with_enabled_filters() {
+    fn settings_audio_filters_fixture_opens_audio_tool_with_enabled_filters() {
         let mut root = FrameRoot::new();
 
         root.apply_visual_fixture(Some(VisualFixture::SettingsAudioFilters));
@@ -3576,7 +3576,7 @@ mod visual_fixtures {
             .file_queue
             .selected_file()
             .expect("audio filters fixture should select a file");
-        assert_eq!(root.settings_ui.active_tab, SettingsTab::AudioFilters);
+        assert_eq!(root.workspace_ui.tool, 2);
         assert!(selected.config.audio_normalize);
         assert_eq!(selected.config.audio_volume, 132);
         assert!(selected.config.audio_filters.compressor_enabled);

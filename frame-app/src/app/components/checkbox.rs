@@ -63,25 +63,6 @@ pub(in crate::app) fn frame_checkbox_indicator(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "The checkbox row keeps label, hint, state, palette, context, and action explicit at call sites."
-)]
-pub(in crate::app) fn frame_checkbox_row(
-    id: impl Into<String>,
-    label: impl Into<String>,
-    hint: impl Into<String>,
-    checked: bool,
-    disabled: bool,
-    palette: &'static theme::ThemePalette,
-    cx: &Context<FrameRoot>,
-    action: impl Fn(&mut FrameRoot, &ClickEvent, &mut Window, &mut Context<FrameRoot>) + 'static,
-) -> gpui::Stateful<gpui::Div> {
-    frame_checkbox_row_inner(
-        id, label, hint, checked, disabled, None, palette, cx, action,
-    )
-}
-
-#[expect(
-    clippy::too_many_arguments,
     reason = "Checkbox rows need explicit focus plus the shared activation handler."
 )]
 pub(in crate::app) fn frame_checkbox_row_with_focus(

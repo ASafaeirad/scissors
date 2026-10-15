@@ -1,4 +1,7 @@
+use super::filter_controls::{filter_checkbox, filter_section, filter_value};
 use super::*;
+use crate::app::m3::{self, M3Text};
+use crate::material::{ColorScheme, Symbol, spacing, typography};
 use crate::settings::{
     AudioScalarFilter, FilterStrength, apply_audio_compressor, apply_audio_scalar_filter,
     reset_audio_filters,
@@ -41,27 +44,41 @@ pub(in crate::app) fn settings_audio_filters_tab(
     config: &ConversionConfig,
     settings_disabled: bool,
     available_filters: &AvailableFilters,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let filters = config.audio_filters;
     let controls_disabled = settings_disabled || config.processing_mode == ProcessingMode::Copy;
 
+    let reset_disabled = controls_disabled || audio_filters_are_default(config);
     div()
+        .debug_selector(|| "audio-filters".to_string())
+        .flex_none()
         .flex()
         .flex_col()
-        .gap_3()
+        .gap(theme::ui_rem(spacing::SPACE_6))
+        .text_color(color(scheme.on_surface))
+        .m3_type(typography::BODY_MEDIUM)
         .child(
-            settings_section("Audio Filters", palette).child(settings_audio_filters_reset_all(
-                controls_disabled,
-                palette,
-                window,
-                cx,
-            )),
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .m3_type(typography::TITLE_SMALL)
+                        .child("Audio filters"),
+                )
+                .child(settings_audio_filters_reset_all(
+                    reset_disabled,
+                    scheme,
+                    window,
+                    cx,
+                )),
         )
         .child(
-            settings_section("Level", palette)
+            filter_section("Level", scheme)
                 .child(settings_audio_filter_range_field(
                     audio_filter_spec(
                         AudioFilterRangeTarget::Volume,
@@ -70,14 +87,15 @@ pub(in crate::app) fn settings_audio_filters_tab(
                         available_filters,
                     ),
                     controls_disabled,
-                    palette,
+                    scheme,
                     window,
                     cx,
                 ))
                 .child(settings_audio_normalize_control(
                     config.audio_normalize,
                     controls_disabled || !available_filters.loudnorm,
-                    palette,
+                    scheme,
+                    window,
                     cx,
                 ))
                 .child(settings_audio_filter_range_field(
@@ -88,23 +106,23 @@ pub(in crate::app) fn settings_audio_filters_tab(
                         available_filters,
                     ),
                     controls_disabled,
-                    palette,
+                    scheme,
                     window,
                     cx,
                 )),
         )
         .child(
-            settings_section("Dynamics", palette).child(settings_audio_compressor_control(
+            filter_section("Dynamics", scheme).child(settings_audio_compressor_control(
                 filters.compressor_enabled,
                 filters.compressor_strength,
                 controls_disabled || !available_filters.acompressor,
-                palette,
+                scheme,
                 window,
                 cx,
             )),
         )
         .child(
-            settings_section("Tone", palette)
+            filter_section("Tone", scheme)
                 .child(settings_audio_filter_range_field(
                     audio_filter_spec(
                         AudioFilterRangeTarget::Bass,
@@ -113,7 +131,7 @@ pub(in crate::app) fn settings_audio_filters_tab(
                         available_filters,
                     ),
                     controls_disabled,
-                    palette,
+                    scheme,
                     window,
                     cx,
                 ))
@@ -125,7 +143,7 @@ pub(in crate::app) fn settings_audio_filters_tab(
                         available_filters,
                     ),
                     controls_disabled,
-                    palette,
+                    scheme,
                     window,
                     cx,
                 ))
@@ -137,7 +155,7 @@ pub(in crate::app) fn settings_audio_filters_tab(
                         available_filters,
                     ),
                     controls_disabled,
-                    palette,
+                    scheme,
                     window,
                     cx,
                 ))
@@ -149,13 +167,13 @@ pub(in crate::app) fn settings_audio_filters_tab(
                         available_filters,
                     ),
                     controls_disabled,
-                    palette,
+                    scheme,
                     window,
                     cx,
                 )),
         )
         .child(
-            settings_section("Cleanup", palette)
+            filter_section("Cleanup", scheme)
                 .child(settings_audio_filter_range_field(
                     audio_filter_spec(
                         AudioFilterRangeTarget::NoiseReduction,
@@ -164,7 +182,7 @@ pub(in crate::app) fn settings_audio_filters_tab(
                         available_filters,
                     ),
                     controls_disabled,
-                    palette,
+                    scheme,
                     window,
                     cx,
                 ))
@@ -176,13 +194,13 @@ pub(in crate::app) fn settings_audio_filters_tab(
                         available_filters,
                     ),
                     controls_disabled,
-                    palette,
+                    scheme,
                     window,
                     cx,
                 )),
         )
         .child(
-            settings_section("Stereo", palette).child(settings_audio_filter_range_field(
+            filter_section("Stereo", scheme).child(settings_audio_filter_range_field(
                 audio_filter_spec(
                     AudioFilterRangeTarget::StereoWidth,
                     filters.stereo_width.enabled,
@@ -190,7 +208,7 @@ pub(in crate::app) fn settings_audio_filters_tab(
                     available_filters,
                 ),
                 controls_disabled,
-                palette,
+                scheme,
                 window,
                 cx,
             )),
@@ -245,7 +263,7 @@ fn audio_filter_spec(
         ),
         AudioFilterRangeTarget::NoiseReduction => audio_spec(
             target,
-            "Noise Reduction",
+            "Noise reduction",
             enabled,
             available,
             value,
@@ -259,7 +277,7 @@ fn audio_filter_spec(
         ),
         AudioFilterRangeTarget::StereoWidth => audio_spec(
             target,
-            "Stereo Width",
+            "Stereo width",
             enabled,
             available,
             value,
@@ -323,7 +341,7 @@ fn audio_spec(
 fn settings_audio_filter_range_field(
     spec: AudioFilterRangeSpec,
     settings_disabled: bool,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -335,15 +353,15 @@ fn settings_audio_filter_range_field(
     div()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap(theme::ui_rem(spacing::SPACE_2))
         .child(
             div()
                 .flex()
-                .items_end()
+                .items_center()
                 .justify_between()
-                .gap_2()
+                .gap(theme::ui_rem(spacing::SPACE_2))
                 .child(
-                    frame_checkbox_row(
+                    filter_checkbox(
                         format!(
                             "settings-audio-filter-{}-toggle",
                             audio_target_id(spec.target)
@@ -356,7 +374,8 @@ fn settings_audio_filter_range_field(
                         },
                         spec.enabled,
                         control_disabled || is_volume,
-                        palette,
+                        scheme,
+                        window,
                         cx,
                         move |root, _event, _window, cx| {
                             if control_disabled || is_volume {
@@ -380,13 +399,13 @@ fn settings_audio_filter_range_field(
                     div()
                         .flex()
                         .items_center()
-                        .gap_1()
-                        .child(settings_value_badge(spec.value_label.clone(), palette))
+                        .gap(theme::ui_rem(spacing::SPACE_1))
+                        .child(filter_value(spec.value_label.clone(), scheme))
                         .child(settings_audio_filter_reset(
                             spec.target,
                             spec.default_value,
                             control_disabled,
-                            palette,
+                            scheme,
                             window,
                             cx,
                         )),
@@ -398,7 +417,7 @@ fn settings_audio_filter_range_field(
             spec.max,
             slider_disabled,
             spec.target,
-            palette,
+            scheme,
             cx,
         ))
 }
@@ -409,21 +428,22 @@ fn settings_audio_filter_range_slider(
     max: i32,
     disabled: bool,
     target: AudioFilterRangeTarget,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     cx: &Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let fraction = signed_range_fraction(value, min, max);
     let drag = AudioFilterRangeDrag { target, min, max };
     let owner = cx.entity();
     let decrement_owner = owner.clone();
 
-    frame_slider(
+    m3::Slider::new(
         audio_slider_id(target),
         audio_slider_label(target),
-        fraction,
-        disabled,
-        palette,
+        f64::from(value),
+        f64::from(min),
+        f64::from(max),
     )
+    .enabled(!disabled)
+    .build(scheme)
     .on_a11y_action(gpui::AccessibleAction::Increment, move |_, _window, cx| {
         if disabled {
             return;
@@ -460,7 +480,10 @@ fn settings_audio_filter_range_slider(
         })
     })
     .on_drag_move(cx.listener(
-        |root, event: &DragMoveEvent<AudioFilterRangeDrag>, _window, cx| {
+        move |root, event: &DragMoveEvent<AudioFilterRangeDrag>, _window, cx| {
+            if disabled {
+                return;
+            }
             let drag = *event.drag(cx);
             let fraction = timeline_slider_percent_from_bounds(event.event.position, event.bounds);
             let value = signed_range_value_from_fraction(fraction, drag.min, drag.max);
@@ -474,6 +497,9 @@ fn settings_audio_filter_range_slider(
     ))
     .on_key_down(
         cx.listener(move |root, event: &gpui::KeyDownEvent, _window, cx| {
+            if disabled {
+                return;
+            }
             let Some(value) =
                 signed_range_value_for_key(value, min, max, event.keystroke.key.as_str())
             else {
@@ -488,40 +514,23 @@ fn settings_audio_filter_range_slider(
             cx.stop_propagation();
         }),
     )
-    .child(
-        frame_slider_handle(audio_handle_id(target), fraction, !disabled).when(
-            !disabled,
-            |handle| {
-                handle.on_drag(drag, |_drag, _position, _window, cx| {
-                    cx.new(|_| AudioFilterRangeDragPreview)
-                })
-            },
-        ),
-    )
 }
 
 fn settings_audio_filter_reset(
     target: AudioFilterRangeTarget,
     default_value: i32,
     disabled: bool,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    frame_icon_button(
+    m3::IconButton::new(
         format!("settings-audio-filter-{}-reset", audio_target_id(target)),
-        assets::ICON_REFRESH,
+        Symbol::RestartAlt,
         "Reset filter",
-        FrameIconButtonVariant::Ghost,
-        !disabled,
-        FrameIconButtonSize {
-            button: FRAME_ICON_BUTTON_SM_SIZE,
-            icon: FRAME_ICON_SM_SIZE,
-        },
-        palette,
-        window,
-        cx,
     )
+    .enabled(!disabled)
+    .build(scheme, window, cx)
     .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
         if disabled {
             return;
@@ -537,16 +546,18 @@ fn settings_audio_filter_reset(
 fn settings_audio_normalize_control(
     checked: bool,
     disabled: bool,
-    palette: &'static theme::ThemePalette,
-    cx: &Context<FrameRoot>,
+    scheme: &ColorScheme,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    frame_checkbox_row(
+    filter_checkbox(
         "settings-audio-normalize-row",
         "Normalize audio",
         "",
         checked,
         disabled,
-        palette,
+        scheme,
+        window,
         cx,
         move |root, _event, _window, cx| {
             if disabled {
@@ -563,84 +574,77 @@ fn settings_audio_compressor_control(
     enabled: bool,
     strength: FilterStrength,
     disabled: bool,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let mut grid = div().grid().grid_cols(3).mt_1().gap_2();
-    for (candidate, label) in [
-        (FilterStrength::Low, "Gentle"),
-        (FilterStrength::Medium, "Balanced"),
-        (FilterStrength::High, "Strong"),
-    ] {
-        grid = grid.child(
-            frame_choice_button(
-                format!(
-                    "settings-audio-compressor-{}",
-                    filter_strength_id(candidate)
-                ),
-                label,
-                enabled && strength == candidate,
-                !disabled,
-                palette,
-                window,
-                cx,
-            )
-            .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                if disabled {
-                    return;
-                }
-                if root.update_selected_config(|config| {
-                    apply_audio_compressor(config, true, candidate)
-                }) {
-                    cx.notify();
-                }
-            })),
-        );
-    }
-
+    let strengths = [
+        FilterStrength::Low,
+        FilterStrength::Medium,
+        FilterStrength::High,
+    ];
     div()
         .flex()
         .flex_col()
-        .gap_2()
-        .child(frame_checkbox_row(
+        .gap(theme::ui_rem(spacing::SPACE_2))
+        .child(filter_checkbox(
             "settings-audio-compressor-toggle",
             "Compressor",
             "",
             enabled,
             disabled,
-            palette,
+            scheme,
+            window,
             cx,
-            move |root, _event, _window, cx| {
-                if disabled {
-                    return;
-                }
-                if root.update_selected_config(|config| {
-                    apply_audio_compressor(config, !enabled, strength)
-                }) {
+            move |root, _, _, cx| {
+                if !disabled
+                    && root.update_selected_config(|config| {
+                        apply_audio_compressor(config, !enabled, strength)
+                    })
+                {
                     cx.notify();
                 }
             },
         ))
-        .child(grid)
+        .child(
+            m3::SegmentedButton::new(
+                "settings-audio-compressor",
+                "Compressor strength",
+                ["Gentle", "Balanced", "Strong"],
+            )
+            .selected(
+                strengths
+                    .iter()
+                    .position(|candidate| *candidate == strength),
+            )
+            .enabled(!disabled)
+            .on_select(cx.listener(move |root, index: &usize, _, cx| {
+                if !disabled
+                    && root.update_selected_config(|config| {
+                        apply_audio_compressor(config, true, strengths[*index])
+                    })
+                {
+                    cx.notify();
+                }
+            }))
+            .build(scheme, window, cx),
+        )
 }
 
 fn settings_audio_filters_reset_all(
     disabled: bool,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    frame_text_button(
+    m3::Button::new(
         "settings-audio-filters-reset-all",
-        "Reset audio filters",
-        ButtonVariant::Secondary,
-        false,
-        !disabled,
-        palette,
-        window,
-        cx,
+        "Reset all",
+        m3::ButtonVariant::Text,
     )
+    .icon(Symbol::RestartAlt)
+    .enabled(!disabled)
+    .build(scheme, window, cx)
     .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
         if disabled {
             return;
@@ -688,19 +692,6 @@ fn apply_audio_filter_range(
         AudioFilterRangeTarget::StereoWidth => {
             apply_audio_scalar_filter(config, AudioScalarFilter::StereoWidth, enabled, value)
         }
-    }
-}
-
-fn signed_range_fraction(value: i32, min: i32, max: i32) -> f32 {
-    if max <= min {
-        return 0.0;
-    }
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "Filter slider ranges are small bounded UI values."
-    )]
-    {
-        ((value.clamp(min, max) - min) as f32) / ((max - min) as f32)
     }
 }
 
@@ -758,20 +749,6 @@ const fn audio_slider_id(target: AudioFilterRangeTarget) -> &'static str {
     }
 }
 
-const fn audio_handle_id(target: AudioFilterRangeTarget) -> &'static str {
-    match target {
-        AudioFilterRangeTarget::Volume => "settings-audio-filter-volume-handle",
-        AudioFilterRangeTarget::Limiter => "settings-audio-filter-limiter-handle",
-        AudioFilterRangeTarget::Bass => "settings-audio-filter-bass-handle",
-        AudioFilterRangeTarget::Treble => "settings-audio-filter-treble-handle",
-        AudioFilterRangeTarget::HighPass => "settings-audio-filter-high-pass-handle",
-        AudioFilterRangeTarget::LowPass => "settings-audio-filter-low-pass-handle",
-        AudioFilterRangeTarget::NoiseReduction => "settings-audio-filter-noise-reduction-handle",
-        AudioFilterRangeTarget::DeEsser => "settings-audio-filter-de-esser-handle",
-        AudioFilterRangeTarget::StereoWidth => "settings-audio-filter-stereo-width-handle",
-    }
-}
-
 const fn audio_slider_label(target: AudioFilterRangeTarget) -> &'static str {
     match target {
         AudioFilterRangeTarget::Volume => "Volume",
@@ -786,10 +763,23 @@ const fn audio_slider_label(target: AudioFilterRangeTarget) -> &'static str {
     }
 }
 
-const fn filter_strength_id(strength: FilterStrength) -> &'static str {
-    match strength {
-        FilterStrength::Low => "low",
-        FilterStrength::Medium => "medium",
-        FilterStrength::High => "high",
+fn audio_filters_are_default(config: &ConversionConfig) -> bool {
+    config.audio_volume == crate::settings::DEFAULT_AUDIO_VOLUME
+        && !config.audio_normalize
+        && config.audio_filters == crate::settings::AudioFiltersConfig::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_is_available_for_saved_values_even_when_the_filter_is_off() {
+        let mut config = ConversionConfig::default();
+        assert!(audio_filters_are_default(&config));
+        config.audio_filters.bass.value = 4;
+        assert!(!audio_filters_are_default(&config));
+        assert!(reset_audio_filters(&mut config));
+        assert!(audio_filters_are_default(&config));
     }
 }

@@ -1,9 +1,8 @@
 use super::*;
 use super::{
     components::{
-        FRAME_ICON_BUTTON_SM_SIZE, FRAME_ICON_SM_SIZE, FrameIconButtonSize, FrameIconButtonVariant,
-        frame_checkbox_row, frame_choice_button, frame_icon_button, frame_list_item_with_caption,
-        frame_slider, frame_slider_handle, frame_text_button, frame_tooltip,
+        frame_choice_button, frame_list_item_with_caption, frame_slider, frame_slider_handle,
+        frame_tooltip,
     },
     input::{FrameTextInputSpec, frame_text_input},
     preview_panel::timeline_slider_percent_from_bounds,
@@ -14,6 +13,7 @@ use super::{
 };
 
 mod audio_filters;
+mod filter_controls;
 mod images;
 mod metadata;
 mod panel;

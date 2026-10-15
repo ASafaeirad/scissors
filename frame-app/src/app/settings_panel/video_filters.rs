@@ -1,6 +1,7 @@
+use super::filter_controls::{filter_checkbox, filter_section, filter_value};
 use super::*;
 use crate::app::m3::{self, M3Text};
-use crate::material::{ColorScheme, Symbol, shape, spacing, typography};
+use crate::material::{ColorScheme, Symbol, spacing, typography};
 use crate::settings::{
     DeinterlaceMode, FilterStrength, VideoScalarFilter, apply_video_deinterlace,
     apply_video_denoise, apply_video_grayscale, apply_video_scalar_filter, reset_video_filters,
@@ -75,7 +76,7 @@ pub(in crate::app) fn settings_video_filters_tab(
                 )),
         )
         .child(
-            video_filter_section("Color adjustments", scheme)
+            filter_section("Color adjustments", scheme)
                 .child(settings_video_filter_range_field(
                     video_filter_spec(
                         VideoFilterRangeTarget::Brightness,
@@ -126,7 +127,7 @@ pub(in crate::app) fn settings_video_filters_tab(
                 )),
         )
         .child(
-            video_filter_section("Tone", scheme)
+            filter_section("Tone", scheme)
                 .child(settings_video_filter_range_field(
                     video_filter_spec(
                         VideoFilterRangeTarget::Hue,
@@ -153,7 +154,7 @@ pub(in crate::app) fn settings_video_filters_tab(
                 )),
         )
         .child(
-            video_filter_section("Detail", scheme)
+            filter_section("Detail", scheme)
                 .child(settings_video_filter_range_field(
                     video_filter_spec(
                         VideoFilterRangeTarget::Sharpen,
@@ -180,7 +181,7 @@ pub(in crate::app) fn settings_video_filters_tab(
                 )),
         )
         .child(
-            video_filter_section("Cleanup", scheme)
+            filter_section("Cleanup", scheme)
                 .child(settings_video_denoise_control(
                     filters.denoise_enabled,
                     filters.denoise_strength,
@@ -203,7 +204,7 @@ pub(in crate::app) fn settings_video_filters_tab(
                 )),
         )
         .child(
-            video_filter_section("Style", scheme)
+            filter_section("Style", scheme)
                 .child(settings_video_filter_range_field(
                     video_filter_spec(
                         VideoFilterRangeTarget::Vignette,
@@ -226,7 +227,7 @@ pub(in crate::app) fn settings_video_filters_tab(
         );
 
     if !is_image_source {
-        content = content.child(video_filter_section("Interlace", scheme).child(
+        content = content.child(filter_section("Interlace", scheme).child(
             settings_video_deinterlace_control(
                 filters.deinterlace,
                 settings_disabled || !available_filters.bwdif,
@@ -397,7 +398,7 @@ fn settings_video_filter_range_field(
                 .justify_between()
                 .gap(theme::ui_rem(spacing::SPACE_2))
                 .child(
-                    video_filter_checkbox(
+                    filter_checkbox(
                         format!(
                             "settings-video-filter-{}-toggle",
                             video_target_id(spec.target)
@@ -436,7 +437,7 @@ fn settings_video_filter_range_field(
                         .flex()
                         .items_center()
                         .gap(theme::ui_rem(spacing::SPACE_1))
-                        .child(video_filter_value(spec.value_label.clone(), scheme))
+                        .child(filter_value(spec.value_label.clone(), scheme))
                         .child(settings_video_filter_reset(
                             spec.target,
                             spec.default_value,
@@ -596,7 +597,7 @@ fn settings_video_denoise_control(
         .flex()
         .flex_col()
         .gap(theme::ui_rem(spacing::SPACE_2))
-        .child(video_filter_checkbox(
+        .child(filter_checkbox(
             "settings-video-denoise-toggle",
             "Denoise",
             "",
@@ -648,7 +649,7 @@ fn settings_video_grayscale_control(
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    video_filter_checkbox(
+    filter_checkbox(
         "settings-video-grayscale-toggle",
         "Grayscale",
         "",
@@ -820,56 +821,4 @@ const fn video_slider_label(target: VideoFilterRangeTarget) -> &'static str {
         VideoFilterRangeTarget::Deband => "Deband",
         VideoFilterRangeTarget::Vignette => "Vignette",
     }
-}
-
-fn video_filter_section(label: &'static str, scheme: &ColorScheme) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(theme::ui_rem(spacing::SPACE_3))
-        .child(
-            div()
-                .m3_type(typography::LABEL_MEDIUM)
-                .text_color(color(scheme.primary))
-                .child(label),
-        )
-}
-
-fn video_filter_value(value: String, scheme: &ColorScheme) -> gpui::Div {
-    div()
-        .px(theme::ui_rem(spacing::SPACE_2))
-        .py(theme::ui_rem(spacing::SPACE_1))
-        .rounded(theme::ui_rem(shape::CORNER_SMALL))
-        .bg(color(scheme.surface_container_highest))
-        .text_color(color(scheme.on_surface_variant))
-        .m3_type(typography::LABEL_SMALL)
-        .child(value)
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Checkbox rows share the filter label, availability, and update handler."
-)]
-fn video_filter_checkbox(
-    id: impl Into<gpui::SharedString>,
-    label: &'static str,
-    description: &'static str,
-    checked: bool,
-    disabled: bool,
-    scheme: &ColorScheme,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-    handler: impl Fn(&mut FrameRoot, &ClickEvent, &mut Window, &mut Context<FrameRoot>) + 'static,
-) -> gpui::Stateful<gpui::Div> {
-    m3::Checkbox::new(id, label, checked)
-        .enabled(!disabled)
-        .build(scheme, window, cx)
-        .when(!description.is_empty(), |row| {
-            row.child(div().m3_type(typography::BODY_SMALL).child(description))
-        })
-        .on_click(cx.listener(move |root, event, window, cx| {
-            if !disabled {
-                handler(root, event, window, cx);
-            }
-        }))
 }
