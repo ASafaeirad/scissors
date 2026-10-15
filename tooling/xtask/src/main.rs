@@ -2001,6 +2001,8 @@ jobs:
       run: cargo test --locked -p frame-core --test media_integration -- --ignored --test-threads=1
     - name: ci::test_conversion_runner
       run: cargo test --locked -p frame-app conversion_runner::tests -- --ignored --test-threads=1
+    - name: ci::test_media_thumbnails
+      run: cargo test --locked -p frame-app app::media_assets::tests -- --ignored --test-threads=1
     timeout-minutes: 60
   cargo_check_macos:
     name: cargo check macos

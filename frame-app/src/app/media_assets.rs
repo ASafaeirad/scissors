@@ -62,6 +62,7 @@ pub(super) fn video_thumbnail(path: &str) -> Option<Arc<RenderImage>> {
 mod tests {
     use super::*;
     #[test]
+    #[ignore = "requires FFmpeg; run with --ignored"]
     fn video_thumbnail_decodes_a_bounded_bgra_frame_and_handles_missing_media() {
         let path = std::env::temp_dir().join(format!(
             "frame-library-thumbnail-{}.mp4",
