@@ -65,6 +65,7 @@ pub(in crate::app) struct SelectCard {
     icon: Option<Symbol>,
     supporting: Option<SharedString>,
     selected: bool,
+    single_line: bool,
     enabled: bool,
     focus: Option<FocusHandle>,
 }
@@ -81,6 +82,7 @@ impl SelectCard {
             icon: None,
             supporting: None,
             selected,
+            single_line: false,
             enabled: true,
             focus: None,
         }
@@ -93,6 +95,12 @@ impl SelectCard {
 
     pub(in crate::app) fn supporting(mut self, text: impl Into<SharedString>) -> Self {
         self.supporting = Some(text.into());
+        self
+    }
+
+    /// Truncates the label and supporting text for compact list rows.
+    pub(in crate::app) const fn single_line(mut self) -> Self {
+        self.single_line = true;
         self
     }
 
@@ -118,6 +126,7 @@ impl SelectCard {
             icon,
             supporting,
             selected,
+            single_line,
             enabled,
             focus,
         } = self;
@@ -144,6 +153,7 @@ impl SelectCard {
                 div()
                     .m3_type(typography::LABEL_LARGE)
                     .text_color(color(colors.label))
+                    .when(single_line, Styled::truncate)
                     .child(label.clone()),
             )
             .when_some(supporting, |this, supporting| {
@@ -151,6 +161,7 @@ impl SelectCard {
                     div()
                         .m3_type(typography::BODY_SMALL)
                         .text_color(color(colors.supporting))
+                        .when(single_line, Styled::truncate)
                         .child(supporting),
                 )
             })

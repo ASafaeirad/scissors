@@ -17,6 +17,7 @@ use crate::settings::{
 };
 
 mod model;
+mod presets;
 
 use model::{
     AUDIO_CHANNEL_OPTIONS, EXPORT_FORMATS, ExportPhase, GIF_COLOR_OPTIONS, GIF_DITHER_OPTIONS,
@@ -25,13 +26,12 @@ use model::{
     audio_quality_for_position, audio_section_summary, audio_summary, audio_vbr_control,
     custom_dimensions_error, encoder_description, encodes_audio, estimate_size_bytes, export_phase,
     exports_audio, format_clock, format_dimensions, format_rate, format_size, fps_note,
-    fps_option_label, fps_options, is_recommended, native_speed_preset, output_dimensions,
-    output_duration_seconds, output_fps, parse_dimension, pixel_format_text, quality_control,
-    reset_to_recommended, resolution_note, scaled_even, scaling_note, source_dimensions,
-    speed_presets,
+    fps_option_label, fps_options, native_speed_preset, output_dimensions, output_duration_seconds,
+    output_fps, parse_dimension, pixel_format_text, quality_control, resolution_note, scaled_even,
+    scaling_note, source_dimensions, speed_presets,
 };
 
-const DIALOG_WIDTH: f32 = 920.0;
+const DIALOG_WIDTH: f32 = 1160.0;
 const DIALOG_HEIGHT: f32 = 780.0;
 const DIALOG_ENTER_OFFSET: f32 = 12.0;
 const SIDE_PANEL_WIDTH: f32 = 300.0;
@@ -55,6 +55,7 @@ pub(super) struct ExportUiState {
     pub(super) lock_aspect: bool,
     /// Files started from the dialog. Empty until the user exports.
     pub(super) task_ids: Vec<String>,
+    preset_selections: std::collections::HashMap<String, presets::PresetSelection>,
     scroll_handle: ScrollHandle,
 }
 
@@ -67,6 +68,7 @@ impl Default for ExportUiState {
             advanced: false,
             lock_aspect: true,
             task_ids: Vec::new(),
+            preset_selections: std::collections::HashMap::new(),
             scroll_handle: ScrollHandle::new(),
         }
     }
@@ -130,6 +132,8 @@ impl FrameRoot {
             }
         }
         self.export_ui.open = true;
+        let view = self.export_view(crate::material::scheme(self.appearance.color_theme));
+        self.initialize_export_preset(&view);
         self.export_ui.present = true;
         true
     }
@@ -238,6 +242,10 @@ impl FrameRoot {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The dialog owns modal focus, animation, and the idle and progress layouts."
+    )]
     pub(super) fn render_export_dialog(
         &mut self,
         window: &mut Window,
@@ -294,6 +302,8 @@ impl FrameRoot {
                     audio_bitrate: self
                         .ensure_text_input_focus(FrameTextInputKind::AudioBitrate, cx),
                 };
+                let preset_focus = self.ensure_text_input_focus(FrameTextInputKind::PresetName, cx);
+                let preset_panel = self.export_presets_panel(&view, &preset_focus, window, cx);
                 vec![
                     div()
                         .flex_1()
@@ -302,8 +312,15 @@ impl FrameRoot {
                         .border_t_1()
                         .border_b_1()
                         .border_color(color(scheme.outline_variant))
+                        .child(preset_panel)
                         .child(Self::export_settings_column(&view, &focuses, window, cx))
-                        .child(export_side_panel(&view, &focuses, window, cx))
+                        .child(export_side_panel(
+                            &view,
+                            &focuses,
+                            self.export_preset_edited(&view),
+                            window,
+                            cx,
+                        ))
                         .into_any_element(),
                     export_footer(&view, &last_focus, window, cx).into_any_element(),
                 ]
@@ -2141,6 +2158,7 @@ fn switch_row(
 fn export_side_panel(
     view: &ExportView,
     focuses: &ExportInputFocuses,
+    preset_edited: bool,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -2207,27 +2225,21 @@ fn export_side_panel(
                 ),
         )
         .child(div().flex_1())
-        .when(view.kind == SourceKind::Video, |this| {
-            this.child(
-                div().flex().child(
-                    m3::Button::new(
-                        "export-reset",
-                        "Reset to recommended",
-                        m3::ButtonVariant::Text,
-                    )
-                    .icon(Symbol::RestartAlt)
-                    .enabled(!view.disabled && view.video_controls && !is_recommended(config))
-                    .build(scheme, window, cx)
-                    .on_click(cx.listener(
-                        |root, _: &ClickEvent, _window, cx| {
-                            if root.update_selected_config(reset_to_recommended) {
-                                cx.notify();
-                            }
-                        },
-                    )),
-                ),
+        .child(
+            m3::Button::new(
+                "export-revert-preset",
+                "Revert to preset",
+                m3::ButtonVariant::Text,
             )
-        })
+            .icon(Symbol::RestartAlt)
+            .enabled(!view.disabled && preset_edited)
+            .build(scheme, window, cx)
+            .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
+                if root.revert_export_preset() {
+                    cx.notify();
+                }
+            })),
+        )
 }
 
 /// A placeholder frame drawn at the output aspect ratio, labelled with the output size.

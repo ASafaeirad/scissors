@@ -2,13 +2,13 @@ use super::super::accessibility::focus_visible_ring;
 use super::{
     ButtonVariant, ClickEvent, Context, FluentBuilder, FrameRoot, FrameSurface, InteractiveElement,
     IntoElement, PANEL_HEADER_HEIGHT, ParentElement, SETTINGS_PANEL_PADDING,
-    SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE, SettingsPresetsTabState, SettingsRenderState,
+    SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE, SettingsRenderState,
     SettingsSubtitlesTabState, SettingsTab, SourceKind, StatefulInteractiveElement, Styled, Window,
     apply_button_motion, button_colors, button_highlight_shadows, button_motion, color, div,
     frame_tooltip, icon_svg, mix_color, panel_bottom_separator, resolve_active_settings_tab,
     settings_audio_filters_tab, settings_audio_tab, settings_images_tab, settings_metadata_tab,
-    settings_presets_tab, settings_section_label, settings_subtitles_tab, settings_tab_icon,
-    settings_video_filters_tab, theme, visible_settings_tabs,
+    settings_section_label, settings_subtitles_tab, settings_tab_icon, settings_video_filters_tab,
+    theme, visible_settings_tabs,
 };
 use crate::settings::source_kind_for;
 
@@ -261,20 +261,6 @@ pub(in crate::app) fn settings_tab_content(
             window,
             cx,
         )),
-        SettingsTab::Presets => content.child(settings_presets_tab(
-            SettingsPresetsTabState {
-                config: settings.config,
-                metadata: settings.metadata,
-                settings_disabled: settings.settings_disabled,
-                preset_name: settings.preset_name,
-                preset_name_focus: settings.preset_name_focus,
-                presets: settings.presets,
-                notice: settings.preset_notice,
-                palette,
-            },
-            window,
-            cx,
-        )),
     }
 }
 
@@ -296,7 +282,7 @@ mod tests {
     const TABS: &[SettingsTab] = &[
         SettingsTab::VideoFilters,
         SettingsTab::Audio,
-        SettingsTab::Presets,
+        SettingsTab::Metadata,
     ];
 
     #[test]
@@ -305,15 +291,15 @@ mod tests {
             (
                 SettingsTab::VideoFilters,
                 "left",
-                Some(SettingsTab::Presets),
+                Some(SettingsTab::Metadata),
             ),
             (
-                SettingsTab::Presets,
+                SettingsTab::Metadata,
                 "right",
                 Some(SettingsTab::VideoFilters),
             ),
             (SettingsTab::Audio, "home", Some(SettingsTab::VideoFilters)),
-            (SettingsTab::Audio, "end", Some(SettingsTab::Presets)),
+            (SettingsTab::Audio, "end", Some(SettingsTab::Metadata)),
             (SettingsTab::VideoFilters, "space", None),
         ];
 

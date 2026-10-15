@@ -204,8 +204,6 @@ impl Render for FrameRoot {
                     self.ensure_text_input_focus(FrameTextInputKind::MetadataServiceName, cx);
                 let metadata_service_provider_focus =
                     self.ensure_text_input_focus(FrameTextInputKind::MetadataServiceProvider, cx);
-                let preset_name_focus =
-                    self.ensure_text_input_focus(FrameTextInputKind::PresetName, cx);
                 let external_subtitle_language_focus =
                     self.ensure_text_input_focus(FrameTextInputKind::ExternalSubtitleLanguage, cx);
                 let external_subtitle_title_focus =
@@ -460,10 +458,6 @@ impl Render for FrameRoot {
                     subtitle_outline_color_draft: &self.subtitle_ui.outline_color_draft,
                     subtitle_font_color_hsv_draft: self.subtitle_ui.font_color_hsv_draft,
                     subtitle_outline_color_hsv_draft: self.subtitle_ui.outline_color_hsv_draft,
-                    preset_name: &self.settings_ui.preset_name_draft,
-                    preset_name_focus: Some(&preset_name_focus),
-                    presets: &self.presets,
-                    preset_notice: self.settings_ui.preset_notice.as_ref(),
                     subtitle_fonts: &self.subtitle_font_families,
                     available_encoders: &self.available_encoders,
                     available_filters: &self.available_filters,

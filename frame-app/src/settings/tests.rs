@@ -2223,7 +2223,6 @@ mod visible_settings_tabs {
                 "audio-filters",
                 "subtitles",
                 "metadata",
-                "presets"
             ]
         );
     }
@@ -2243,7 +2242,7 @@ mod visible_settings_tabs {
             Some(&metadata),
         ));
 
-        assert_eq!(tabs, vec!["audio", "audio-filters", "metadata", "presets"]);
+        assert_eq!(tabs, vec!["audio", "audio-filters", "metadata"]);
     }
 
     #[test]
@@ -2261,7 +2260,7 @@ mod visible_settings_tabs {
             Some(&metadata),
         ));
 
-        assert_eq!(tabs, vec!["video-filters", "images", "metadata", "presets"]);
+        assert_eq!(tabs, vec!["video-filters", "images", "metadata"]);
     }
 
     #[test]
@@ -2272,7 +2271,7 @@ mod visible_settings_tabs {
         };
         let tabs = tab_ids(super::visible_settings_tabs(&config, None));
 
-        assert_eq!(tabs, vec!["audio", "subtitles", "metadata", "presets"]);
+        assert_eq!(tabs, vec!["audio", "subtitles", "metadata"]);
     }
 
     #[test]
@@ -2307,8 +2306,8 @@ mod visible_settings_tabs {
             SettingsTab::Metadata
         );
         assert_eq!(
-            resolve_active_settings_tab(SettingsTab::Presets, &copy_config, Some(&metadata)),
-            SettingsTab::Presets
+            resolve_active_settings_tab(SettingsTab::Metadata, &copy_config, Some(&metadata)),
+            SettingsTab::Metadata
         );
     }
 }

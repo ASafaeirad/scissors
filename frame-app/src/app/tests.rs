@@ -3982,7 +3982,7 @@ mod visual_fixtures {
 
         root.apply_visual_fixture(Some(VisualFixture::SettingsPresets));
 
-        assert_eq!(root.settings_ui.active_tab, SettingsTab::Presets);
+        assert!(root.export_ui.open);
         assert_eq!(root.settings_ui.preset_name_draft, "Client Review MP4");
         assert!(
             root.presets
@@ -4097,10 +4097,6 @@ mod preview_shell {
             subtitle_outline_color_draft: "",
             subtitle_font_color_hsv_draft: hex_to_subtitle_hsv(DEFAULT_SUBTITLE_FONT_COLOR),
             subtitle_outline_color_hsv_draft: hex_to_subtitle_hsv(DEFAULT_SUBTITLE_OUTLINE_COLOR),
-            preset_name: "",
-            preset_name_focus: None,
-            presets: &[],
-            preset_notice: None,
             subtitle_fonts: &[],
             available_encoders: empty_encoders(),
             available_filters: empty_filters(),

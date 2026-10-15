@@ -35,7 +35,7 @@ pub fn visible_settings_tabs(
             SettingsTab::Audio => supports_audio,
             SettingsTab::AudioFilters => supports_audio_filters_tab,
             SettingsTab::Subtitles => supports_subtitles,
-            SettingsTab::Metadata | SettingsTab::Presets => true,
+            SettingsTab::Metadata => true,
         })
         .collect()
 }

@@ -1,11 +1,10 @@
 use super::{
     AppearancePopover, AppearanceSettings, ColorTheme, Context, DecreaseUiScale, FrameRoot,
-    FrameTextInputKind, IncreaseUiScale, PopoverState, PresetDefinition, PresetNotice,
-    PresetNoticeTone, PromptButton, PromptLevel, ResetUiScale, ScalePreset, Window,
-    add_external_subtitle_tracks, apply_preset, apply_subtitle_burn_path, create_custom_preset,
-    external_subtitle_file_dialog, is_supported_selectable_subtitle_path,
-    is_supported_subtitle_path, output_folder_dialog, pick_external_subtitle_files,
-    pick_output_folder, pick_subtitle_file, subtitle_file_dialog,
+    FrameTextInputKind, IncreaseUiScale, PopoverState, PresetNotice, PresetNoticeTone,
+    ResetUiScale, ScalePreset, Window, add_external_subtitle_tracks, apply_preset,
+    apply_subtitle_burn_path, create_custom_preset, external_subtitle_file_dialog,
+    is_supported_selectable_subtitle_path, is_supported_subtitle_path, output_folder_dialog,
+    pick_external_subtitle_files, pick_output_folder, pick_subtitle_file, subtitle_file_dialog,
 };
 
 impl FrameRoot {
@@ -340,7 +339,10 @@ impl FrameRoot {
     }
 
     pub(super) fn save_preset_from_draft(&mut self) -> bool {
-        if self.update_installation_in_progress() || self.file_queue.selected_file_locked() {
+        if self.update_installation_in_progress()
+            || (self.project.enabled && self.is_processing)
+            || (!self.editing_project_output() && self.file_queue.selected_file_locked())
+        {
             return false;
         }
         let name = self.settings_ui.preset_name_draft.trim();
@@ -361,7 +363,8 @@ impl FrameRoot {
         };
 
         let (id, next_sequence) = self.next_custom_preset_identity();
-        self.presets.push(create_custom_preset(id, name, &config));
+        self.presets
+            .push(create_custom_preset(id.clone(), name, &config));
         if let Err(error) = self.persist_app_settings() {
             self.presets.pop();
             self.settings_ui.preset_notice = Some(PresetNotice {
@@ -371,6 +374,7 @@ impl FrameRoot {
             return false;
         }
 
+        self.remember_export_preset(&id);
         self.settings_ui.next_custom_preset_sequence = next_sequence;
         self.settings_ui.preset_name_draft.clear();
         self.settings_ui.preset_notice = Some(PresetNotice {
@@ -414,7 +418,10 @@ impl FrameRoot {
     }
 
     pub(super) fn apply_preset_to_selected(&mut self, preset_id: &str) -> bool {
-        if self.update_installation_in_progress() || self.file_queue.selected_file_locked() {
+        if self.update_installation_in_progress()
+            || (self.project.enabled && self.is_processing)
+            || (!self.editing_project_output() && self.file_queue.selected_file_locked())
+        {
             return false;
         }
         let Some(preset) = self
@@ -425,95 +432,24 @@ impl FrameRoot {
         else {
             return false;
         };
-        let metadata = self.selected_source_metadata();
+        let metadata = if self.editing_project_output() {
+            self.project_output_metadata()
+        } else {
+            self.selected_source_metadata()
+        };
         if !crate::settings::preset_is_compatible(&preset, metadata.as_ref()) {
             return false;
         }
         let changed =
             self.update_selected_config(|config| apply_preset(config, &preset, metadata.as_ref()));
-        if changed {
+        let selection_changed = self.remember_export_preset(preset_id);
+        if changed || selection_changed {
             self.settings_ui.preset_notice = Some(PresetNotice {
                 text: format!("Applied {}", preset.name),
                 tone: PresetNoticeTone::Success,
             });
         }
-        changed
-    }
-
-    pub(super) fn confirm_apply_preset_to_all(
-        &self,
-        preset_id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.file_queue.selected_file_locked() {
-            return;
-        }
-        let Some(preset) = self
-            .presets
-            .iter()
-            .find(|preset| preset.id == preset_id)
-            .cloned()
-        else {
-            return;
-        };
-
-        let detail = format!(
-            "This will apply \"{}\" to all pending files in the queue. Existing settings will be overwritten.",
-            preset.name
-        );
-        let receiver = window.prompt(
-            PromptLevel::Warning,
-            "Apply to all?",
-            Some(&detail),
-            &[PromptButton::ok("Apply"), PromptButton::cancel("Cancel")],
-            cx,
-        );
-
-        cx.spawn(async move |this, cx| {
-            let Ok(answer) = receiver.await else {
-                return;
-            };
-            if answer != 0 {
-                return;
-            }
-
-            this.update(cx, |root, cx| {
-                if root.apply_preset_to_all_pending(&preset) {
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    pub(super) fn apply_preset_to_all_pending(&mut self, preset: &PresetDefinition) -> bool {
-        if self.update_installation_in_progress() {
-            return false;
-        }
-        let mut changed = false;
-        for file in self.file_queue.files_mut() {
-            if !file.status.is_actionable_for_conversion() {
-                continue;
-            }
-            let metadata = self.source_metadata.metadata_for(&file.id).cloned();
-            if !crate::settings::preset_is_compatible(preset, metadata.as_ref()) {
-                continue;
-            }
-            if apply_preset(&mut file.config, preset, metadata.as_ref()) {
-                changed = true;
-            }
-        }
-
-        if changed {
-            self.settings_ui.preset_notice = Some(PresetNotice {
-                text: "Applied to all items".to_string(),
-                tone: PresetNoticeTone::Success,
-            });
-        }
-
-        changed
+        changed || selection_changed
     }
 
     fn next_custom_preset_identity(&self) -> (String, u64) {

@@ -9,12 +9,8 @@ use crate::numeric::{
 };
 use crate::preview::parse_time_to_seconds;
 use crate::settings::{
-    AudioQualityRange, ConversionConfig, DEFAULT_AUDIO_BITRATE, DEFAULT_AUDIO_BITRATE_MODE,
-    DEFAULT_AUDIO_CHANNELS, DEFAULT_AUDIO_QUALITY, DEFAULT_CRF, DEFAULT_FPS, DEFAULT_PIXEL_FORMAT,
-    DEFAULT_PRESET, DEFAULT_QUALITY, DEFAULT_RESOLUTION, DEFAULT_SCALING_ALGORITHM,
-    DEFAULT_VIDEO_BITRATE, DEFAULT_VIDEO_BITRATE_MODE, ProcessingMode, SourceMetadata,
-    audio_codec_supports_vbr, audio_quality_range, container_supports_audio,
-    default_audio_codec_for_container, first_allowed_video_codec, is_gif_container,
+    AudioQualityRange, ConversionConfig, DEFAULT_VIDEO_BITRATE, ProcessingMode, SourceMetadata,
+    audio_codec_supports_vbr, audio_quality_range, container_supports_audio, is_gif_container,
     is_hardware_video_codec, is_video_preset_allowed, mp2_original_channels_are_unsupported,
 };
 
@@ -431,49 +427,6 @@ pub(super) fn advanced_summary(config: &ConversionConfig, encoder_label: &str) -
         );
     }
     parts.join(" · ")
-}
-
-/// Whether the video and audio encoding settings the dialog edits are at their recommended values.
-pub(super) fn is_recommended(config: &ConversionConfig) -> bool {
-    config.container == "mp4"
-        && config.video_codec == first_allowed_video_codec("mp4", None)
-        && config.resolution == DEFAULT_RESOLUTION
-        && config.fps == DEFAULT_FPS
-        && config.video_bitrate_mode == DEFAULT_VIDEO_BITRATE_MODE
-        && config.crf == DEFAULT_CRF
-        && config.quality == DEFAULT_QUALITY
-        && config.preset == DEFAULT_PRESET
-        && config.pixel_format == DEFAULT_PIXEL_FORMAT
-        && config.scaling_algorithm == DEFAULT_SCALING_ALGORITHM
-        && config.audio_codec == default_audio_codec_for_container("mp4")
-        && config.audio_channels == DEFAULT_AUDIO_CHANNELS
-        && config.audio_bitrate_mode == DEFAULT_AUDIO_BITRATE_MODE
-        && config.audio_bitrate == DEFAULT_AUDIO_BITRATE
-}
-
-/// Puts the video and audio encoding settings back to their recommended values. Returns whether anything changed.
-pub(super) fn reset_to_recommended(config: &mut ConversionConfig) -> bool {
-    let before = config.clone();
-    crate::settings::apply_output_container(config, "mp4");
-    config.video_codec = first_allowed_video_codec("mp4", None);
-    config.resolution = DEFAULT_RESOLUTION.to_string();
-    config.custom_width = None;
-    config.custom_height = None;
-    config.fps = DEFAULT_FPS.to_string();
-    config.video_bitrate_mode = DEFAULT_VIDEO_BITRATE_MODE.to_string();
-    config.video_bitrate = DEFAULT_VIDEO_BITRATE.to_string();
-    config.crf = DEFAULT_CRF;
-    config.quality = DEFAULT_QUALITY;
-    config.preset = DEFAULT_PRESET.to_string();
-    config.pixel_format = DEFAULT_PIXEL_FORMAT.to_string();
-    config.scaling_algorithm = DEFAULT_SCALING_ALGORITHM.to_string();
-    config.audio_codec = default_audio_codec_for_container("mp4").to_string();
-    config.audio_channels = DEFAULT_AUDIO_CHANNELS.to_string();
-    config.audio_bitrate_mode = DEFAULT_AUDIO_BITRATE_MODE.to_string();
-    config.audio_bitrate = DEFAULT_AUDIO_BITRATE.to_string();
-    config.audio_quality = DEFAULT_AUDIO_QUALITY.to_string();
-    crate::settings::normalize_video_config(config, None);
-    before != *config
 }
 
 /// Switches the output format. Moving to GIF from full-size, source-rate video picks a smaller
@@ -1110,21 +1063,6 @@ mod tests {
     }
 
     #[test]
-    fn reset_restores_recommended_settings() {
-        let mut config = ConversionConfig {
-            container: "webm".to_string(),
-            video_codec: "vp9".to_string(),
-            resolution: "720p".to_string(),
-            crf: 30,
-            ..ConversionConfig::default()
-        };
-        assert!(!is_recommended(&config));
-        assert!(reset_to_recommended(&mut config));
-        assert!(is_recommended(&config));
-        assert!(!reset_to_recommended(&mut config));
-    }
-
-    #[test]
     fn switching_to_gif_shrinks_full_size_exports() {
         let mut config = ConversionConfig::default();
         assert!(apply_export_format(&mut config, "gif"));
@@ -1382,20 +1320,5 @@ mod tests {
             audio_channels_note(&config, Some(&metadata)),
             "Mixes down to 1 channel"
         );
-    }
-
-    #[test]
-    fn reset_restores_recommended_audio() {
-        let mut config = ConversionConfig {
-            audio_codec: "mp3".to_string(),
-            audio_channels: "mono".to_string(),
-            audio_bitrate: "320".to_string(),
-            ..ConversionConfig::default()
-        };
-        assert!(!is_recommended(&config));
-        assert!(reset_to_recommended(&mut config));
-        assert!(is_recommended(&config));
-        assert_eq!(config.audio_codec, "aac");
-        assert_eq!(config.audio_channels, "original");
     }
 }

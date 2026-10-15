@@ -481,7 +481,7 @@ impl FrameRoot {
     }
     pub(super) fn apply_settings_presets_fixture(&mut self) {
         self.apply_preview_ready_fixture();
-        self.settings_ui.active_tab = SettingsTab::Presets;
+        self.open_export_dialog();
         self.settings_ui.preset_name_draft = "Client Review MP4".to_string();
         self.presets.push(PresetDefinition::custom(
             "custom-review".to_string(),
@@ -496,6 +496,8 @@ impl FrameRoot {
                 ..ConversionConfig::default()
             },
         ));
+        self.apply_preset_to_selected("balanced-mp4");
+        self.update_selected_config(|config| apply_fps(config, "30"));
     }
 
     fn seed_audio_source_fixture(&mut self) {
