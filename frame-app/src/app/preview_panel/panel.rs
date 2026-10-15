@@ -29,6 +29,7 @@ pub(in crate::app) struct PreviewShellState {
     pub(in crate::app) tooltip_visible_id: Option<String>,
     pub(in crate::app) palette: &'static theme::ThemePalette,
     pub(in crate::app) selected_file_name: Option<String>,
+    pub(in crate::app) waveforms: Vec<Option<Arc<super::super::waveform::Waveform>>>,
     pub(in crate::app) audio_tracks: Vec<frame_core::types::ExternalAudioTrack>,
     pub(in crate::app) metadata_status: PreviewMetadataStatus,
     pub(in crate::app) metadata_error: Option<String>,
@@ -188,6 +189,28 @@ pub(in crate::app) fn preview_panel(
         runtime_error: props.runtime_error,
     });
 
+    if !project_enabled {
+        let source = file_queue
+            .selected_file()
+            .filter(|_| state.availability.media_kind == PreviewMediaKind::Audio)
+            .and_then(|file| {
+                super::super::waveform::request(
+                    &file.path,
+                    file.config.selected_audio_tracks.first().copied(),
+                    state.duration_seconds,
+                    cx,
+                )
+            });
+        state.waveforms.push(source);
+        for track in &state.audio_tracks {
+            state.waveforms.push(super::super::waveform::request(
+                &track.path,
+                None,
+                std::time::Duration::from_millis(track.duration_millis).as_secs_f64(),
+                cx,
+            ));
+        }
+    }
     if project_enabled {
         state.duration_seconds = state.playback.duration();
         if props.project.as_ref().is_some_and(|project| {
@@ -325,6 +348,7 @@ pub(in crate::app) fn preview_shell_state(input: PreviewShellStateInput<'_>) -> 
         tooltip_visible_id: settings.tooltip_visible_id.map(str::to_string),
         palette: settings.palette,
         selected_file_name: selected_file.map(|file| file.name.clone()),
+        waveforms: Vec::new(),
         audio_tracks: selected_file
             .map(|file| file.config.external_audio_tracks.clone())
             .unwrap_or_default(),

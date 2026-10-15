@@ -481,6 +481,40 @@ fn track_row(
     };
     let grab = std::rc::Rc::new(std::cell::Cell::new(px(0.0)));
     let source_name = file.name.clone();
+    let waveform = (placement.kind == SourceKind::Audio)
+        .then(|| {
+            super::waveform::request(
+                &source.path,
+                source.config.selected_audio_tracks.first().copied(),
+                std::time::Duration::from_millis(source.duration_millis).as_secs_f64(),
+                cx,
+            )
+        })
+        .flatten();
+    let trim_start = source
+        .config
+        .start_time
+        .as_deref()
+        .and_then(frame_core::utils::parse_time)
+        .unwrap_or(0.0);
+    let trim_end = source
+        .config
+        .end_time
+        .as_deref()
+        .and_then(frame_core::utils::parse_time)
+        .unwrap_or_else(|| std::time::Duration::from_millis(source.duration_millis).as_secs_f64());
+    let mut ranges = Vec::new();
+    let mut cursor = trim_start;
+    for cut in frame_core::cuts::output_cut_ranges(&source.config) {
+        if trim_start + cut.start > cursor {
+            ranges.push((cursor, trim_start + cut.start));
+        }
+        cursor = trim_start + cut.end;
+    }
+    if cursor < trim_end {
+        ranges.push((cursor, trim_end));
+    }
+
     div()
         .flex()
         .items_center()
@@ -702,6 +736,19 @@ fn track_row(
                                     drag.grab_x.set(position.x);
                                     cx.new(|_| MediaDragPreview)
                                 },
+                            )
+                        })
+                        .when_some(waveform, |clip, waveform| {
+                            clip.items_start().pt(theme::ui_rem(2.0)).child(
+                                super::waveform::element(
+                                    waveform,
+                                    ranges,
+                                    color(if selected {
+                                        scheme.on_primary_container
+                                    } else {
+                                        scheme.on_secondary_container
+                                    }),
+                                ),
                             )
                         })
                         .child(

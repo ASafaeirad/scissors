@@ -531,6 +531,10 @@ fn preview_timeline_ruler(
         }))
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "A lane composes clip waveforms, audio movement, cut regions, and trim handles."
+)]
 fn preview_timeline_lane(
     state: &PreviewShellState,
     track_index: usize,
@@ -602,6 +606,19 @@ fn preview_timeline_lane(
                 &clip_name,
                 track.icon,
                 cx,
+            )
+            .when_some(
+                state.waveforms.get(track_index).and_then(Clone::clone),
+                |element, waveform| {
+                    let source_start = if track_index == 0 { clip.start } else { 0.0 };
+                    element.items_start().pt(theme::ui_rem(2.0)).child(
+                        super::super::waveform::element(
+                            waveform,
+                            vec![(source_start, source_start + clip.duration())],
+                            color(scheme.on_primary_container),
+                        ),
+                    )
+                },
             )
             .id(format!("timeline-clip-{track_index}-{clip_index}"))
             .when(

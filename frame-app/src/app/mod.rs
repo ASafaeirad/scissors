@@ -31,6 +31,7 @@ mod tests;
 mod track_speed;
 mod update_actions;
 mod update_session;
+mod waveform;
 mod workspace;
 pub use runtime::{frame_window_options, init_app, open_frame_window};
 
