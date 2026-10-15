@@ -1780,14 +1780,11 @@ mod visible_settings_tabs {
             None,
         ));
 
-        assert_eq!(
-            tabs,
-            vec!["video-filters", "audio", "audio-filters", "metadata",]
-        );
+        assert_eq!(tabs, vec!["video-filters", "audio-filters", "metadata",]);
     }
 
     #[test]
-    fn audio_source_shows_audio_and_metadata_tabs() {
+    fn audio_source_shows_audio_filters_and_metadata_tabs() {
         let metadata = SourceMetadata {
             media_kind: Some(SourceKind::Audio),
             video_codec: None,
@@ -1801,7 +1798,7 @@ mod visible_settings_tabs {
             Some(&metadata),
         ));
 
-        assert_eq!(tabs, vec!["audio", "audio-filters", "metadata"]);
+        assert_eq!(tabs, vec!["audio-filters", "metadata"]);
     }
 
     #[test]
@@ -1823,14 +1820,14 @@ mod visible_settings_tabs {
     }
 
     #[test]
-    fn copy_mode_shows_audio_and_metadata_tabs() {
+    fn copy_mode_shows_only_metadata_tab() {
         let config = ConversionConfig {
             processing_mode: ProcessingMode::Copy,
             ..ConversionConfig::default()
         };
         let tabs = tab_ids(super::visible_settings_tabs(&config, None));
 
-        assert_eq!(tabs, vec!["audio", "metadata"]);
+        assert_eq!(tabs, vec!["metadata"]);
     }
 
     #[test]
@@ -1846,7 +1843,7 @@ mod visible_settings_tabs {
             Some(&metadata),
         );
 
-        assert_eq!(active, SettingsTab::Audio);
+        assert_eq!(active, SettingsTab::AudioFilters);
 
         let image_metadata = SourceMetadata {
             media_kind: Some(SourceKind::Image),

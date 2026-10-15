@@ -109,7 +109,6 @@ pub enum VisualFixture {
     PreviewReady,
     PreviewMultitrack,
     ProjectTimeline,
-    SettingsAudio,
     SettingsAudioFilters,
     SettingsImages,
     SettingsMetadata,
@@ -135,7 +134,6 @@ pub fn visual_fixture_from_env_value(value: Option<&str>) -> Option<VisualFixtur
         Some("preview-ready") => Some(VisualFixture::PreviewReady),
         Some("preview-multitrack") => Some(VisualFixture::PreviewMultitrack),
         Some("project-timeline") => Some(VisualFixture::ProjectTimeline),
-        Some("settings-audio") => Some(VisualFixture::SettingsAudio),
         Some("settings-audio-filters") => Some(VisualFixture::SettingsAudioFilters),
         Some("settings-images") => Some(VisualFixture::SettingsImages),
         Some("settings-metadata") => Some(VisualFixture::SettingsMetadata),
@@ -442,7 +440,6 @@ mod tests {
                 ("preview-crop", VisualFixture::PreviewCrop),
                 ("preview-ready", VisualFixture::PreviewReady),
                 ("preview-multitrack", VisualFixture::PreviewMultitrack),
-                ("settings-audio", VisualFixture::SettingsAudio),
                 (
                     "settings-audio-filters",
                     VisualFixture::SettingsAudioFilters,

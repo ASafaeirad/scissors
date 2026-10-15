@@ -75,7 +75,7 @@ impl FrameRoot {
             .any(|clip| clip.id == id && clip.kind == SourceKind::Audio);
         self.workspace_ui.tool = if audio { 2 } else { 1 };
         self.settings_ui.active_tab = if audio {
-            SettingsTab::Audio
+            SettingsTab::AudioFilters
         } else {
             SettingsTab::VideoFilters
         };

@@ -2,9 +2,8 @@ use super::*;
 use super::{
     components::{
         FRAME_ICON_BUTTON_SM_SIZE, FRAME_ICON_SM_SIZE, FrameIconButtonSize, FrameIconButtonVariant,
-        FrameTrackListItemText, frame_checkbox_row, frame_choice_button, frame_icon_button,
-        frame_list_item_with_caption, frame_slider, frame_slider_handle, frame_text_button,
-        frame_tooltip, frame_track_list_item,
+        frame_checkbox_row, frame_choice_button, frame_icon_button, frame_list_item_with_caption,
+        frame_slider, frame_slider_handle, frame_text_button, frame_tooltip,
     },
     input::{FrameTextInputSpec, frame_text_input},
     preview_panel::timeline_slider_percent_from_bounds,
@@ -14,7 +13,6 @@ use super::{
     },
 };
 
-mod audio;
 mod audio_filters;
 mod images;
 mod metadata;
@@ -23,7 +21,6 @@ mod shared;
 mod video;
 mod video_filters;
 
-pub(super) use audio::*;
 pub(super) use audio_filters::*;
 pub(super) use images::*;
 pub(super) use metadata::*;

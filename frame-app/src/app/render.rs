@@ -182,8 +182,6 @@ impl Render for FrameRoot {
                     self.preview_timeline_enabled(),
                     cx,
                 );
-                let audio_bitrate_focus =
-                    self.ensure_text_input_focus(FrameTextInputKind::AudioBitrate, cx);
                 let video_width_focus =
                     self.ensure_text_input_focus(FrameTextInputKind::VideoCustomWidth, cx);
                 let video_height_focus =
@@ -213,7 +211,6 @@ impl Render for FrameRoot {
                     metadata_status: source_metadata_entry.status,
                     metadata_error: source_metadata_entry.error.as_deref(),
                     settings_disabled: self.file_queue.selected_file_locked(),
-                    audio_bitrate_focus: Some(&audio_bitrate_focus),
                     video_width_focus: Some(&video_width_focus),
                     video_height_focus: Some(&video_height_focus),
                     metadata_focuses: SettingsMetadataInputFocuses {
@@ -226,7 +223,6 @@ impl Render for FrameRoot {
                         service_name: Some(&metadata_service_name_focus),
                         service_provider: Some(&metadata_service_provider_focus),
                     },
-                    available_encoders: &self.available_encoders,
                     available_filters: &self.available_filters,
                 };
                 content.child(workspace_view(

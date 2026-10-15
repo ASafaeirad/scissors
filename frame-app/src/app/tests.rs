@@ -3567,26 +3567,6 @@ mod visual_fixtures {
     }
 
     #[test]
-    fn settings_audio_fixture_opens_audio_tab_with_tracks_and_controls() {
-        let mut root = FrameRoot::new();
-
-        root.apply_visual_fixture(Some(VisualFixture::SettingsAudio));
-
-        assert_eq!(root.settings_ui.active_tab, SettingsTab::Audio);
-        assert_eq!(
-            root.selected_source_metadata()
-                .map(|metadata| metadata.audio_tracks.len()),
-            Some(2)
-        );
-        assert_eq!(
-            root.file_queue
-                .selected_file()
-                .map(|file| (file.config.audio_codec.as_str(), file.config.audio_volume)),
-            Some(("mp3", 145))
-        );
-    }
-
-    #[test]
     fn settings_audio_filters_fixture_opens_audio_filters_tab_with_enabled_filters() {
         let mut root = FrameRoot::new();
 
@@ -3703,22 +3683,6 @@ mod preview_shell {
     use super::preview_panel::PreviewShellStateInput;
     use super::*;
 
-    fn empty_encoders() -> &'static AvailableEncoders {
-        static ENCODERS: AvailableEncoders = AvailableEncoders {
-            mpeg2video: false,
-            mp2: false,
-            pcm_bluray: false,
-            h264_videotoolbox: false,
-            h264_nvenc: false,
-            hevc_videotoolbox: false,
-            hevc_nvenc: false,
-            av1_nvenc: false,
-            libfdk_aac: false,
-            libmp3lame: false,
-        };
-        &ENCODERS
-    }
-
     fn empty_filters() -> &'static AvailableFilters {
         static FILTERS: AvailableFilters = AvailableFilters {
             eq: false,
@@ -3759,7 +3723,6 @@ mod preview_shell {
             metadata_status: status,
             metadata_error: None,
             settings_disabled: false,
-            audio_bitrate_focus: None,
             video_width_focus: None,
             video_height_focus: None,
             metadata_focuses: SettingsMetadataInputFocuses {
@@ -3772,7 +3735,6 @@ mod preview_shell {
                 service_name: None,
                 service_provider: None,
             },
-            available_encoders: empty_encoders(),
             available_filters: empty_filters(),
         }
     }

@@ -73,7 +73,6 @@ impl FrameRoot {
                     ];
                 }
             }
-            Some(VisualFixture::SettingsAudio) => self.apply_settings_audio_fixture(),
             Some(VisualFixture::SettingsAudioFilters) => {
                 self.apply_settings_audio_filters_fixture();
             }
@@ -94,7 +93,7 @@ impl FrameRoot {
             None => {}
         }
         self.workspace_ui.tool = match fixture {
-            Some(VisualFixture::SettingsAudio | VisualFixture::SettingsAudioFilters) => 2,
+            Some(VisualFixture::SettingsAudioFilters) => 2,
             Some(
                 VisualFixture::ProjectTimeline
                 | VisualFixture::PreviewCrop
@@ -185,7 +184,7 @@ impl FrameRoot {
     }
     pub(super) fn apply_workspace_audio_fixture(&mut self) {
         self.seed_audio_source_fixture();
-        self.settings_ui.active_tab = SettingsTab::Audio;
+        self.settings_ui.active_tab = SettingsTab::AudioFilters;
     }
     pub(super) fn apply_workspace_image_fixture(&mut self) {
         self.seed_image_source_fixture();
@@ -316,20 +315,6 @@ impl FrameRoot {
             file.config.video_filters.vignette.enabled = true;
             file.config.video_filters.vignette.value = 18;
             file.config.video_filters.deinterlace = DeinterlaceMode::Auto;
-        }
-    }
-    pub(super) fn apply_settings_audio_fixture(&mut self) {
-        self.seed_audio_source_fixture();
-        self.settings_ui.active_tab = SettingsTab::Audio;
-        if let Some(file) = self.file_queue.selected_file_mut() {
-            file.config.container = "mp3".to_string();
-            file.config.audio_codec = "mp3".to_string();
-            file.config.audio_bitrate_mode = "vbr".to_string();
-            file.config.audio_quality = "2".to_string();
-            file.config.audio_channels = "stereo".to_string();
-            file.config.audio_volume = 145;
-            file.config.audio_normalize = true;
-            file.config.selected_audio_tracks = vec![1];
         }
     }
     pub(super) fn apply_settings_audio_filters_fixture(&mut self) {

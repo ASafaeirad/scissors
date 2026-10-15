@@ -26,7 +26,6 @@ pub fn visible_settings_tabs(
         .filter(|tab| match tab {
             SettingsTab::VideoFilters => supports_video_filters_tab,
             SettingsTab::Images => supports_images_tab,
-            SettingsTab::Audio => supports_audio,
             SettingsTab::AudioFilters => supports_audio_filters_tab,
             SettingsTab::Metadata => true,
         })

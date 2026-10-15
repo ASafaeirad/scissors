@@ -10,8 +10,6 @@ pub(in crate::app) const FRAME_CHECKBOX_SIZE: f32 = 16.0;
 pub(in crate::app) const FRAME_CHECK_ICON_SIZE: f32 = 14.0;
 pub(in crate::app) const FRAME_CHECKBOX_ROW_INDICATOR_OFFSET_Y: f32 = 2.0;
 const FRAME_CHECKBOX_MARK_SIZE: f32 = 8.0;
-const FRAME_SELECTION_DOT_SIZE: f32 = 12.0;
-const FRAME_SELECTION_DOT_MARK_SIZE: f32 = 6.0;
 
 pub(in crate::app) fn frame_checkbox_indicator(
     checked: bool,
@@ -61,30 +59,6 @@ pub(in crate::app) fn frame_checkbox_indicator(
         .opacity(if disabled { 0.5 } else { 1.0 })
         .shadow(input_highlight_shadows(palette))
         .child(mark)
-}
-
-pub(in crate::app) fn frame_selection_dot(
-    selected_progress: f32,
-    palette: &theme::ThemePalette,
-) -> gpui::Div {
-    div()
-        .w(theme::ui_rem(FRAME_SELECTION_DOT_SIZE))
-        .h(theme::ui_rem(FRAME_SELECTION_DOT_SIZE))
-        .flex_shrink_0()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_full()
-        .bg(color(palette.canvas))
-        .shadow(input_highlight_shadows(palette))
-        .child(
-            div()
-                .w(theme::ui_rem(FRAME_SELECTION_DOT_MARK_SIZE))
-                .h(theme::ui_rem(FRAME_SELECTION_DOT_MARK_SIZE))
-                .rounded_full()
-                .bg(color(palette.control_muted))
-                .opacity(selected_progress.clamp(0.0, 1.0)),
-        )
 }
 
 #[expect(

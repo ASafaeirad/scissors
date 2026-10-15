@@ -50,7 +50,6 @@ pub(super) const MAX_IMAGE_PNG_COMPRESSION: u32 = 9;
 pub enum SettingsTab {
     VideoFilters,
     Images,
-    Audio,
     AudioFilters,
     Metadata,
 }
@@ -61,7 +60,6 @@ impl SettingsTab {
         match self {
             Self::VideoFilters => "Video Filters",
             Self::Images => "Images",
-            Self::Audio => "Audio",
             Self::AudioFilters => "Audio Filters",
             Self::Metadata => "Metadata",
         }
@@ -72,17 +70,15 @@ impl SettingsTab {
         match self {
             Self::VideoFilters => "video-filters",
             Self::Images => "images",
-            Self::Audio => "audio",
             Self::AudioFilters => "audio-filters",
             Self::Metadata => "metadata",
         }
     }
 }
 
-pub const ALL_SETTINGS_TABS: [SettingsTab; 5] = [
+pub const ALL_SETTINGS_TABS: [SettingsTab; 4] = [
     SettingsTab::VideoFilters,
     SettingsTab::Images,
-    SettingsTab::Audio,
     SettingsTab::AudioFilters,
     SettingsTab::Metadata,
 ];

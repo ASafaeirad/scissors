@@ -70,7 +70,6 @@ pub(in crate::app) const fn settings_tab_icon(tab: SettingsTab) -> &'static str 
     match tab {
         SettingsTab::VideoFilters => assets::ICON_VIDEO_FILTERS,
         SettingsTab::Images => assets::ICON_FILE_IMAGE,
-        SettingsTab::Audio => assets::ICON_MUSIC,
         SettingsTab::AudioFilters => assets::ICON_AUDIO_FILTERS,
         SettingsTab::Metadata => assets::ICON_TAGS,
     }
@@ -78,10 +77,6 @@ pub(in crate::app) const fn settings_tab_icon(tab: SettingsTab) -> &'static str 
 
 pub(in crate::app) fn is_lossless_audio_codec(codec: &str) -> bool {
     matches!(codec, "flac" | "alac" | "pcm_s16le" | "pcm_bluray")
-}
-
-pub(in crate::app) fn parse_audio_value(value: &str, fallback: u32) -> u32 {
-    value.trim().parse::<u32>().unwrap_or(fallback)
 }
 
 pub(in crate::app) fn range_fraction(value: u32, min: u32, max: u32) -> f32 {

@@ -626,7 +626,7 @@ fn navigation_rail(
         root.workspace_ui.tool = *index;
         root.settings_ui.active_tab = match index {
             1 => SettingsTab::VideoFilters,
-            2 => SettingsTab::Audio,
+            2 => SettingsTab::AudioFilters,
             _ => root.settings_ui.active_tab,
         };
         cx.notify();
