@@ -177,14 +177,6 @@
 		"bmp": [],
 		"tiff": []
 	},
-	"containerSubtitleCodecCompatibility": {
-		"mp4": ["mov_text"],
-		"mov": ["*"],
-		"mkv": ["*"],
-		"webm": ["webvtt"],
-		"mpegts": ["dvb_subtitle", "dvb_teletext", "arib_caption"],
-		"m2ts": ["hdmv_pgs_subtitle", "hdmv_text_subtitle"]
-	},
 	"defaultAudioCodec": {
 		"mp3": "mp3",
 		"wav": "pcm_s16le",

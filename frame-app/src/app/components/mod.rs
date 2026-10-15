@@ -9,14 +9,13 @@ use super::{
     primitives::{
         ButtonColors, ButtonVariant, animated_button_colors, apply_button_motion, button_colors,
         button_highlight_shadows, button_motion, button_mouse_down, card_surface_shadows, color,
-        icon_svg, input_highlight_shadows, parse_hex,
+        icon_svg, input_highlight_shadows,
     },
     *,
 };
 
 mod button;
 mod checkbox;
-mod color_picker;
 mod list_item;
 mod scrollbar;
 mod select;
@@ -25,7 +24,6 @@ mod tooltip;
 
 pub(in crate::app) use button::*;
 pub(in crate::app) use checkbox::*;
-pub(in crate::app) use color_picker::*;
 pub(in crate::app) use list_item::*;
 pub(in crate::app) use scrollbar::*;
 pub(in crate::app) use select::*;

@@ -251,21 +251,6 @@ pub struct CutSegment {
     pub end_time: String,
 }
 
-/// A sidecar subtitle file that should remain selectable in the exported media.
-#[derive(Debug, Serialize, Deserialize, Default, Clone, Eq, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ExternalSubtitleTrack {
-    pub path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub language: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub is_default: bool,
-    #[serde(default)]
-    pub is_forced: bool,
-}
-
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeMetadata {
@@ -371,20 +356,6 @@ pub struct ConversionConfig {
     #[serde(default)]
     pub timeline_sources: Vec<TimelineSource>,
     pub selected_audio_tracks: Vec<u32>,
-    pub selected_subtitle_tracks: Vec<u32>,
-    #[serde(default)]
-    pub external_subtitle_tracks: Vec<ExternalSubtitleTrack>,
-    pub subtitle_burn_path: Option<String>,
-    #[serde(default)]
-    pub subtitle_font_name: Option<String>,
-    #[serde(default)]
-    pub subtitle_font_size: Option<String>,
-    #[serde(default)]
-    pub subtitle_font_color: Option<String>,
-    #[serde(default)]
-    pub subtitle_outline_color: Option<String>,
-    #[serde(default)]
-    pub subtitle_position: Option<String>,
     pub resolution: String,
     pub custom_width: Option<String>,
     pub custom_height: Option<String>,
@@ -754,7 +725,6 @@ mod tests {
         assert_eq!(config.gif_dither, "sierra2_4a");
         assert_eq!(config.gif_loop, 0);
         assert_eq!(config.metadata.mode, MetadataMode::Preserve);
-        assert!(config.external_subtitle_tracks.is_empty());
         assert_eq!(config.metadata.service_name, None);
         assert_eq!(config.metadata.service_provider, None);
     }
@@ -770,7 +740,6 @@ mod tests {
         assert_eq!(serialized["imageWebpPreset"], "default");
         assert_eq!(serialized["imagePngPrediction"], "paeth");
         assert_eq!(serialized["metadata"]["mode"], "preserve");
-        assert_eq!(serialized["externalSubtitleTracks"], json!([]));
         assert!(serialized.get("processing_mode").is_none());
     }
 

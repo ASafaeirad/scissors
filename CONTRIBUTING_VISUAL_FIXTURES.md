@@ -22,7 +22,7 @@ Use `FRAME_VISUAL_THEME=dark|light` to override the persisted color theme for
 the fixture process without writing the override back to settings.
 
 ```bash
-FRAME_GPUI_VISUAL_FIXTURE=settings-subtitles \
+FRAME_GPUI_VISUAL_FIXTURE=settings-video-filters \
 FRAME_GPUI_UI_SCALE=200 \
 FRAME_VISUAL_THEME=light \
 cargo xtask run
@@ -85,8 +85,6 @@ the final GPUI rendering.
 | `settings-audio` | Audio settings tab with an audio source and tracks | Audio codec controls, VBR quality, channel selection, volume and normalize controls, track selection rows, and audio-only source treatment. |
 | `settings-images` | Image settings tab with a selected PNG source | Image output controls, custom image dimensions, image-source metadata, and non-video settings visibility. |
 | `settings-metadata` | Metadata tab with source tags and output metadata drafts | Source metadata presentation, editable metadata fields, long value wrapping, and tag/value alignment. |
-| `settings-subtitles` | Subtitles tab with selectable sidecars, source tracks, and burn-in styling | External subtitle rows and metadata editor, default/forced states, source track rows, burn-in file state, font controls, color swatches, outline color, position controls, and selected track state. |
-| `settings-subtitles-popover` | Subtitles tab with the font color picker open | Color picker popover placement, swatch state, HSV draft color, popover layering, and focus treatment inside the settings panel. |
 | `settings-presets` | Export dialog with an edited built-in preset, a custom preset, and a name draft | Grouped preset library, saving current options, custom preset deletion, and preset form spacing. |
 | `update-available` | Update dialog with release notes and a platform asset | Update dialog layout, release notes markdown rendering, scroll behavior, close animation, footer actions, and platform-specific asset copy. |
 | `workspace-empty` | Empty workspace | Welcome/import screen, empty queue layout, primary and secondary import actions, and first-run visual balance. |

@@ -2251,12 +2251,6 @@ fn preview_visual_hash(config: &ConversionConfig) -> u64 {
     config.scaling_algorithm.hash(&mut state);
     config.fps.hash(&mut state);
     hash_crop(config.crop.as_ref(), &mut state);
-    config.subtitle_burn_path.hash(&mut state);
-    config.subtitle_font_name.hash(&mut state);
-    config.subtitle_font_size.hash(&mut state);
-    config.subtitle_font_color.hash(&mut state);
-    config.subtitle_outline_color.hash(&mut state);
-    config.subtitle_position.hash(&mut state);
     hash_overlay(config.overlay.as_ref(), &mut state);
     hash_video_filters(&config.video_filters, &mut state);
     config.gif_colors.hash(&mut state);

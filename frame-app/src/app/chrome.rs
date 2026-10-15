@@ -19,8 +19,8 @@ use super::{
     PANEL_HEADER_HEIGHT, ParentElement, PopoverState, SETTINGS_CONTROL_HEIGHT,
     SURFACE_MOTION_DURATION, ScalePreset, ScrollHandle, StatefulInteractiveElement, Styled,
     UPDATE_INSTALL_WAIT_MESSAGE, UpdateInfo, UpdateStatus, Window, WindowControlArea, assets, div,
-    ease_in_out, format_total_size, motion_is_hidden, motion_target, px, relative,
-    set_motion_target, settings_sheet_right_inset, subtitle_popover_slide_offset, theme,
+    ease_in_out, format_total_size, motion_is_hidden, motion_target, popover_slide_offset, px,
+    relative, set_motion_target, settings_sheet_right_inset, theme,
 };
 use gpui::{HighlightStyle, StyledText, deferred};
 
@@ -756,7 +756,7 @@ fn app_settings_appearance_select<T: AppSettingsAppearanceValue>(
 
         let mut menu = frame_select_popover(
             T::PANEL_ID,
-            54.0 + subtitle_popover_slide_offset(progress),
+            54.0 + popover_slide_offset(progress),
             progress,
             list,
             palette,

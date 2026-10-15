@@ -254,15 +254,6 @@ pub(super) fn icon_svg(path: &'static str, size: f32, icon_color: Rgba) -> impl 
         .text_color(icon_color)
 }
 
-pub(super) fn parse_hex(hex: &str) -> Rgba {
-    let hex = hex.trim_start_matches('#');
-    let red = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
-    let green = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
-    let blue = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
-
-    color(theme::RgbaToken::from_rgb(red, green, blue))
-}
-
 pub(super) const fn frame_highlight_px() -> f32 {
     if cfg!(target_os = "macos") { 0.5 } else { 1.0 }
 }

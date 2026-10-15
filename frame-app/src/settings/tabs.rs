@@ -3,10 +3,7 @@ use super::{
         ALL_SETTINGS_TABS, ConversionConfig, ProcessingMode, SettingsTab, SourceKind,
         SourceMetadata,
     },
-    rules::{
-        container_supports_audio, container_supports_subtitles, is_audio_only_container,
-        source_kind_for,
-    },
+    rules::{container_supports_audio, is_audio_only_container, source_kind_for},
 };
 
 #[must_use]
@@ -20,9 +17,6 @@ pub fn visible_settings_tabs(
     let is_copy_mode = config.processing_mode == ProcessingMode::Copy;
     let is_audio_container = is_audio_only_container(&config.container);
     let supports_audio = container_supports_audio(&config.container) && !is_source_image;
-    let supports_subtitles = !is_source_audio_only
-        && !is_source_image
-        && container_supports_subtitles(&config.container);
     let supports_video_filters_tab = !is_source_audio_only && !is_audio_container && !is_copy_mode;
     let supports_images_tab = is_source_image && !is_audio_container && !is_copy_mode;
     let supports_audio_filters_tab = supports_audio && !is_copy_mode;
@@ -34,7 +28,6 @@ pub fn visible_settings_tabs(
             SettingsTab::Images => supports_images_tab,
             SettingsTab::Audio => supports_audio,
             SettingsTab::AudioFilters => supports_audio_filters_tab,
-            SettingsTab::Subtitles => supports_subtitles,
             SettingsTab::Metadata => true,
         })
         .collect()

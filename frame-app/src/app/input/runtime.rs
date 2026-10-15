@@ -39,14 +39,10 @@ pub(in crate::app) enum FrameTextInputKind {
     MetadataServiceName,
     MetadataServiceProvider,
     PresetName,
-    ExternalSubtitleLanguage,
-    ExternalSubtitleTitle,
-    SubtitleFontColorHex,
-    SubtitleOutlineColorHex,
 }
 
 impl FrameTextInputKind {
-    pub(in crate::app) const ALL: [Self; 21] = [
+    pub(in crate::app) const ALL: [Self; 17] = [
         Self::MaxConcurrency,
         Self::AudioBitrate,
         Self::VideoCustomWidth,
@@ -64,10 +60,6 @@ impl FrameTextInputKind {
         Self::MetadataServiceName,
         Self::MetadataServiceProvider,
         Self::PresetName,
-        Self::ExternalSubtitleLanguage,
-        Self::ExternalSubtitleTitle,
-        Self::SubtitleFontColorHex,
-        Self::SubtitleOutlineColorHex,
     ];
 
     pub(in crate::app) const fn accessibility_label(self) -> &'static str {
@@ -89,10 +81,6 @@ impl FrameTextInputKind {
             Self::MetadataServiceName => "MPEG transport stream service name",
             Self::MetadataServiceProvider => "MPEG transport stream service provider",
             Self::PresetName => "Preset name",
-            Self::ExternalSubtitleLanguage => "Selectable subtitle language",
-            Self::ExternalSubtitleTitle => "Selectable subtitle title",
-            Self::SubtitleFontColorHex => "Subtitle font color",
-            Self::SubtitleOutlineColorHex => "Subtitle outline color",
         }
     }
 
@@ -208,10 +196,6 @@ pub(in crate::app) struct FrameTextInputStore {
     metadata_service_name: FrameTextInputRuntime,
     metadata_service_provider: FrameTextInputRuntime,
     preset_name: FrameTextInputRuntime,
-    external_subtitle_language: FrameTextInputRuntime,
-    external_subtitle_title: FrameTextInputRuntime,
-    subtitle_font_color: FrameTextInputRuntime,
-    subtitle_outline_color: FrameTextInputRuntime,
 }
 
 impl FrameTextInputStore {
@@ -234,10 +218,6 @@ impl FrameTextInputStore {
             FrameTextInputKind::MetadataServiceName => &self.metadata_service_name,
             FrameTextInputKind::MetadataServiceProvider => &self.metadata_service_provider,
             FrameTextInputKind::PresetName => &self.preset_name,
-            FrameTextInputKind::ExternalSubtitleLanguage => &self.external_subtitle_language,
-            FrameTextInputKind::ExternalSubtitleTitle => &self.external_subtitle_title,
-            FrameTextInputKind::SubtitleFontColorHex => &self.subtitle_font_color,
-            FrameTextInputKind::SubtitleOutlineColorHex => &self.subtitle_outline_color,
         }
     }
 
@@ -263,10 +243,6 @@ impl FrameTextInputStore {
             FrameTextInputKind::MetadataServiceName => &mut self.metadata_service_name,
             FrameTextInputKind::MetadataServiceProvider => &mut self.metadata_service_provider,
             FrameTextInputKind::PresetName => &mut self.preset_name,
-            FrameTextInputKind::ExternalSubtitleLanguage => &mut self.external_subtitle_language,
-            FrameTextInputKind::ExternalSubtitleTitle => &mut self.external_subtitle_title,
-            FrameTextInputKind::SubtitleFontColorHex => &mut self.subtitle_font_color,
-            FrameTextInputKind::SubtitleOutlineColorHex => &mut self.subtitle_outline_color,
         }
     }
 }
@@ -290,10 +266,6 @@ pub(in crate::app) struct FrameTextInputFocusStore {
     metadata_service_name: Option<FocusHandle>,
     metadata_service_provider: Option<FocusHandle>,
     preset_name: Option<FocusHandle>,
-    external_subtitle_language: Option<FocusHandle>,
-    external_subtitle_title: Option<FocusHandle>,
-    subtitle_font_color: Option<FocusHandle>,
-    subtitle_outline_color: Option<FocusHandle>,
 }
 
 impl FrameTextInputFocusStore {
@@ -316,12 +288,6 @@ impl FrameTextInputFocusStore {
             FrameTextInputKind::MetadataServiceName => self.metadata_service_name.as_ref(),
             FrameTextInputKind::MetadataServiceProvider => self.metadata_service_provider.as_ref(),
             FrameTextInputKind::PresetName => self.preset_name.as_ref(),
-            FrameTextInputKind::ExternalSubtitleLanguage => {
-                self.external_subtitle_language.as_ref()
-            }
-            FrameTextInputKind::ExternalSubtitleTitle => self.external_subtitle_title.as_ref(),
-            FrameTextInputKind::SubtitleFontColorHex => self.subtitle_font_color.as_ref(),
-            FrameTextInputKind::SubtitleOutlineColorHex => self.subtitle_outline_color.as_ref(),
         }
     }
 
@@ -347,10 +313,6 @@ impl FrameTextInputFocusStore {
             FrameTextInputKind::MetadataServiceName => &mut self.metadata_service_name,
             FrameTextInputKind::MetadataServiceProvider => &mut self.metadata_service_provider,
             FrameTextInputKind::PresetName => &mut self.preset_name,
-            FrameTextInputKind::ExternalSubtitleLanguage => &mut self.external_subtitle_language,
-            FrameTextInputKind::ExternalSubtitleTitle => &mut self.external_subtitle_title,
-            FrameTextInputKind::SubtitleFontColorHex => &mut self.subtitle_font_color,
-            FrameTextInputKind::SubtitleOutlineColorHex => &mut self.subtitle_outline_color,
         }
     }
 

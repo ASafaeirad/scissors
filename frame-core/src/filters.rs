@@ -16,7 +16,7 @@ pub enum VisualFilterBase {
     Image,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VisualFilterProfile {
     ExportVideo,
     ExportImage,
@@ -25,20 +25,7 @@ pub enum VisualFilterProfile {
         width: u32,
         height: u32,
         fps: u32,
-        source_time_seconds: f64,
     },
-}
-
-/// Converts a CSS hex color (`#RRGGBB`) to an ASS/SSA color string (`&H00BBGGRR`).
-fn hex_to_ass_color(hex: &str) -> Option<String> {
-    let hex = hex.trim().trim_start_matches('#');
-    if hex.len() != 6 {
-        return None;
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some(format!("&H00{b:02X}{g:02X}{r:02X}"))
 }
 
 fn rounded_i32(value: f64, min_value: f64) -> i32 {
@@ -93,66 +80,6 @@ pub fn build_video_filters(config: &ConversionConfig, include_scale: bool) -> Ve
     }
 
     filters.extend(build_video_post_scale_filters(&config.video_filters));
-
-    if let Some(burn_path) = &config.subtitle_burn_path
-        && !burn_path.is_empty()
-    {
-        let escaped_path = burn_path
-            .replace('\\', "/")
-            .replace(':', "\\:")
-            .replace('\'', "\\'")
-            .replace('[', "\\[")
-            .replace(']', "\\]")
-            .replace(',', "\\,");
-
-        let mut style_parts: Vec<String> = Vec::new();
-
-        if let Some(font) = &config.subtitle_font_name
-            && !font.trim().is_empty()
-        {
-            style_parts.push(format!("FontName={}", font.trim()));
-        }
-
-        if let Some(font_size) = &config.subtitle_font_size
-            && let Ok(parsed) = font_size.trim().parse::<u16>()
-            && (8..=120).contains(&parsed)
-        {
-            style_parts.push(format!("Fontsize={parsed}"));
-        }
-
-        if let Some(color) = &config.subtitle_font_color
-            && let Some(ass) = hex_to_ass_color(color)
-        {
-            style_parts.push(format!("PrimaryColour={ass}"));
-        }
-
-        if let Some(color) = &config.subtitle_outline_color
-            && let Some(ass) = hex_to_ass_color(color)
-        {
-            style_parts.push(format!("OutlineColour={ass}"));
-        }
-
-        if let Some(pos) = &config.subtitle_position {
-            // FFmpeg's subtitles filter interprets force_style Alignment using
-            // legacy SSA-style values in this context:
-            // - bottom center: 2
-            // - top center: 6
-            // - middle center: 10
-            let alignment = match pos.as_str() {
-                "top" => "6",
-                "middle" => "10",
-                _ => "2",
-            };
-            style_parts.push(format!("Alignment={alignment}"));
-        }
-
-        if style_parts.is_empty() {
-            filters.push(format!("subtitles='{escaped_path}'"));
-        } else {
-            let style = style_parts.join(",");
-            filters.push(format!("subtitles='{escaped_path}':force_style='{style}'"));
-        }
-    }
 
     filters
 }
@@ -212,13 +139,11 @@ pub fn build_visual_filter_chain(
             width,
             height,
             fps,
-            source_time_seconds,
         } => {
             let mut filters = match base {
                 VisualFilterBase::Video => build_encode_video_filters(config, true),
                 VisualFilterBase::Image => build_video_filters(config, true),
             };
-            apply_preview_subtitle_timebase(&mut filters, source_time_seconds);
             filters.extend(preview_low_res_filters(width, height, fps));
             filters
         }
@@ -243,8 +168,7 @@ pub fn build_visual_filter_complex(
             width,
             height,
             fps,
-            source_time_seconds,
-        } => build_preview_filter_complex(config, base, width, height, fps, source_time_seconds),
+        } => build_preview_filter_complex(config, base, width, height, fps),
     }
 }
 
@@ -318,13 +242,11 @@ fn build_preview_filter_complex(
     width: u32,
     height: u32,
     fps: u32,
-    source_time_seconds: f64,
 ) -> String {
-    let mut base_filters = match base {
+    let base_filters = match base {
         VisualFilterBase::Video => build_encode_video_filters(config, true),
         VisualFilterBase::Image => build_video_filters(config, true),
     };
-    apply_preview_subtitle_timebase(&mut base_filters, source_time_seconds);
     let preview_filters = preview_low_res_filters(width, height, fps);
     let preview_chain = preview_filters.join(",");
 
@@ -337,23 +259,6 @@ fn build_preview_filter_complex(
         filters.extend(preview_filters);
         labeled_filter_chain(&filters, PREVIEW_OUTPUT_LABEL)
     }
-}
-
-pub(crate) fn apply_preview_subtitle_timebase(filters: &mut Vec<String>, source_time_seconds: f64) {
-    if !source_time_seconds.is_finite() || source_time_seconds <= 0.0 {
-        return;
-    }
-
-    let Some(subtitle_index) = filters
-        .iter()
-        .position(|filter| filter.starts_with("subtitles="))
-    else {
-        return;
-    };
-
-    let offset = format_preview_seconds(source_time_seconds);
-    filters.insert(subtitle_index, format!("setpts=PTS+{offset}/TB"));
-    filters.insert(subtitle_index + 2, format!("setpts=PTS-{offset}/TB"));
 }
 
 fn labeled_filter_chain(filters: &[String], output_label: &str) -> String {
@@ -371,10 +276,6 @@ fn preview_low_res_filters(width: u32, height: u32, fps: u32) -> Vec<String> {
         "setsar=1".to_string(),
         "format=bgra".to_string(),
     ]
-}
-
-fn format_preview_seconds(seconds: f64) -> String {
-    format!("{seconds:.3}")
 }
 
 #[must_use]
@@ -406,14 +307,6 @@ mod tests {
             external_audio_tracks: vec![],
             timeline_sources: Vec::new(),
             selected_audio_tracks: vec![],
-            selected_subtitle_tracks: vec![],
-            external_subtitle_tracks: vec![],
-            subtitle_burn_path: None,
-            subtitle_font_name: None,
-            subtitle_font_size: None,
-            subtitle_font_color: None,
-            subtitle_outline_color: None,
-            subtitle_position: None,
             resolution: "original".to_string(),
             custom_width: None,
             custom_height: None,
@@ -565,37 +458,6 @@ mod tests {
     }
 
     #[test]
-    fn preview_low_res_filters_rebase_subtitle_timestamps_for_seeked_video() {
-        let mut config = default_config();
-        config.subtitle_burn_path = Some("/tmp/sub.srt".to_string());
-
-        let filters = build_visual_filter_chain(
-            &config,
-            VisualFilterProfile::PreviewLowRes {
-                base: VisualFilterBase::Video,
-                width: 640,
-                height: 360,
-                fps: 24,
-                source_time_seconds: 10.0,
-            },
-        );
-
-        assert_eq!(
-            filters,
-            vec![
-                "setpts=PTS+10.000/TB",
-                "subtitles='/tmp/sub.srt'",
-                "setpts=PTS-10.000/TB",
-                EVEN_DIMENSIONS_FILTER,
-                "fps=24",
-                "scale=640:360",
-                "setsar=1",
-                "format=bgra",
-            ]
-        );
-    }
-
-    #[test]
     fn preview_low_res_filter_complex_keeps_overlay_before_fps_and_scale() {
         let mut config = default_config();
         config.overlay = Some(OverlayConfig {
@@ -615,30 +477,10 @@ mod tests {
                 width: 640,
                 height: 360,
                 fps: 24,
-                source_time_seconds: 0.0,
             },
         );
 
         assert!(filter.contains("[preview_export]fps=24,scale=640:360"));
-    }
-
-    #[test]
-    fn preview_low_res_filters_keep_subtitle_timestamps_for_zero_start() {
-        let mut config = default_config();
-        config.subtitle_burn_path = Some("/tmp/sub.srt".to_string());
-
-        let filters = build_visual_filter_chain(
-            &config,
-            VisualFilterProfile::PreviewLowRes {
-                base: VisualFilterBase::Video,
-                width: 640,
-                height: 360,
-                fps: 24,
-                source_time_seconds: 0.0,
-            },
-        );
-
-        assert!(!filters.iter().any(|filter| filter.starts_with("setpts=")));
     }
 
     #[test]
@@ -655,60 +497,5 @@ mod tests {
         config.audio_volume = 150.0;
         let filters = build_audio_filters(&config);
         assert_eq!(filters, vec!["volume=1.500"]);
-    }
-
-    #[test]
-    fn test_subtitle_burn_path_escaping() {
-        let mut config = default_config();
-        config.subtitle_burn_path = Some("C:\\Media\\John's [cut],final.srt".to_string());
-
-        let filters = build_video_filters(&config, true);
-
-        assert_eq!(
-            filters,
-            vec!["subtitles='C\\:/Media/John\\'s \\[cut\\]\\,final.srt'"]
-        );
-    }
-
-    #[test]
-    fn test_subtitle_position_top_maps_to_alignment_6() {
-        let mut config = default_config();
-        config.subtitle_burn_path = Some("/tmp/sub.srt".to_string());
-        config.subtitle_position = Some("top".to_string());
-
-        let filters = build_video_filters(&config, true);
-
-        assert_eq!(
-            filters,
-            vec!["subtitles='/tmp/sub.srt':force_style='Alignment=6'"]
-        );
-    }
-
-    #[test]
-    fn test_subtitle_position_middle_maps_to_alignment_10() {
-        let mut config = default_config();
-        config.subtitle_burn_path = Some("/tmp/sub.srt".to_string());
-        config.subtitle_position = Some("middle".to_string());
-
-        let filters = build_video_filters(&config, true);
-
-        assert_eq!(
-            filters,
-            vec!["subtitles='/tmp/sub.srt':force_style='Alignment=10'"]
-        );
-    }
-
-    #[test]
-    fn test_subtitle_font_size_adds_force_style() {
-        let mut config = default_config();
-        config.subtitle_burn_path = Some("/tmp/sub.srt".to_string());
-        config.subtitle_font_size = Some("28".to_string());
-
-        let filters = build_video_filters(&config, true);
-
-        assert_eq!(
-            filters,
-            vec!["subtitles='/tmp/sub.srt':force_style='Fontsize=28'"]
-        );
     }
 }

@@ -1,12 +1,10 @@
-use std::{collections::HashSet, path::Path};
+use std::path::Path;
 
 use crate::codec::{
     add_audio_codec_args, add_fps_args, add_stream_copy_video_tag_args, add_video_codec_args,
-    audio_codec_supports_vbr, subtitle_output_codec,
+    audio_codec_supports_vbr,
 };
-use crate::container::{
-    TransportStreamProfile, is_transport_stream_container, transport_stream_profile,
-};
+use crate::container::{is_transport_stream_container, transport_stream_profile};
 use crate::cuts::{
     CutRange, build_audio_cut_filters, build_video_cut_filters, output_cut_ranges,
     output_duration_seconds, validate_cut_segments,
@@ -18,13 +16,12 @@ use crate::filters::{
 };
 use crate::media_filters::validate_media_filters;
 use crate::media_rules::{
-    all_containers, container_supports_audio, container_supports_subtitles, is_audio_codec_allowed,
+    all_containers, container_supports_audio, is_audio_codec_allowed,
     is_audio_stream_codec_allowed, is_image_container, is_video_codec_allowed,
     is_video_only_container, is_video_pixel_format_allowed, is_video_stream_codec_allowed,
 };
 use crate::types::{
-    AudioTrack, ConversionConfig, ExternalSubtitleTrack, MetadataConfig, MetadataMode,
-    ProbeMetadata, SubtitleTrack, VOLUME_EPSILON,
+    AudioTrack, ConversionConfig, MetadataConfig, MetadataMode, ProbeMetadata, VOLUME_EPSILON,
 };
 use crate::utils::{get_hwaccel_args, is_audio_only_container, parse_time};
 
@@ -105,6 +102,7 @@ fn build_project_args(
         add_audio_codec_args(&mut args, config);
     }
     add_container_metadata_flags(&mut args, config, probe);
+    args.push("-sn".to_string());
     add_container_output_args(&mut args, &config.container);
     args.extend([
         "-t".to_string(),
@@ -145,358 +143,11 @@ fn collect_selected_audio_tracks<'a>(
         .collect()
 }
 
-fn collect_selected_subtitle_tracks<'a>(
-    config: &ConversionConfig,
-    probe: &'a ProbeMetadata,
-) -> Result<Vec<&'a SubtitleTrack>, ConversionError> {
-    config
-        .selected_subtitle_tracks
-        .iter()
-        .map(|index| {
-            probe
-                .subtitle_tracks
-                .iter()
-                .find(|track| track.index == *index)
-                .ok_or_else(|| {
-                    ConversionError::InvalidInput(format!(
-                        "Selected subtitle track #{index} was not found in source"
-                    ))
-                })
-        })
-        .collect()
-}
-
-fn collect_reencode_subtitle_tracks<'a>(
-    config: &ConversionConfig,
-    probe: &'a ProbeMetadata,
-) -> Result<Vec<&'a SubtitleTrack>, ConversionError> {
-    let tracks = collect_selected_subtitle_tracks(config, probe)?;
-    for track in &tracks {
-        if let Err(reason) = embedded_subtitle_action(&config.container, &track.codec) {
-            return Err(ConversionError::InvalidInput(format!(
-                "Subtitle codec '{}' from source track #{} cannot be represented by '{}': {reason}",
-                track.codec, track.index, config.container,
-            )));
-        }
-    }
-
-    Ok(tracks)
-}
-
-fn is_text_subtitle_codec(codec: &str) -> bool {
-    matches!(
-        codec.trim().to_ascii_lowercase().as_str(),
-        "text"
-            | "ssa"
-            | "mov_text"
-            | "srt"
-            | "microdvd"
-            | "eia_608"
-            | "jacosub"
-            | "sami"
-            | "realtext"
-            | "stl"
-            | "subviewer1"
-            | "subviewer"
-            | "subrip"
-            | "webvtt"
-            | "mpl2"
-            | "vplayer"
-            | "pjs"
-            | "ass"
-            | "hdmv_text_subtitle"
-            | "ttml"
-    )
-}
-
-fn validate_external_subtitle_tracks(config: &ConversionConfig) -> Result<(), ConversionError> {
-    let mut paths = HashSet::new();
-    let mut default_count = 0;
-
-    for track in &config.external_subtitle_tracks {
-        let path = track.path.trim();
-        if path.is_empty() {
-            return Err(ConversionError::InvalidInput(
-                "External subtitle path cannot be empty".to_string(),
-            ));
-        }
-
-        let subtitle_path = Path::new(path);
-        if !subtitle_path.exists() {
-            return Err(ConversionError::InvalidInput(format!(
-                "External subtitle file does not exist: {path}"
-            )));
-        }
-        if !subtitle_path.is_file() {
-            return Err(ConversionError::InvalidInput(format!(
-                "External subtitle path is not a file: {path}"
-            )));
-        }
-        let supported = subtitle_path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| {
-                matches!(
-                    extension.to_ascii_lowercase().as_str(),
-                    "srt" | "ass" | "vtt" | "sup"
-                )
-            });
-        if !supported {
-            return Err(ConversionError::InvalidInput(format!(
-                "Unsupported external subtitle format: {path}"
-            )));
-        }
-        let canonical_path = std::fs::canonicalize(subtitle_path).map_err(|error| {
-            ConversionError::InvalidInput(format!(
-                "External subtitle path cannot be resolved ({path}): {error}"
-            ))
-        })?;
-        if !paths.insert(canonical_path) {
-            return Err(ConversionError::InvalidInput(format!(
-                "External subtitle file was added more than once: {path}"
-            )));
-        }
-
-        for (field, value) in [("language", &track.language), ("title", &track.title)] {
-            if value
-                .as_deref()
-                .is_some_and(|value| value.chars().any(char::is_control))
-            {
-                return Err(ConversionError::InvalidInput(format!(
-                    "External subtitle {field} contains control characters: {path}"
-                )));
-            }
-        }
-        default_count += usize::from(track.is_default);
-    }
-
-    if default_count > 1 {
-        return Err(ConversionError::InvalidInput(
-            "Only one external subtitle track can be marked as default".to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SubtitleAction {
-    Copy,
-    Encode(&'static str),
-}
-
-fn embedded_subtitle_action(container: &str, codec: &str) -> Result<SubtitleAction, &'static str> {
-    let codec = codec.trim().to_ascii_lowercase();
-    if crate::media_rules::is_subtitle_codec_allowed(container, &codec) {
-        return Ok(SubtitleAction::Copy);
-    }
-    if let Some(profile) = transport_stream_profile(container) {
-        return match profile {
-            TransportStreamProfile::MpegTs188 => match codec.as_str() {
-                "dvb_subtitle" | "dvb_teletext" | "arib_caption" => Ok(SubtitleAction::Copy),
-                "hdmv_pgs_subtitle" | "dvd_subtitle" => Ok(SubtitleAction::Encode("dvbsub")),
-                _ => Err(
-                    "M2T accepts DVB/teletext/ARIB subtitles; bitmap PGS/DVDSub can be converted to DVB",
-                ),
-            },
-            TransportStreamProfile::M2ts192 => match codec.as_str() {
-                "hdmv_pgs_subtitle" | "hdmv_text_subtitle" => Ok(SubtitleAction::Copy),
-                _ => Err("MTS/M2TS accepts existing PGS or HDMV text subtitle streams"),
-            },
-        };
-    }
-
-    if container.eq_ignore_ascii_case("mkv") {
-        return Ok(SubtitleAction::Copy);
-    }
-    if is_text_subtitle_codec(&codec)
-        && let Some(output_codec) = subtitle_output_codec(container)
-    {
-        return Ok(SubtitleAction::Encode(output_codec));
-    }
-    Err("subtitle codec cannot be represented by the selected container")
-}
-
-fn external_subtitle_action(
-    container: &str,
-    track: &ExternalSubtitleTrack,
-) -> Result<SubtitleAction, &'static str> {
-    let extension = Path::new(&track.path)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default();
-    if extension.eq_ignore_ascii_case("sup") {
-        return match transport_stream_profile(container) {
-            Some(TransportStreamProfile::MpegTs188) => Ok(SubtitleAction::Encode("dvbsub")),
-            Some(TransportStreamProfile::M2ts192) => Ok(SubtitleAction::Copy),
-            None if container.eq_ignore_ascii_case("mkv") => Ok(SubtitleAction::Copy),
-            None => Err("PGS sidecars are selectable only in MKV, MTS, M2TS, or as DVB in M2T"),
-        };
-    }
-    if is_transport_stream_container(container) {
-        return Err(
-            "text sidecars cannot be authored as standard selectable MPEG-TS subtitles; use Burn-in",
-        );
-    }
-    subtitle_output_codec(container).map_or(
-        Err("selectable subtitles are unavailable for this container"),
-        |codec| Ok(SubtitleAction::Encode(codec)),
-    )
-}
-
-fn add_subtitle_output_actions(
-    args: &mut Vec<String>,
-    container: &str,
-    embedded: &[&SubtitleTrack],
-    external: &[ExternalSubtitleTrack],
-) -> Result<(), ConversionError> {
-    for (output_index, track) in embedded.iter().enumerate() {
-        let action = embedded_subtitle_action(container, &track.codec).map_err(|reason| {
-            ConversionError::InvalidInput(format!(
-                "Subtitle codec '{}' from source track #{} is incompatible with '{}': {reason}",
-                track.codec, track.index, container
-            ))
-        })?;
-        add_subtitle_action_arg(args, output_index, action);
-        if transport_stream_profile(container) != Some(TransportStreamProfile::M2ts192)
-            && let Some(language) = track
-                .language
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        {
-            args.push(format!("-metadata:s:s:{output_index}"));
-            args.push(format!("language={language}"));
-        }
-        if !is_transport_stream_container(container)
-            && let Some(label) = track
-                .label
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        {
-            args.push(format!("-metadata:s:s:{output_index}"));
-            args.push(format!("title={label}"));
-        }
-    }
-    for (offset, track) in external.iter().enumerate() {
-        let action = external_subtitle_action(container, track).map_err(|reason| {
-            ConversionError::InvalidInput(format!(
-                "External subtitle '{}' is incompatible with '{}': {reason}",
-                track.path, container
-            ))
-        })?;
-        add_subtitle_action_arg(args, embedded.len() + offset, action);
-    }
-    Ok(())
-}
-
-fn add_subtitle_action_arg(args: &mut Vec<String>, output_index: usize, action: SubtitleAction) {
-    args.push(format!("-c:s:{output_index}"));
-    args.push(
-        match action {
-            SubtitleAction::Copy => "copy",
-            SubtitleAction::Encode(codec) => codec,
-        }
-        .to_string(),
-    );
-}
-
 fn add_track_maps<T>(args: &mut Vec<String>, tracks: &[&T], index: impl Fn(&T) -> u32) {
     for track in tracks {
         args.push("-map".to_string());
         args.push(format!("0:{}", index(track)));
     }
-}
-
-fn add_external_subtitle_inputs(args: &mut Vec<String>, config: &ConversionConfig) {
-    for track in &config.external_subtitle_tracks {
-        if let Some(start) = config
-            .start_time
-            .as_deref()
-            .map(str::trim)
-            .filter(|start| !start.is_empty())
-        {
-            args.push("-ss".to_string());
-            args.push(start.to_string());
-        }
-        args.push("-i".to_string());
-        args.push(track.path.clone());
-    }
-}
-
-fn add_external_subtitle_maps(
-    args: &mut Vec<String>,
-    config: &ConversionConfig,
-    first_input_index: usize,
-) {
-    for input_index in first_input_index..first_input_index + config.external_subtitle_tracks.len()
-    {
-        args.push("-map".to_string());
-        args.push(format!("{input_index}:s:0"));
-    }
-}
-
-fn add_external_subtitle_output_args(
-    args: &mut Vec<String>,
-    config: &ConversionConfig,
-    first_output_index: usize,
-    override_codec: bool,
-) {
-    let codec = subtitle_output_codec(&config.container);
-    for (offset, track) in config.external_subtitle_tracks.iter().enumerate() {
-        let output_index = first_output_index + offset;
-        if override_codec && let Some(codec) = codec {
-            args.push(format!("-c:s:{output_index}"));
-            args.push(codec.to_string());
-        }
-        add_external_subtitle_metadata(args, track, output_index, &config.container);
-    }
-}
-
-fn add_external_subtitle_metadata(
-    args: &mut Vec<String>,
-    track: &ExternalSubtitleTrack,
-    output_index: usize,
-    container: &str,
-) {
-    let transport_profile = transport_stream_profile(container);
-    if let Some(language) = track
-        .language
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        && transport_profile != Some(TransportStreamProfile::M2ts192)
-    {
-        args.push(format!("-metadata:s:s:{output_index}"));
-        args.push(format!("language={language}"));
-    }
-    if transport_profile.is_none()
-        && let Some(title) = track
-            .title
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-    {
-        args.push(format!("-metadata:s:s:{output_index}"));
-        args.push(format!("title={title}"));
-        if matches!(container, "mp4" | "mov") {
-            args.push(format!("-metadata:s:s:{output_index}"));
-            args.push(format!("handler_name={title}"));
-        }
-    }
-
-    if transport_profile.is_some() {
-        return;
-    }
-    let disposition = match (track.is_default, track.is_forced) {
-        (true, true) => "default+forced",
-        (true, false) => "default",
-        (false, true) => "forced",
-        (false, false) => "0",
-    };
-    args.push(format!("-disposition:s:{output_index}"));
-    args.push(disposition.to_string());
 }
 
 /// Validates whether stream-copy mode can preserve the selected source streams.
@@ -550,17 +201,6 @@ pub fn validate_stream_copy_compatibility(
             if !is_audio_stream_codec_allowed(&config.container, &track.codec) {
                 return Err(ConversionError::InvalidInput(format!(
                     "Audio codec '{}' from source track #{} is incompatible with container '{}'",
-                    track.codec, track.index, config.container
-                )));
-            }
-        }
-    }
-
-    if container_supports_subtitles(&config.container) {
-        for track in collect_selected_subtitle_tracks(config, probe)? {
-            if embedded_subtitle_action(&config.container, &track.codec).is_err() {
-                return Err(ConversionError::InvalidInput(format!(
-                    "Subtitle codec '{}' from source track #{} is incompatible with container '{}'",
                     track.codec, track.index, config.container
                 )));
             }
@@ -622,8 +262,6 @@ pub fn build_ffmpeg_args(
 
     let first_audio_input = 1 + usize::from(has_overlay(config));
     crate::audio_timeline::add_inputs(&mut args, config);
-    let first_external_subtitle_input = first_audio_input + config.external_audio_tracks.len();
-    add_external_subtitle_inputs(&mut args, config);
 
     let cut_ranges = output_cut_ranges(config);
     if let Some(end_str) = &config.end_time
@@ -657,6 +295,7 @@ pub fn build_ffmpeg_args(
     }
 
     add_container_metadata_flags(&mut args, config, probe);
+    args.push("-sn".to_string());
 
     let is_audio_only = is_audio_only_container(&config.container);
     let is_video_only = is_video_only_container(&config.container);
@@ -671,6 +310,7 @@ pub fn build_ffmpeg_args(
             ));
         }
 
+        args.extend(["-c".to_string(), "copy".to_string()]);
         if !is_audio_only {
             args.push("-map".to_string());
             args.push(
@@ -688,24 +328,6 @@ pub fn build_ffmpeg_args(
             }
         }
 
-        if container_supports_subtitles(&config.container) {
-            let subtitle_tracks = collect_selected_subtitle_tracks(config, probe)?;
-            add_track_maps(&mut args, &subtitle_tracks, |track| track.index);
-            add_external_subtitle_maps(&mut args, config, first_external_subtitle_input);
-
-            args.push("-c".to_string());
-            args.push("copy".to_string());
-            add_subtitle_output_actions(
-                &mut args,
-                &config.container,
-                &subtitle_tracks,
-                &config.external_subtitle_tracks,
-            )?;
-            add_external_subtitle_output_args(&mut args, config, subtitle_tracks.len(), false);
-        } else {
-            args.push("-c".to_string());
-            args.push("copy".to_string());
-        }
         if !is_audio_only {
             add_stream_copy_video_tag_args(
                 &mut args,
@@ -814,23 +436,6 @@ pub fn build_ffmpeg_args(
             args.push("-an".to_string());
         } else {
             add_audio_codec_args(&mut args, config);
-        }
-
-        let mut subtitle_output_count = 0;
-        let subtitle_tracks = collect_reencode_subtitle_tracks(config, probe)?;
-        if !subtitle_tracks.is_empty() {
-            add_track_maps(&mut args, &subtitle_tracks, |track| track.index);
-            subtitle_output_count = subtitle_tracks.len();
-        }
-        add_external_subtitle_maps(&mut args, config, first_external_subtitle_input);
-        if subtitle_output_count > 0 || !config.external_subtitle_tracks.is_empty() {
-            add_subtitle_output_actions(
-                &mut args,
-                &config.container,
-                &subtitle_tracks,
-                &config.external_subtitle_tracks,
-            )?;
-            add_external_subtitle_output_args(&mut args, config, subtitle_output_count, false);
         }
     }
 
@@ -1091,7 +696,6 @@ pub fn validate_task_input(
         let mut output_config = config.clone();
         output_config.timeline_sources.clear();
         output_config.selected_audio_tracks.clear();
-        output_config.selected_subtitle_tracks.clear();
         return validate_task_input(file_path, &output_config);
     }
     let input_path = Path::new(file_path);
@@ -1140,45 +744,6 @@ pub fn validate_task_input(
         )));
     }
     validate_media_filters(config)?;
-    if !container_supports_subtitles(&config.container)
-        && (!config.selected_subtitle_tracks.is_empty()
-            || !config.external_subtitle_tracks.is_empty()
-            || config
-                .subtitle_burn_path
-                .as_ref()
-                .is_some_and(|path| !path.trim().is_empty()))
-    {
-        return Err(ConversionError::InvalidInput(
-            "Subtitle options are not available for this container".to_string(),
-        ));
-    }
-    validate_external_subtitle_tracks(config)?;
-    for track in &config.external_subtitle_tracks {
-        external_subtitle_action(&config.container, track).map_err(|reason| {
-            ConversionError::InvalidInput(format!(
-                "External subtitle '{}' is incompatible with '{}': {reason}",
-                track.path, config.container
-            ))
-        })?;
-        if let Some(profile) = transport_stream_profile(&config.container) {
-            let has_language = non_empty(track.language.as_deref()).is_some();
-            let has_title = non_empty(track.title.as_deref()).is_some();
-            let unsupported_metadata = match profile {
-                TransportStreamProfile::MpegTs188 => {
-                    has_title || track.is_default || track.is_forced
-                }
-                TransportStreamProfile::M2ts192 => {
-                    has_language || has_title || track.is_default || track.is_forced
-                }
-            };
-            if unsupported_metadata {
-                return Err(ConversionError::InvalidInput(format!(
-                    "External subtitle metadata cannot be represented by '{}'; clear unsupported language/title/default/forced values",
-                    config.container
-                )));
-            }
-        }
-    }
     let is_copy_mode = processing_mode == "copy";
 
     if let Some(start) = start_time
@@ -1216,14 +781,6 @@ pub fn validate_task_input(
         if is_image_container(&config.container) {
             return Err(ConversionError::InvalidInput(
                 "Removing segments is not available for image outputs".to_string(),
-            ));
-        }
-        if !config.selected_subtitle_tracks.is_empty()
-            || !config.external_subtitle_tracks.is_empty()
-        {
-            return Err(ConversionError::InvalidInput(
-                "Removing segments cannot keep soft subtitle tracks in sync; burn subtitles in or deselect them"
-                    .to_string(),
             ));
         }
     }
@@ -1409,16 +966,6 @@ pub fn validate_task_input(
             ));
         }
 
-        if config
-            .subtitle_burn_path
-            .as_ref()
-            .is_some_and(|path| !path.trim().is_empty())
-        {
-            return Err(ConversionError::InvalidInput(
-                "Burn-in subtitles are unavailable in stream copy mode".to_string(),
-            ));
-        }
-
         if has_overlay(config) {
             return Err(ConversionError::InvalidInput(
                 "Overlay requires re-encoding".to_string(),
@@ -1571,6 +1118,7 @@ fn validate_image_encoding_settings(config: &ConversionConfig) -> Result<(), Con
 mod tests {
     use super::*;
     use crate::filters::EVEN_DIMENSIONS_FILTER;
+    use crate::types::SubtitleTrack;
     use std::{
         fs,
         path::PathBuf,
@@ -1596,14 +1144,6 @@ mod tests {
             external_audio_tracks: vec![],
             timeline_sources: Vec::new(),
             selected_audio_tracks: vec![],
-            selected_subtitle_tracks: vec![],
-            external_subtitle_tracks: vec![],
-            subtitle_burn_path: None,
-            subtitle_font_name: None,
-            subtitle_font_size: None,
-            subtitle_font_color: None,
-            subtitle_outline_color: None,
-            subtitle_position: None,
             resolution: "original".to_string(),
             custom_width: None,
             custom_height: None,
@@ -1853,28 +1393,6 @@ mod tests {
     }
 
     #[test]
-    fn bitmap_subtitles_use_per_track_actions_for_transport_profiles() {
-        let mut m2t = sample_config("m2t", "mpeg2video");
-        m2t.audio_codec = "mp2".to_string();
-        m2t.selected_subtitle_tracks = vec![2];
-        let mut probe = sample_probe();
-        probe.subtitle_tracks = vec![SubtitleTrack {
-            index: 2,
-            codec: "hdmv_pgs_subtitle".to_string(),
-            ..SubtitleTrack::default()
-        }];
-        let args = build_ffmpeg_args("input.mkv", "output.m2t", &m2t, &probe).unwrap();
-        assert!(args_contains_pair(&args, "-c:s:0", "dvbsub"));
-        assert!(!args.iter().any(|arg| arg == "-c:s"));
-
-        let mut m2ts = sample_config("m2ts", "libx264");
-        m2ts.audio_codec = "ac3".to_string();
-        m2ts.selected_subtitle_tracks = vec![2];
-        let args = build_ffmpeg_args("input.mkv", "output.m2ts", &m2ts, &probe).unwrap();
-        assert!(args_contains_pair(&args, "-c:s:0", "copy"));
-    }
-
-    #[test]
     fn build_ffmpeg_args_disables_output_overwrite_for_reencode() {
         let config = sample_config("mp4", "libx264");
 
@@ -1977,35 +1495,7 @@ mod tests {
     }
 
     #[test]
-    fn build_ffmpeg_args_drops_only_unselected_bitmap_subtitles_for_mp4() {
-        let mut config = sample_config("mp4", "libx264");
-        config.selected_subtitle_tracks = vec![3];
-        let mut probe = sample_probe();
-        probe.subtitle_tracks = vec![
-            SubtitleTrack {
-                index: 2,
-                codec: "hdmv_pgs_subtitle".to_string(),
-                ..SubtitleTrack::default()
-            },
-            SubtitleTrack {
-                index: 3,
-                codec: "subrip".to_string(),
-                ..SubtitleTrack::default()
-            },
-        ];
-
-        let args = build_ffmpeg_args("subtitles.mkv", "output.mp4", &config, &probe)
-            .expect("compatible text subtitle should be mapped");
-
-        assert!(!args.iter().any(|arg| arg == "0:s?"));
-        assert!(!args.iter().any(|arg| arg == "0:2"));
-        assert!(args_contains_pair(&args, "-map", "0:3"));
-        assert!(args_contains_pair(&args, "-c:s:0", "mov_text"));
-    }
-
-    #[test]
-    fn build_ffmpeg_args_omits_unselected_pgs_for_mp4() {
-        let config = sample_config("mp4", "libx264");
+    fn legacy_subtitle_settings_do_not_affect_exports() {
         let mut probe = sample_probe();
         probe.subtitle_tracks = vec![SubtitleTrack {
             index: 2,
@@ -2013,47 +1503,32 @@ mod tests {
             ..SubtitleTrack::default()
         }];
 
-        let args = build_ffmpeg_args("pgs.mkv", "output.mp4", &config, &probe)
-            .expect("unselected PGS should not participate in the output");
-
-        assert!(!args_contains_pair(&args, "-map", "0:2"));
-    }
-
-    #[test]
-    fn build_ffmpeg_args_rejects_explicit_pgs_selection_for_mp4() {
-        let mut config = sample_config("mp4", "libx264");
-        config.selected_subtitle_tracks = vec![2];
-        let mut probe = sample_probe();
-        probe.subtitle_tracks = vec![SubtitleTrack {
-            index: 2,
-            codec: "hdmv_pgs_subtitle".to_string(),
-            ..SubtitleTrack::default()
-        }];
-
-        let error = build_ffmpeg_args("pgs.mkv", "output.mp4", &config, &probe)
-            .expect_err("explicit PGS selection should fail before FFmpeg starts");
-
-        assert!(error.to_string().contains("hdmv_pgs_subtitle"));
-        assert!(error.to_string().contains("track #2"));
-        assert!(error.to_string().contains("mp4"));
-    }
-
-    #[test]
-    fn build_ffmpeg_args_keeps_pgs_subtitles_for_mkv() {
-        let mut config = sample_config("mkv", "libx264");
-        config.selected_subtitle_tracks = vec![2];
-        let mut probe = sample_probe();
-        probe.subtitle_tracks = vec![SubtitleTrack {
-            index: 2,
-            codec: "hdmv_pgs_subtitle".to_string(),
-            ..SubtitleTrack::default()
-        }];
-
-        let args = build_ffmpeg_args("pgs.mkv", "output.mkv", &config, &probe)
-            .expect("Matroska should preserve PGS subtitles");
-
-        assert!(args_contains_pair(&args, "-map", "0:2"));
-        assert!(args_contains_pair(&args, "-c:s:0", "copy"));
+        for mode in ["reencode", "copy"] {
+            let mut saved = serde_json::to_value(sample_config("mp4", "libx264")).unwrap();
+            saved["processingMode"] = serde_json::json!(mode);
+            saved["selectedSubtitleTracks"] = serde_json::json!([2]);
+            saved["externalSubtitleTracks"] = serde_json::json!([{
+                "path": "/missing/captions.srt",
+                "isDefault": true
+            }]);
+            saved["subtitleBurnPath"] = serde_json::json!("/missing/burn.ass");
+            saved["subtitleFontName"] = serde_json::json!("Arial");
+            let config: ConversionConfig = serde_json::from_value(saved).unwrap();
+            let args = build_ffmpeg_args("pgs.mkv", "output.mp4", &config, &probe)
+                .expect("legacy subtitle settings should be ignored");
+            assert!(args.iter().any(|arg| arg == "-sn"));
+            assert!(!args_contains_pair(&args, "-map", "0:2"));
+            assert_eq!(args.iter().filter(|arg| *arg == "-i").count(), 1);
+            assert!(!args.iter().any(|arg| arg.contains("subtitles=")));
+            let saved = serde_json::to_value(config).unwrap();
+            assert!(
+                saved
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .all(|key| { !key.to_ascii_lowercase().contains("subtitle") })
+            );
+        }
     }
 
     #[test]
@@ -2066,22 +1541,6 @@ mod tests {
 
         assert!(args.iter().any(|arg| arg == "-an"));
         assert!(!args_contains_pair(&args, "-map", "0:1"));
-    }
-
-    #[test]
-    fn build_ffmpeg_args_omits_subtitles_when_no_track_is_selected() {
-        let config = sample_config("mkv", "libx264");
-        let mut probe = sample_probe();
-        probe.subtitle_tracks = vec![SubtitleTrack {
-            index: 2,
-            codec: "hdmv_pgs_subtitle".to_string(),
-            ..SubtitleTrack::default()
-        }];
-
-        let args = build_ffmpeg_args("input.mkv", "output.mkv", &config, &probe)
-            .expect("unselected subtitles should not participate in the output");
-
-        assert!(!args_contains_pair(&args, "-map", "0:2"));
     }
 
     #[test]
@@ -2098,278 +1557,6 @@ mod tests {
                 .to_string()
                 .contains("Select at least one audio track")
         );
-    }
-
-    #[test]
-    fn build_ffmpeg_args_embeds_external_subtitles_with_metadata_and_dispositions() {
-        let mut config = sample_config("mp4", "libx264");
-        config.start_time = Some("00:00:05.000".to_string());
-        config.overlay = Some(crate::types::OverlayConfig {
-            enabled: true,
-            path: "logo.png".to_string(),
-            ..crate::types::OverlayConfig::default()
-        });
-        config.external_subtitle_tracks = vec![
-            ExternalSubtitleTrack {
-                path: "english.srt".to_string(),
-                language: Some("eng".to_string()),
-                title: Some("English".to_string()),
-                is_default: true,
-                is_forced: false,
-            },
-            ExternalSubtitleTrack {
-                path: "signs.vtt".to_string(),
-                language: Some("eng".to_string()),
-                title: Some("Signs & songs".to_string()),
-                is_default: false,
-                is_forced: true,
-            },
-        ];
-
-        let args = build_ffmpeg_args("input.mov", "output.mp4", &config, &sample_probe())
-            .expect("external subtitle arguments should build");
-
-        assert!(
-            args.windows(4)
-                .any(|window| window == ["-ss", "00:00:05.000", "-i", "english.srt"])
-        );
-        assert!(
-            args.windows(4)
-                .any(|window| window == ["-ss", "00:00:05.000", "-i", "signs.vtt"])
-        );
-        assert!(args_contains_pair(&args, "-map", "2:s:0"));
-        assert!(args_contains_pair(&args, "-map", "3:s:0"));
-        assert!(args_contains_pair(&args, "-c:s:0", "mov_text"));
-        assert!(args_contains_pair(&args, "-c:s:1", "mov_text"));
-        assert!(args_contains_pair(&args, "-metadata:s:s:0", "language=eng"));
-        assert!(args_contains_pair(
-            &args,
-            "-metadata:s:s:0",
-            "title=English"
-        ));
-        assert!(args_contains_pair(&args, "-disposition:s:0", "default"));
-        assert!(args_contains_pair(
-            &args,
-            "-metadata:s:s:1",
-            "title=Signs & songs"
-        ));
-        assert!(args_contains_pair(&args, "-disposition:s:1", "forced"));
-    }
-
-    #[test]
-    fn stream_copy_only_transcodes_the_added_external_subtitle_stream() {
-        let mut config = sample_config("mp4", "libx264");
-        config.processing_mode = "copy".to_string();
-        config.selected_subtitle_tracks = vec![2];
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: "commentary.ass".to_string(),
-            ..ExternalSubtitleTrack::default()
-        }];
-        let mut probe = sample_probe();
-        probe.subtitle_tracks = vec![SubtitleTrack {
-            index: 2,
-            codec: "mov_text".to_string(),
-            ..SubtitleTrack::default()
-        }];
-
-        let args = build_ffmpeg_args("input.mp4", "output.mp4", &config, &probe)
-            .expect("copy arguments should build");
-
-        assert!(args_contains_pair(&args, "-map", "0:2"));
-        assert!(args_contains_pair(&args, "-map", "1:s:0"));
-        assert!(args_contains_pair(&args, "-c", "copy"));
-        assert!(args_contains_pair(&args, "-c:s:1", "mov_text"));
-        assert!(args_contains_pair(&args, "-c:s:0", "copy"));
-        assert!(args_contains_pair(&args, "-disposition:s:1", "0"));
-    }
-
-    #[test]
-    fn burn_in_and_external_selectable_subtitles_remain_independent() {
-        let mut config = sample_config("mp4", "libx264");
-        config.subtitle_burn_path = Some("burn.srt".to_string());
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: "selectable.srt".to_string(),
-            ..ExternalSubtitleTrack::default()
-        }];
-        let mut probe = sample_probe();
-        probe.subtitle_tracks = vec![SubtitleTrack {
-            index: 2,
-            codec: "subrip".to_string(),
-            ..SubtitleTrack::default()
-        }];
-
-        let args = build_ffmpeg_args("input.mov", "output.mp4", &config, &probe)
-            .expect("combined subtitle modes should build");
-
-        assert!(args_contains_pair(&args, "-map", "1:s:0"));
-        assert!(!args_contains_pair(&args, "-map", "0:2"));
-        assert!(args_contains_pair(&args, "-c:s:0", "mov_text"));
-    }
-
-    #[test]
-    fn validate_task_input_accepts_supported_external_subtitle_file() {
-        let input = temporary_input_file("external-subtitle-input");
-        let subtitle = temporary_input_file_with_extension("external-subtitle", "srt");
-        let mut config = sample_config("mp4", "libx264");
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: subtitle.to_string_lossy().to_string(),
-            language: Some("eng".to_string()),
-            title: Some("English".to_string()),
-            is_default: true,
-            is_forced: true,
-        }];
-
-        let result = validate_task_input(&input.to_string_lossy(), &config);
-
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(subtitle);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn validate_task_input_rejects_selectable_text_for_transport_stream_without_deleting_draft() {
-        let input = temporary_input_file("transport-text-subtitle-input");
-        let subtitle = temporary_input_file_with_extension("transport-text-subtitle", "srt");
-        let mut config = sample_config("m2t", "mpeg2video");
-        config.audio_codec = "mp2".to_string();
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: subtitle.to_string_lossy().to_string(),
-            ..ExternalSubtitleTrack::default()
-        }];
-
-        let error = validate_task_input(&input.to_string_lossy(), &config).unwrap_err();
-
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(subtitle);
-        assert!(error.to_string().contains("use Burn-in"));
-        assert_eq!(config.external_subtitle_tracks.len(), 1);
-    }
-
-    #[test]
-    fn validate_task_input_accepts_sup_for_both_transport_profiles() {
-        let input = temporary_input_file("transport-sup-input");
-        let subtitle = temporary_input_file_with_extension("transport-sup", "sup");
-        for (container, video_codec, audio_codec) in
-            [("m2t", "mpeg2video", "mp2"), ("m2ts", "libx264", "ac3")]
-        {
-            let mut config = sample_config(container, video_codec);
-            config.audio_codec = audio_codec.to_string();
-            config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-                path: subtitle.to_string_lossy().to_string(),
-                ..ExternalSubtitleTrack::default()
-            }];
-            assert!(validate_task_input(&input.to_string_lossy(), &config).is_ok());
-        }
-
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(subtitle);
-    }
-
-    #[test]
-    fn validate_task_input_rejects_duplicate_external_subtitle_files() {
-        let input = temporary_input_file("duplicate-subtitle-input");
-        let subtitle = temporary_input_file_with_extension("duplicate-subtitle", "vtt");
-        let track = ExternalSubtitleTrack {
-            path: subtitle.to_string_lossy().to_string(),
-            ..ExternalSubtitleTrack::default()
-        };
-        let mut config = sample_config("mp4", "libx264");
-        config.external_subtitle_tracks = vec![track.clone(), track];
-
-        let error = validate_task_input(&input.to_string_lossy(), &config)
-            .expect_err("duplicate sidecars should be rejected");
-
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(subtitle);
-        assert!(error.to_string().contains("more than once"));
-    }
-
-    #[test]
-    fn validate_task_input_rejects_multiple_default_external_subtitles() {
-        let input = temporary_input_file("default-subtitle-input");
-        let first = temporary_input_file_with_extension("default-subtitle-first", "srt");
-        let second = temporary_input_file_with_extension("default-subtitle-second", "ass");
-        let mut config = sample_config("mkv", "libx264");
-        config.external_subtitle_tracks = vec![
-            ExternalSubtitleTrack {
-                path: first.to_string_lossy().to_string(),
-                is_default: true,
-                ..ExternalSubtitleTrack::default()
-            },
-            ExternalSubtitleTrack {
-                path: second.to_string_lossy().to_string(),
-                is_default: true,
-                ..ExternalSubtitleTrack::default()
-            },
-        ];
-
-        let error = validate_task_input(&input.to_string_lossy(), &config)
-            .expect_err("multiple default sidecars should be rejected");
-
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(first);
-        let _ = fs::remove_file(second);
-        assert!(error.to_string().contains("Only one"));
-    }
-
-    #[test]
-    fn validate_task_input_rejects_unsupported_external_subtitle_format() {
-        let input = temporary_input_file("unsupported-subtitle-input");
-        let subtitle = temporary_input_file_with_extension("unsupported-subtitle", "txt");
-        let mut config = sample_config("mp4", "libx264");
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: subtitle.to_string_lossy().to_string(),
-            ..ExternalSubtitleTrack::default()
-        }];
-
-        let error = validate_task_input(&input.to_string_lossy(), &config)
-            .expect_err("unsupported sidecar format should be rejected");
-
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(subtitle);
-        assert!(error.to_string().contains("Unsupported external subtitle"));
-    }
-
-    #[test]
-    fn validate_task_input_rejects_external_subtitles_for_audio_output() {
-        let input = temporary_input_file("audio-subtitle-input");
-        let subtitle = temporary_input_file_with_extension("audio-subtitle", "srt");
-        let mut config = sample_config("mp3", "libx264");
-        config.audio_codec = "mp3".to_string();
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: subtitle.to_string_lossy().to_string(),
-            ..ExternalSubtitleTrack::default()
-        }];
-
-        let error = validate_task_input(&input.to_string_lossy(), &config)
-            .expect_err("audio output cannot carry selectable subtitles");
-
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(subtitle);
-        assert!(
-            error
-                .to_string()
-                .contains("Subtitle options are not available")
-        );
-    }
-
-    #[test]
-    fn validate_task_input_rejects_control_characters_in_subtitle_metadata() {
-        let input = temporary_input_file("metadata-subtitle-input");
-        let subtitle = temporary_input_file_with_extension("metadata-subtitle", "ass");
-        let mut config = sample_config("mkv", "libx264");
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: subtitle.to_string_lossy().to_string(),
-            title: Some("Unsafe\nTitle".to_string()),
-            ..ExternalSubtitleTrack::default()
-        }];
-
-        let error = validate_task_input(&input.to_string_lossy(), &config)
-            .expect_err("control characters should be rejected");
-
-        let _ = fs::remove_file(input);
-        let _ = fs::remove_file(subtitle);
-        assert!(error.to_string().contains("control characters"));
     }
 
     #[test]
@@ -2488,20 +1675,6 @@ mod tests {
         assert!(error.to_string().contains("requires re-encoding"));
     }
 
-    #[test]
-    fn validate_task_input_rejects_cuts_with_soft_subtitles() {
-        let path = temporary_input_file("cut-subtitles");
-        let mut config = sample_config("mkv", "libx264");
-        config.selected_subtitle_tracks = vec![2];
-        config.cut_segments = vec![cut("00:00:01.000", "00:00:02.000")];
-
-        let error = validate_task_input(path.to_string_lossy().as_ref(), &config)
-            .expect_err("soft subtitles would desync after cuts");
-
-        let _ = fs::remove_file(path);
-        assert!(error.to_string().contains("soft subtitle"));
-    }
-
     fn args_contains_pair(args: &[String], key: &str, value: &str) -> bool {
         args.windows(2)
             .any(|window| window[0] == key && window[1] == value)
@@ -2517,12 +1690,5 @@ mod tests {
         ));
         fs::write(&path, b"").expect("temporary input should be written");
         path
-    }
-
-    fn temporary_input_file_with_extension(name: &str, extension: &str) -> PathBuf {
-        let path = temporary_input_file(name);
-        let destination = path.with_extension(extension);
-        fs::rename(path, &destination).expect("temporary subtitle should be renamed");
-        destination
     }
 }

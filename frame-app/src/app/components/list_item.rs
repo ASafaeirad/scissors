@@ -103,13 +103,6 @@ pub(in crate::app) struct FrameTrackListItemText {
     pub(in crate::app) primary: String,
     pub(in crate::app) detail: String,
     pub(in crate::app) trailing: String,
-    pub(in crate::app) layout: FrameTrackListItemLayout,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::app) enum FrameTrackListItemLayout {
-    Compact,
-    Detailed,
 }
 
 pub(in crate::app) fn frame_track_list_item(
@@ -196,7 +189,6 @@ fn frame_track_list_item_label(
         primary,
         detail,
         trailing,
-        layout,
     } = text;
     let accessible_label = [primary.as_str(), detail.as_str(), trailing.as_str()]
         .into_iter()
@@ -214,60 +206,39 @@ fn frame_track_list_item_label(
         .text_color(color(palette.text_primary))
         .child(primary);
 
-    let label = match layout {
-        FrameTrackListItemLayout::Compact => div()
-            .min_w_0()
-            .flex_1()
-            .flex()
-            .items_center()
-            .gap_2()
-            .child(index)
-            .child(primary_label)
-            .when(!detail.is_empty(), |this| {
-                this.child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .truncate()
-                        .font_weight(theme::TEXT_WEIGHT_REGULAR)
-                        .text_color(color(palette.text_muted))
-                        .child(format!("• {detail}")),
-                )
-            }),
-        FrameTrackListItemLayout::Detailed => div()
-            .min_w_0()
-            .flex_1()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
+    let label = div()
+        .min_w_0()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .min_w_0()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(index)
+                .child(primary_label),
+        )
+        .when(!detail.is_empty() || !trailing.is_empty(), |this| {
+            let metadata = match (detail.is_empty(), trailing.is_empty()) {
+                (false, false) => format!("{detail} • {trailing}"),
+                (false, true) => detail,
+                (true, false) => trailing,
+                (true, true) => String::new(),
+            };
+            this.child(
                 div()
                     .min_w_0()
                     .w_full()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(index)
-                    .child(primary_label),
+                    .truncate()
+                    .font_features(crate::assets::frame_tabular_number_font_features())
+                    .font_weight(theme::TEXT_WEIGHT_REGULAR)
+                    .text_color(color(palette.text_muted))
+                    .child(metadata),
             )
-            .when(!detail.is_empty() || !trailing.is_empty(), |this| {
-                let metadata = match (detail.is_empty(), trailing.is_empty()) {
-                    (false, false) => format!("{detail} • {trailing}"),
-                    (false, true) => detail,
-                    (true, false) => trailing,
-                    (true, true) => String::new(),
-                };
-                this.child(
-                    div()
-                        .min_w_0()
-                        .w_full()
-                        .truncate()
-                        .font_features(crate::assets::frame_tabular_number_font_features())
-                        .font_weight(theme::TEXT_WEIGHT_REGULAR)
-                        .text_color(color(palette.text_muted))
-                        .child(metadata),
-                )
-            }),
-    };
+        });
     (label, accessible_label)
 }

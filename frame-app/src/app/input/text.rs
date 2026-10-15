@@ -23,17 +23,7 @@ pub(super) fn sanitize_replacement_text(kind: FrameTextInputKind, value: &str) -
         | FrameTextInputKind::MetadataComment
         | FrameTextInputKind::MetadataServiceName
         | FrameTextInputKind::MetadataServiceProvider
-        | FrameTextInputKind::PresetName
-        | FrameTextInputKind::ExternalSubtitleLanguage
-        | FrameTextInputKind::ExternalSubtitleTitle => {
-            value.chars().filter(|ch| !ch.is_control()).collect()
-        }
-        FrameTextInputKind::SubtitleFontColorHex | FrameTextInputKind::SubtitleOutlineColorHex => {
-            value
-                .chars()
-                .filter(|ch| *ch == '#' || ch.is_ascii_hexdigit())
-                .collect()
-        }
+        | FrameTextInputKind::PresetName => value.chars().filter(|ch| !ch.is_control()).collect(),
     }
 }
 
@@ -119,18 +109,6 @@ pub(super) fn replace_timecode_mask(
     let value = String::from_utf8(bytes).ok()?;
 
     Some(MaskedTimecodeEdit { value, cursor })
-}
-
-pub(super) fn sanitize_hex_draft(value: &str) -> String {
-    let mut next = String::from("#");
-    next.extend(
-        value
-            .chars()
-            .filter(char::is_ascii_hexdigit)
-            .take(6)
-            .map(|ch| ch.to_ascii_uppercase()),
-    );
-    next
 }
 
 pub(super) fn clamp_text_offset(text: &str, offset: usize) -> usize {

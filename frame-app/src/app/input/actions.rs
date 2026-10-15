@@ -2,8 +2,8 @@ use super::{
     text::{
         clamp_text_offset, clamp_text_range, next_text_boundary, next_timecode_cursor,
         previous_text_boundary, previous_timecode_cursor, replace_timecode_mask,
-        sanitize_hex_draft, sanitize_number_input, sanitize_replacement_text,
-        text_range_from_utf16, text_range_to_utf16, timecode_cursor_at_or_after,
+        sanitize_number_input, sanitize_replacement_text, text_range_from_utf16,
+        text_range_to_utf16, timecode_cursor_at_or_after,
     },
     *,
 };
@@ -162,25 +162,6 @@ impl FrameRoot {
                 })
                 .unwrap_or_default(),
             FrameTextInputKind::PresetName => self.settings_ui.preset_name_draft.clone(),
-            FrameTextInputKind::ExternalSubtitleLanguage
-            | FrameTextInputKind::ExternalSubtitleTitle => self
-                .subtitle_ui
-                .external_track_index
-                .and_then(|index| {
-                    self.file_queue
-                        .selected_file()
-                        .and_then(|file| file.config.external_subtitle_tracks.get(index))
-                })
-                .and_then(|track| match kind {
-                    FrameTextInputKind::ExternalSubtitleLanguage => track.language.clone(),
-                    FrameTextInputKind::ExternalSubtitleTitle => track.title.clone(),
-                    _ => None,
-                })
-                .unwrap_or_default(),
-            FrameTextInputKind::SubtitleFontColorHex => self.subtitle_ui.font_color_draft.clone(),
-            FrameTextInputKind::SubtitleOutlineColorHex => {
-                self.subtitle_ui.outline_color_draft.clone()
-            }
         }
     }
 
@@ -292,43 +273,6 @@ impl FrameRoot {
                 let next: String = candidate.chars().filter(|ch| !ch.is_control()).collect();
                 self.settings_ui.preset_name_draft.clone_from(&next);
                 self.settings_ui.preset_notice = None;
-                Some(next)
-            }
-            FrameTextInputKind::ExternalSubtitleLanguage
-            | FrameTextInputKind::ExternalSubtitleTitle => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
-                let index = self.subtitle_ui.external_track_index?;
-                let next: String = candidate.chars().filter(|ch| !ch.is_control()).collect();
-                self.selected_config_mut().map(|config| match kind {
-                    FrameTextInputKind::ExternalSubtitleLanguage => {
-                        apply_external_subtitle_language(config, index, &next);
-                    }
-                    FrameTextInputKind::ExternalSubtitleTitle => {
-                        apply_external_subtitle_title(config, index, &next);
-                    }
-                    _ => unreachable!("matched external subtitle text input variants"),
-                })?;
-                Some(next)
-            }
-            FrameTextInputKind::SubtitleFontColorHex
-            | FrameTextInputKind::SubtitleOutlineColorHex => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
-                let next = sanitize_hex_draft(candidate);
-                let target = match kind {
-                    FrameTextInputKind::SubtitleFontColorHex => SettingsSubtitleColorTarget::Font,
-                    FrameTextInputKind::SubtitleOutlineColorHex => {
-                        SettingsSubtitleColorTarget::Outline
-                    }
-                    _ => unreachable!("matched subtitle color text input variants"),
-                };
-                self.set_subtitle_color_draft(target, next.clone());
-                if let Some(normalized) = normalized_hex_color(&next) {
-                    self.commit_subtitle_color(target, &normalized);
-                }
                 Some(next)
             }
         }

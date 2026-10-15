@@ -80,10 +80,6 @@ impl FrameRoot {
             Some(VisualFixture::SettingsImages) => self.apply_settings_images_fixture(),
             Some(VisualFixture::SettingsMetadata) => self.apply_settings_metadata_fixture(),
             Some(VisualFixture::SettingsPresets) => self.apply_settings_presets_fixture(),
-            Some(VisualFixture::SettingsSubtitles) => self.apply_settings_subtitles_fixture(),
-            Some(VisualFixture::SettingsSubtitlesPopover) => {
-                self.apply_settings_subtitles_popover_fixture();
-            }
             Some(VisualFixture::SettingsVideoFilters) => {
                 self.apply_settings_video_filters_fixture();
             }
@@ -99,7 +95,6 @@ impl FrameRoot {
         }
         self.workspace_ui.tool = match fixture {
             Some(VisualFixture::SettingsAudio | VisualFixture::SettingsAudioFilters) => 2,
-            Some(VisualFixture::SettingsSubtitles | VisualFixture::SettingsSubtitlesPopover) => 3,
             Some(
                 VisualFixture::ProjectTimeline
                 | VisualFixture::PreviewCrop
@@ -108,7 +103,7 @@ impl FrameRoot {
                 | VisualFixture::SettingsMetadata
                 | VisualFixture::SettingsPresets,
             ) => 1,
-            Some(VisualFixture::WorkspaceLargeQueue) => 4,
+            Some(VisualFixture::WorkspaceLargeQueue) => 3,
             _ => 0,
         };
     }
@@ -404,80 +399,6 @@ impl FrameRoot {
             file.config.metadata.title = Some("Render Scene 24A".to_string());
             file.config.metadata.comment = Some("Color pass".to_string());
         }
-    }
-    pub(super) fn apply_settings_subtitles_fixture(&mut self) {
-        self.apply_preview_ready_fixture();
-        self.settings_ui.active_tab = SettingsTab::Subtitles;
-        self.subtitle_font_families = vec![
-            "Arial".to_string(),
-            "Helvetica Neue".to_string(),
-            "Inter".to_string(),
-            "Noto Sans".to_string(),
-            "SF Pro".to_string(),
-        ];
-        self.source_metadata.mark_ready(
-            "fixture-preview".to_string(),
-            SourceMetadata {
-                media_kind: Some(SourceKind::Video),
-                duration: Some("90.400000".to_string()),
-                bitrate: Some("12000000".to_string()),
-                video_codec: Some("h264".to_string()),
-                audio_codec: Some("aac".to_string()),
-                resolution: Some("1920x1080".to_string()),
-                frame_rate: Some(24.0),
-                width: Some(1920),
-                height: Some(1080),
-                subtitle_tracks: vec![
-                    crate::settings::SubtitleTrack {
-                        index: 2,
-                        codec: "subrip".to_string(),
-                        language: Some("eng".to_string()),
-                        label: Some("Dialogue".to_string()),
-                    },
-                    crate::settings::SubtitleTrack {
-                        index: 3,
-                        codec: "ass".to_string(),
-                        language: Some("jpn".to_string()),
-                        label: Some("Signs".to_string()),
-                    },
-                ],
-                ..SourceMetadata::default()
-            },
-        );
-        if let Some(file) = self.file_queue.selected_file_mut() {
-            file.config.external_subtitle_tracks = vec![
-                crate::settings::ExternalSubtitleTrack {
-                    path: "/tmp/english-selectable.srt".to_string(),
-                    language: Some("eng".to_string()),
-                    title: Some("English".to_string()),
-                    is_default: true,
-                    is_forced: false,
-                },
-                crate::settings::ExternalSubtitleTrack {
-                    path: "/tmp/signs-and-songs.ass".to_string(),
-                    language: Some("eng".to_string()),
-                    title: Some("Signs & songs".to_string()),
-                    is_default: false,
-                    is_forced: true,
-                },
-            ];
-            file.config.subtitle_burn_path = Some("/tmp/dialogue-final.srt".to_string());
-            file.config.subtitle_font_name = Some("Arial".to_string());
-            file.config.subtitle_font_size = Some("24".to_string());
-            file.config.subtitle_font_color = Some("#ffd166".to_string());
-            file.config.subtitle_outline_color = Some("#1d3557".to_string());
-            file.config.subtitle_position = Some("bottom".to_string());
-            file.config.selected_subtitle_tracks = vec![2];
-        }
-        self.subtitle_ui.external_track_index = Some(0);
-    }
-    pub(super) fn apply_settings_subtitles_popover_fixture(&mut self) {
-        self.apply_settings_subtitles_fixture();
-        self.subtitle_ui.mode = SettingsSubtitleMode::BurnIn;
-        self.subtitle_ui.popover = Some(SettingsSubtitlePopover::FontColor);
-        self.subtitle_ui.rendered_popover = Some(SettingsSubtitlePopover::FontColor);
-        self.subtitle_ui.font_color_draft = "#FFD166".to_string();
-        self.subtitle_ui.font_color_hsv_draft = settings_panel::hex_to_subtitle_hsv("#ffd166");
     }
     pub(super) fn apply_settings_presets_fixture(&mut self) {
         self.apply_preview_ready_fixture();

@@ -1,4 +1,4 @@
-//! File extension filters for native source and subtitle pickers.
+//! File extension filters for native source pickers.
 
 use std::path::{Path, PathBuf};
 
@@ -14,47 +14,9 @@ pub const SOURCE_FILE_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "avif", "heic", "heif",
 ];
 
-pub const BURN_SUBTITLE_FILE_EXTENSIONS: &[&str] = &["srt", "ass", "vtt"];
-pub const SELECTABLE_SUBTITLE_FILE_EXTENSIONS: &[&str] = &["srt", "ass", "vtt", "sup"];
-pub const PGS_SUBTITLE_FILE_EXTENSIONS: &[&str] = &["sup"];
-
 #[must_use]
 pub fn is_supported_source_path(path: &Path) -> bool {
     path_has_extension(path, SOURCE_FILE_EXTENSIONS)
-}
-
-#[must_use]
-pub fn is_supported_subtitle_path(path: &Path) -> bool {
-    path_has_extension(path, BURN_SUBTITLE_FILE_EXTENSIONS)
-}
-
-#[must_use]
-pub fn is_supported_selectable_subtitle_path(path: &Path) -> bool {
-    path_has_extension(path, SELECTABLE_SUBTITLE_FILE_EXTENSIONS)
-}
-
-#[must_use]
-pub fn selectable_subtitle_extensions_for_container(container: &str) -> &'static [&'static str] {
-    if frame_core::container::is_transport_stream_container(container) {
-        PGS_SUBTITLE_FILE_EXTENSIONS
-    } else if container.eq_ignore_ascii_case("mkv") {
-        SELECTABLE_SUBTITLE_FILE_EXTENSIONS
-    } else if matches!(
-        container.to_ascii_lowercase().as_str(),
-        "mp4" | "mov" | "webm"
-    ) {
-        BURN_SUBTITLE_FILE_EXTENSIONS
-    } else {
-        &[]
-    }
-}
-
-#[must_use]
-pub fn is_supported_selectable_subtitle_path_for_container(path: &Path, container: &str) -> bool {
-    path_has_extension(
-        path,
-        selectable_subtitle_extensions_for_container(container),
-    )
 }
 
 #[must_use]
@@ -140,49 +102,9 @@ mod tests {
     }
 
     #[test]
-    fn sup_is_selectable_but_not_offered_for_text_burn_in() {
-        let path = Path::new("/tmp/captions.SUP");
-        assert!(is_supported_selectable_subtitle_path(path));
-        assert!(!is_supported_subtitle_path(path));
-    }
-
-    #[test]
-    fn transport_stream_selectable_subtitles_accept_only_pgs_sidecars() {
-        for container in ["m2t", "mts", "m2ts"] {
-            assert!(is_supported_selectable_subtitle_path_for_container(
-                Path::new("/tmp/captions.SUP"),
-                container
-            ));
-            assert!(!is_supported_selectable_subtitle_path_for_container(
-                Path::new("/tmp/captions.ass"),
-                container
-            ));
-        }
-    }
-
-    #[test]
-    fn mp4_selectable_subtitles_accept_text_but_not_pgs_sidecars() {
-        assert!(is_supported_selectable_subtitle_path_for_container(
-            Path::new("/tmp/captions.vtt"),
-            "mp4"
-        ));
-        assert!(!is_supported_selectable_subtitle_path_for_container(
-            Path::new("/tmp/captions.sup"),
-            "mp4"
-        ));
-    }
-
-    #[test]
     fn is_supported_source_path_rejects_unknown_extensions() {
         assert!(!is_supported_source_path(Path::new("/tmp/archive.zip")));
         assert!(!is_supported_source_path(Path::new("/tmp/no-extension")));
-    }
-
-    #[test]
-    fn is_supported_subtitle_path_accepts_original_subtitle_extensions() {
-        assert!(is_supported_subtitle_path(Path::new("/tmp/dialogue.srt")));
-        assert!(is_supported_subtitle_path(Path::new("/tmp/dialogue.ASS")));
-        assert!(is_supported_subtitle_path(Path::new("/tmp/dialogue.vtt")));
     }
 
     #[test]

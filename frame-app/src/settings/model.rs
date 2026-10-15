@@ -38,9 +38,6 @@ pub const DEFAULT_AUDIO_FILTER_LOW_PASS: u32 = 16_000;
 pub const DEFAULT_AUDIO_FILTER_NOISE_REDUCTION: u32 = 12;
 pub const DEFAULT_AUDIO_FILTER_DE_ESSER: u32 = 35;
 pub const DEFAULT_METADATA_MODE: MetadataMode = MetadataMode::Preserve;
-pub const DEFAULT_SUBTITLE_FONT_COLOR: &str = "#ffffff";
-pub const DEFAULT_SUBTITLE_OUTLINE_COLOR: &str = "#000000";
-pub const DEFAULT_SUBTITLE_POSITION: SubtitlePosition = SubtitlePosition::Bottom;
 pub(super) const MAX_AUDIO_VOLUME: u32 = 200;
 pub(super) const MAX_GIF_LOOP: u16 = 65_535;
 pub(super) const MAX_GIF_COLORS: u16 = 256;
@@ -55,7 +52,6 @@ pub enum SettingsTab {
     Images,
     Audio,
     AudioFilters,
-    Subtitles,
     Metadata,
 }
 
@@ -67,7 +63,6 @@ impl SettingsTab {
             Self::Images => "Images",
             Self::Audio => "Audio",
             Self::AudioFilters => "Audio Filters",
-            Self::Subtitles => "Subtitles",
             Self::Metadata => "Metadata",
         }
     }
@@ -79,18 +74,16 @@ impl SettingsTab {
             Self::Images => "images",
             Self::Audio => "audio",
             Self::AudioFilters => "audio-filters",
-            Self::Subtitles => "subtitles",
             Self::Metadata => "metadata",
         }
     }
 }
 
-pub const ALL_SETTINGS_TABS: [SettingsTab; 6] = [
+pub const ALL_SETTINGS_TABS: [SettingsTab; 5] = [
     SettingsTab::VideoFilters,
     SettingsTab::Images,
     SettingsTab::Audio,
     SettingsTab::AudioFilters,
-    SettingsTab::Subtitles,
     SettingsTab::Metadata,
 ];
 
@@ -452,53 +445,6 @@ pub const METADATA_FIELDS: [MetadataField; 6] = [
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SubtitlePosition {
-    Bottom,
-    Middle,
-    Top,
-}
-
-impl SubtitlePosition {
-    #[must_use]
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::Bottom => "bottom",
-            Self::Middle => "middle",
-            Self::Top => "top",
-        }
-    }
-
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Bottom => "Bottom",
-            Self::Middle => "Middle",
-            Self::Top => "Top",
-        }
-    }
-
-    #[must_use]
-    pub fn from_id(id: &str) -> Option<Self> {
-        match id {
-            "bottom" => Some(Self::Bottom),
-            "middle" => Some(Self::Middle),
-            "top" => Some(Self::Top),
-            _ => None,
-        }
-    }
-}
-
-pub const SUBTITLE_POSITIONS: [SubtitlePosition; 3] = [
-    SubtitlePosition::Bottom,
-    SubtitlePosition::Middle,
-    SubtitlePosition::Top,
-];
-
-pub const SUBTITLE_FONT_SIZES: [&str; 14] = [
-    "8", "10", "12", "14", "16", "18", "20", "22", "24", "28", "32", "36", "42", "48",
-];
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MetadataModeOption {
     pub mode: MetadataMode,
     pub label: &'static str,
@@ -514,39 +460,6 @@ pub struct MetadataFieldOption {
     pub value: String,
     pub placeholder: String,
     pub is_disabled: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SubtitleFontOption {
-    pub name: String,
-    pub is_selected: bool,
-    pub is_disabled: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SubtitleFontSizeOption {
-    pub size: &'static str,
-    pub is_selected: bool,
-    pub is_disabled: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SubtitlePositionOption {
-    pub position: SubtitlePosition,
-    pub label: &'static str,
-    pub is_selected: bool,
-    pub is_disabled: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SubtitleTrackOption {
-    pub index: u32,
-    pub index_label: String,
-    pub codec: String,
-    pub detail: String,
-    pub is_selected: bool,
-    pub is_disabled: bool,
-    pub disabled_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -626,12 +539,6 @@ pub struct ConversionConfig {
     pub end_time: Option<String>,
     pub cut_segments: Vec<CutSegment>,
     pub metadata: MetadataConfig,
-    pub subtitle_burn_path: Option<String>,
-    pub subtitle_font_name: Option<String>,
-    pub subtitle_font_size: Option<String>,
-    pub subtitle_font_color: Option<String>,
-    pub subtitle_outline_color: Option<String>,
-    pub subtitle_position: Option<String>,
     pub rotation: String,
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
@@ -639,8 +546,6 @@ pub struct ConversionConfig {
     pub overlay: Option<OverlaySettings>,
     pub external_audio_tracks: Vec<frame_core::types::ExternalAudioTrack>,
     pub selected_audio_tracks: Vec<u32>,
-    pub selected_subtitle_tracks: Vec<u32>,
-    pub external_subtitle_tracks: Vec<ExternalSubtitleTrack>,
     pub resolution: String,
     pub custom_width: Option<String>,
     pub custom_height: Option<String>,
@@ -689,12 +594,6 @@ impl Default for ConversionConfig {
             end_time: None,
             cut_segments: Vec::new(),
             metadata: MetadataConfig::default(),
-            subtitle_burn_path: None,
-            subtitle_font_name: None,
-            subtitle_font_size: None,
-            subtitle_font_color: None,
-            subtitle_outline_color: None,
-            subtitle_position: None,
             rotation: "0".to_string(),
             flip_horizontal: false,
             flip_vertical: false,
@@ -702,8 +601,6 @@ impl Default for ConversionConfig {
             overlay: None,
             external_audio_tracks: Vec::new(),
             selected_audio_tracks: Vec::new(),
-            selected_subtitle_tracks: Vec::new(),
-            external_subtitle_tracks: Vec::new(),
             resolution: DEFAULT_RESOLUTION.to_string(),
             custom_width: None,
             custom_height: None,
@@ -739,17 +636,6 @@ impl Default for ConversionConfig {
 pub struct CutSegment {
     pub start_time: String,
     pub end_time: String,
-}
-
-/// A sidecar subtitle file embedded as a selectable output track.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct ExternalSubtitleTrack {
-    pub path: String,
-    pub language: Option<String>,
-    pub title: Option<String>,
-    pub is_default: bool,
-    pub is_forced: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

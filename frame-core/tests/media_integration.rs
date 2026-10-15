@@ -13,8 +13,7 @@ use frame_core::{
     preview::{PreviewFfmpegOptions, build_ffmpeg_preview_args},
     probe::{ffprobe_json_args, parse_ffprobe_stdout},
     types::{
-        ConversionConfig, CropConfig, ExternalSubtitleTrack, MetadataConfig, MetadataMode,
-        OverlayConfig, ProbeMetadata,
+        ConversionConfig, CropConfig, MetadataConfig, MetadataMode, OverlayConfig, ProbeMetadata,
     },
 };
 
@@ -728,59 +727,13 @@ fn transport_stream_metadata_modes_should_round_trip_program_tags() -> TestResul
 
 #[test]
 #[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
-fn transport_stream_burn_in_should_support_srt_ass_and_vtt_for_every_suffix() -> TestResult {
-    let tools = Toolchain::discover()?;
-    let sandbox = Sandbox::new("transport_stream_burn_in")?;
-    let input = sandbox.path("source.mp4");
-    generate_h264_aac_source(&tools, &input, 1.0, 160, 90)?;
-    let subtitle_cases = [
-        ("srt", "1\n00:00:00,000 --> 00:00:00,900\nFrame SRT\n"),
-        ("vtt", "WEBVTT\n\n00:00.000 --> 00:00.900\nFrame VTT\n"),
-        (
-            "ass",
-            "[Script Info]\nScriptType: v4.00+\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:00.90,Default,,0,0,0,,Frame ASS\n",
-        ),
-    ];
-    for (extension, contents) in subtitle_cases {
-        let subtitle = sandbox.path(&format!("captions.{extension}"));
-        fs::write(&subtitle, contents)
-            .map_err(|error| format!("failed to write {}: {error}", subtitle.display()))?;
-        for container in ["m2t", "mts", "m2ts"] {
-            let output = sandbox.path(&format!("burned-{extension}.{container}"));
-            let mut config = video_config(
-                container,
-                if container == "m2t" {
-                    "mpeg2video"
-                } else {
-                    "libx264"
-                },
-                if container == "m2t" { "mp2" } else { "ac3" },
-            );
-            config.video_bitrate_mode = "bitrate".to_string();
-            config.video_bitrate = "2500".to_string();
-            config.audio_bitrate = "192".to_string();
-            config.subtitle_burn_path = Some(path_arg(&subtitle));
-            convert(&tools, &input, &output, &config)?;
-            let metadata = probe_media(&tools, &output)?;
-            assert!(metadata.video_codec.is_some());
-            assert!(metadata.subtitle_tracks.is_empty());
-            decode_media(&tools, &output)?;
-        }
-    }
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
 fn transport_stream_combined_processing_graph_should_preserve_existing_features() -> TestResult {
     let tools = Toolchain::discover()?;
     let sandbox = Sandbox::new("transport_stream_combined_graph")?;
     let input = sandbox.path("source.mp4");
     let overlay = sandbox.path("overlay.ppm");
-    let subtitle = sandbox.path("burn.srt");
     generate_h264_aac_source(&tools, &input, 1.0, 160, 90)?;
     write_solid_ppm(&overlay, 24, 16, Rgb::RED)?;
-    write_srt(&subtitle)?;
 
     for container in ["m2t", "m2ts"] {
         let output = sandbox.path(&format!("combined.{container}"));
@@ -838,9 +791,6 @@ fn transport_stream_combined_processing_graph_should_preserve_existing_features(
             opacity: 0.75,
             anchor: "center".to_string(),
         });
-        config.subtitle_burn_path = Some(path_arg(&subtitle));
-        config.subtitle_font_size = Some("18".to_string());
-        config.subtitle_position = Some("bottom".to_string());
 
         convert(&tools, &input, &output, &config)?;
         let metadata = probe_media(&tools, &output)?;
@@ -849,106 +799,6 @@ fn transport_stream_combined_processing_graph_should_preserve_existing_features(
         assert!((0.4..=1.0).contains(&duration));
         decode_media(&tools, &output)?;
     }
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires FFmpeg/FFprobe and FRAME_TEST_PGS_FIXTURE pointing to a .sup file"]
-fn pgs_sidecar_should_copy_to_m2ts_and_transcode_to_dvb_for_m2t() -> TestResult {
-    let Some(pgs_fixture) = env::var_os("FRAME_TEST_PGS_FIXTURE").map(PathBuf::from) else {
-        eprintln!("skipping PGS test: FRAME_TEST_PGS_FIXTURE is not set");
-        return Ok(());
-    };
-    let tools = Toolchain::discover()?;
-    let sandbox = Sandbox::new("pgs_transport_stream")?;
-    let input = sandbox.path("source.mp4");
-    generate_h264_aac_source(&tools, &input, 2.0, 160, 90)?;
-
-    for (container, expected_codec) in [("m2t", "dvb_subtitle"), ("m2ts", "hdmv_pgs_subtitle")] {
-        let output = sandbox.path(&format!("subtitled.{container}"));
-        let mut config = video_config(
-            container,
-            if container == "m2t" {
-                "mpeg2video"
-            } else {
-                "libx264"
-            },
-            if container == "m2t" { "mp2" } else { "ac3" },
-        );
-        config.video_bitrate_mode = "bitrate".to_string();
-        config.video_bitrate = "2500".to_string();
-        config.audio_bitrate = "192".to_string();
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: path_arg(&pgs_fixture),
-            language: (container == "m2t").then(|| "eng".to_string()),
-            ..ExternalSubtitleTrack::default()
-        }];
-        convert(&tools, &input, &output, &config)?;
-        let metadata = probe_media(&tools, &output)?;
-        assert_eq!(metadata.subtitle_tracks.len(), 1);
-        assert_eq!(metadata.subtitle_tracks[0].codec, expected_codec);
-        assert_eq!(
-            metadata.subtitle_tracks[0].language.as_deref(),
-            (container == "m2t").then_some("eng")
-        );
-    }
-
-    let pgs_source = sandbox.path("embedded-pgs.mkv");
-    run_tool(
-        &tools.ffmpeg,
-        &args(&[
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            &path_arg(&input),
-            "-i",
-            &path_arg(&pgs_fixture),
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a:0",
-            "-map",
-            "1:s:0",
-            "-c",
-            "copy",
-            "-metadata:s:s:0",
-            "language=eng",
-            "-y",
-            &path_arg(&pgs_source),
-        ]),
-    )?;
-    let subtitle_index = probe_media(&tools, &pgs_source)?
-        .subtitle_tracks
-        .first()
-        .map(|track| track.index)
-        .ok_or_else(|| "generated PGS source has no subtitle stream".to_string())?;
-
-    let dvb_output = sandbox.path("mixed-copy-pgs-to-dvb.m2t");
-    let mut dvb_config = video_config("m2t", "libx264", "aac");
-    dvb_config.processing_mode = "copy".to_string();
-    dvb_config.selected_audio_tracks = vec![1];
-    dvb_config.selected_subtitle_tracks = vec![subtitle_index];
-    convert(&tools, &pgs_source, &dvb_output, &dvb_config)?;
-    let dvb_probe = probe_media(&tools, &dvb_output)?;
-    assert_eq!(dvb_probe.video_codec.as_deref(), Some("h264"));
-    assert_eq!(dvb_probe.audio_codec.as_deref(), Some("aac"));
-    assert_eq!(dvb_probe.subtitle_tracks[0].codec, "dvb_subtitle");
-    assert_eq!(
-        dvb_probe.subtitle_tracks[0].language.as_deref(),
-        Some("eng")
-    );
-
-    let pgs_output = sandbox.path("mixed-reencode-pgs-copy.m2ts");
-    let mut pgs_config = video_config("m2ts", "libx264", "ac3");
-    pgs_config.selected_audio_tracks = vec![1];
-    pgs_config.selected_subtitle_tracks = vec![subtitle_index];
-    pgs_config.audio_bitrate = "192".to_string();
-    convert(&tools, &pgs_source, &pgs_output, &pgs_config)?;
-    let pgs_probe = probe_media(&tools, &pgs_output)?;
-    assert_eq!(pgs_probe.video_codec.as_deref(), Some("h264"));
-    assert_eq!(pgs_probe.audio_codec.as_deref(), Some("ac3"));
-    assert_eq!(pgs_probe.subtitle_tracks[0].codec, "hdmv_pgs_subtitle");
     Ok(())
 }
 
@@ -1476,230 +1326,6 @@ fn selected_audio_track_should_emit_only_requested_track() -> TestResult {
 
 #[test]
 #[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
-fn subtitle_stream_should_transcode_to_mov_text_in_mp4() -> TestResult {
-    let tools = Toolchain::discover()?;
-    let sandbox = Sandbox::new("subtitle_stream")?;
-    let input = sandbox.path("source.mp4");
-    let subtitle = sandbox.path("subtitle.srt");
-    let output = sandbox.path("subtitled.mp4");
-
-    write_srt(&subtitle)?;
-    generate_subtitled_source(&tools, &input, &subtitle)?;
-    let mut config = video_config("mp4", "libx264", "aac");
-    config.selected_subtitle_tracks = vec![2];
-    convert(&tools, &input, &output, &config)?;
-
-    let metadata = probe_media(&tools, &output)?;
-    assert_eq!(metadata.subtitle_tracks.len(), 1);
-    assert_eq!(
-        metadata
-            .subtitle_tracks
-            .first()
-            .map(|track| track.codec.as_str()),
-        Some("mov_text")
-    );
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
-fn external_selectable_subtitle_should_survive_stream_copy_with_metadata() -> TestResult {
-    let tools = Toolchain::discover()?;
-    let sandbox = Sandbox::new("external_selectable_subtitle")?;
-    let input = sandbox.path("source.mp4");
-    let subtitle = sandbox.path("english.srt");
-    let output = sandbox.path("subtitled.mp4");
-
-    generate_h264_aac_source(&tools, &input, 1.0, 64, 48)?;
-    write_srt(&subtitle)?;
-    let mut config = video_config("mp4", "libx264", "aac");
-    config.processing_mode = "copy".to_string();
-    config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-        path: path_arg(&subtitle),
-        language: Some("eng".to_string()),
-        title: Some("English".to_string()),
-        is_default: true,
-        is_forced: true,
-    }];
-
-    convert(&tools, &input, &output, &config)?;
-
-    let metadata = probe_media(&tools, &output)?;
-    assert_eq!(metadata.subtitle_tracks.len(), 1);
-    assert_eq!(metadata.subtitle_tracks[0].codec, "mov_text");
-    assert_eq!(metadata.subtitle_tracks[0].language.as_deref(), Some("eng"));
-    assert_eq!(
-        metadata.subtitle_tracks[0].label.as_deref(),
-        Some("English")
-    );
-
-    let probe_args = args(&[
-        "-v",
-        "error",
-        "-select_streams",
-        "s:0",
-        "-show_entries",
-        "stream_disposition=default,forced",
-        "-of",
-        "json",
-        &path_arg(&output),
-    ]);
-    let output_json: serde_json::Value =
-        serde_json::from_slice(&run_tool_output(&tools.ffprobe, &probe_args)?)
-            .map_err(|error| format!("failed to parse subtitle disposition: {error}"))?;
-    let disposition = &output_json["streams"][0]["disposition"];
-    assert_eq!(disposition["default"], 1);
-    assert_eq!(disposition["forced"], 1);
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
-fn external_selectable_subtitle_should_use_each_container_codec_contract() -> TestResult {
-    let tools = Toolchain::discover()?;
-    let sandbox = Sandbox::new("external_subtitle_container_matrix")?;
-    let input = sandbox.path("source.mp4");
-    let subtitle = sandbox.path("captions.srt");
-    generate_h264_aac_source(&tools, &input, 1.0, 64, 48)?;
-    write_srt(&subtitle)?;
-
-    for (container, video_codec, audio_codec, expected_subtitle_codec) in [
-        ("mp4", "libx264", "aac", "mov_text"),
-        ("mov", "libx264", "aac", "mov_text"),
-        ("mkv", "libx264", "aac", "subrip"),
-        ("webm", "vp9", "libopus", "webvtt"),
-    ] {
-        let output = sandbox.path(&format!("subtitled.{container}"));
-        let mut config = video_config(container, video_codec, audio_codec);
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: path_arg(&subtitle),
-            ..ExternalSubtitleTrack::default()
-        }];
-
-        convert(&tools, &input, &output, &config)?;
-
-        let metadata = probe_media(&tools, &output)?;
-        assert_eq!(
-            metadata
-                .subtitle_tracks
-                .first()
-                .map(|track| track.codec.as_str()),
-            Some(expected_subtitle_codec),
-            "unexpected external subtitle codec for {container}"
-        );
-    }
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
-fn every_supported_external_subtitle_format_should_embed_in_mkv() -> TestResult {
-    let tools = Toolchain::discover()?;
-    let sandbox = Sandbox::new("external_subtitle_format_matrix")?;
-    let input = sandbox.path("source.mp4");
-    generate_h264_aac_source(&tools, &input, 1.0, 64, 48)?;
-
-    for (extension, contents, expected_codec) in [
-        (
-            "srt",
-            "1\n00:00:00,000 --> 00:00:00,900\nSubRip subtitle\n",
-            "subrip",
-        ),
-        (
-            "ass",
-            "[Script Info]\nScriptType: v4.00+\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:00.90,Default,,0,0,0,,ASS subtitle\n",
-            "ass",
-        ),
-        (
-            "vtt",
-            "WEBVTT\n\n00:00.000 --> 00:00.900\nWebVTT subtitle\n",
-            "webvtt",
-        ),
-    ] {
-        let subtitle = sandbox.path(&format!("captions.{extension}"));
-        let output = sandbox.path(&format!("subtitled-{extension}.mkv"));
-        fs::write(&subtitle, contents)
-            .map_err(|error| format!("failed to write {}: {error}", subtitle.display()))?;
-        let mut config = video_config("mkv", "libx264", "aac");
-        config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-            path: path_arg(&subtitle),
-            ..ExternalSubtitleTrack::default()
-        }];
-
-        convert(&tools, &input, &output, &config)?;
-
-        let metadata = probe_media(&tools, &output)?;
-        assert_eq!(
-            metadata
-                .subtitle_tracks
-                .first()
-                .map(|track| track.codec.as_str()),
-            Some(expected_codec),
-            "unexpected MKV subtitle codec for .{extension}"
-        );
-    }
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
-fn trimmed_external_selectable_subtitle_should_keep_source_relative_timing() -> TestResult {
-    let tools = Toolchain::discover()?;
-    let sandbox = Sandbox::new("trimmed_external_subtitle")?;
-    let input = sandbox.path("source.mp4");
-    let subtitle = sandbox.path("captions.srt");
-    let output = sandbox.path("trimmed.mp4");
-    generate_h264_aac_source(&tools, &input, 3.0, 64, 48)?;
-    fs::write(
-        &subtitle,
-        "1\n00:00:01,200 --> 00:00:02,200\nTrimmed subtitle\n",
-    )
-    .map_err(|error| format!("failed to write {}: {error}", subtitle.display()))?;
-    let mut config = video_config("mp4", "libx264", "aac");
-    config.start_time = Some("00:00:01.000".to_string());
-    config.end_time = Some("00:00:02.500".to_string());
-    config.external_subtitle_tracks = vec![ExternalSubtitleTrack {
-        path: path_arg(&subtitle),
-        ..ExternalSubtitleTrack::default()
-    }];
-
-    convert(&tools, &input, &output, &config)?;
-
-    let packet_args = args(&[
-        "-v",
-        "error",
-        "-select_streams",
-        "s:0",
-        "-show_entries",
-        "packet=pts_time,duration_time,size",
-        "-of",
-        "json",
-        &path_arg(&output),
-    ]);
-    let packets: serde_json::Value =
-        serde_json::from_slice(&run_tool_output(&tools.ffprobe, &packet_args)?)
-            .map_err(|error| format!("failed to parse subtitle packets: {error}"))?;
-    let timed_packet = packets["packets"]
-        .as_array()
-        .and_then(|packets| {
-            packets.iter().find(|packet| {
-                packet["size"]
-                    .as_str()
-                    .and_then(|size| size.parse::<u64>().ok())
-                    .is_some_and(|size| size > 2)
-            })
-        })
-        .ok_or_else(|| "trimmed output has no subtitle payload packet".to_string())?;
-    let pts = timed_packet["pts_time"]
-        .as_str()
-        .and_then(|value| value.parse::<f64>().ok())
-        .ok_or_else(|| "subtitle payload packet has no timestamp".to_string())?;
-    assert!((pts - 0.2).abs() < 0.05, "unexpected subtitle PTS: {pts}");
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
 fn metadata_replace_should_write_requested_title() -> TestResult {
     let tools = Toolchain::discover()?;
     let sandbox = Sandbox::new("metadata_replace")?;
@@ -1752,99 +1378,6 @@ fn audio_normalize_and_mono_wav_should_emit_mono_pcm() -> TestResult {
             .map(|track| track.channels.as_str()),
         Some("1")
     );
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
-fn subtitle_burn_should_encode_video_when_srt_is_present() -> TestResult {
-    let tools = Toolchain::discover()?;
-    let sandbox = Sandbox::new("subtitle_burn")?;
-    let input = sandbox.path("source.mp4");
-    let subtitle = sandbox.path("subtitle.srt");
-    let output = sandbox.path("burned.mp4");
-
-    generate_h264_aac_source(&tools, &input, 1.0, 64, 48)?;
-    write_srt(&subtitle)?;
-    let mut config = video_config("mp4", "libx264", "aac");
-    config.subtitle_burn_path = Some(path_arg(&subtitle));
-    config.subtitle_font_size = Some("16".to_string());
-    config.subtitle_font_color = Some("#ffffff".to_string());
-    config.subtitle_outline_color = Some("#000000".to_string());
-    config.subtitle_position = Some("bottom".to_string());
-    convert(&tools, &input, &output, &config)?;
-
-    let metadata = probe_media(&tools, &output)?;
-    assert_eq!(metadata.video_codec.as_deref(), Some("h264"));
-    Ok(())
-}
-
-#[test]
-#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
-fn preview_subtitle_burn_should_use_source_time_after_seek() -> TestResult {
-    let tools = Toolchain::discover()?;
-    let sandbox = Sandbox::new("preview_subtitle_seek")?;
-    let input = sandbox.path("source.mp4");
-    let subtitle = sandbox.path("delayed.srt");
-
-    // Use a normal preview size so libass font fallback and rasterization on
-    // different platforms cannot reduce the subtitle to just a few pixels.
-    generate_black_h264_source(&tools, &input, 2.0, 640, 360)?;
-    write_delayed_srt(&subtitle)?;
-
-    let mut config = video_config("mp4", "libx264", "aac");
-    config.subtitle_burn_path = Some(path_arg(&subtitle));
-    config.subtitle_font_size = Some("24".to_string());
-    config.subtitle_font_color = Some("#ffffff".to_string());
-    config.subtitle_outline_color = Some("#000000".to_string());
-    config.subtitle_position = Some("middle".to_string());
-
-    let visible_pixels_at = |start_seconds: f64| -> TestResult<usize> {
-        let plan = build_ffmpeg_preview_args(
-            &path_arg(&input),
-            &config,
-            &PreviewFfmpegOptions {
-                start_seconds,
-                end_seconds: Some(start_seconds + 0.2),
-                source_width: Some(640),
-                source_height: Some(360),
-                max_width: 640,
-                max_height: 360,
-                fps: 1,
-                realtime: false,
-                precise_seek: true,
-                source_is_image: false,
-            },
-        )
-        .map_err(|error| error.to_string())?;
-
-        let mut args = plan.args.clone();
-        let insert_at = args.len().saturating_sub(1);
-        args.insert(insert_at, "-frames:v".to_string());
-        args.insert(insert_at + 1, "1".to_string());
-        let output = run_tool_output(&tools.ffmpeg, &args)?;
-        if output.len() < plan.frame_bytes {
-            return Err(format!(
-                "preview frame was too short: got {}, expected at least {}",
-                output.len(),
-                plan.frame_bytes
-            ));
-        }
-
-        Ok(count_visible_bgra_pixels(&output[..plan.frame_bytes]))
-    };
-
-    let before_subtitle = visible_pixels_at(0.0)?;
-    assert_eq!(
-        before_subtitle, 0,
-        "subtitle appeared before its source timestamp"
-    );
-    let visible_pixels = visible_pixels_at(1.0)?;
-    if visible_pixels < 50 {
-        return Err(format!(
-            "seeked preview did not render delayed subtitle; visible pixel count was {visible_pixels}"
-        ));
-    }
     Ok(())
 }
 
@@ -1980,14 +1513,6 @@ fn base_config(container: &str, video_codec: &str) -> ConversionConfig {
         external_audio_tracks: Vec::new(),
         timeline_sources: Vec::new(),
         selected_audio_tracks: Vec::new(),
-        selected_subtitle_tracks: Vec::new(),
-        external_subtitle_tracks: Vec::new(),
-        subtitle_burn_path: None,
-        subtitle_font_name: None,
-        subtitle_font_size: None,
-        subtitle_font_color: None,
-        subtitle_outline_color: None,
-        subtitle_position: None,
         resolution: "original".to_string(),
         custom_width: None,
         custom_height: None,
@@ -2162,81 +1687,6 @@ fn generate_two_audio_track_source(tools: &Toolchain, output: &Path) -> TestResu
     )
 }
 
-fn generate_subtitled_source(tools: &Toolchain, output: &Path, subtitle: &Path) -> TestResult {
-    run_tool(
-        &tools.ffmpeg,
-        &args(&[
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "testsrc2=size=64x48:rate=12:duration=1",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:sample_rate=48000:duration=1",
-            "-i",
-            &path_arg(subtitle),
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-            "-map",
-            "2:s:0",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-crf",
-            "28",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "96k",
-            "-c:s",
-            "mov_text",
-            "-y",
-            &path_arg(output),
-        ]),
-    )
-}
-
-fn generate_black_h264_source(
-    tools: &Toolchain,
-    output: &Path,
-    duration: f64,
-    width: u32,
-    height: u32,
-) -> TestResult {
-    run_tool(
-        &tools.ffmpeg,
-        &args(&[
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            &format!("color=c=black:size={width}x{height}:rate=12:duration={duration:.3}"),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "ultrafast",
-            "-crf",
-            "28",
-            "-pix_fmt",
-            "yuv420p",
-            "-an",
-            "-y",
-            &path_arg(output),
-        ]),
-    )
-}
-
 fn generate_odd_h264_source(tools: &Toolchain, output: &Path) -> TestResult {
     run_tool(
         &tools.ffmpeg,
@@ -2374,26 +1824,6 @@ fn create_ppm(path: &Path, width: u32, height: u32) -> Result<File, String> {
     write!(file, "P6\n{width} {height}\n255\n")
         .map_err(|error| format!("failed to write {} header: {error}", path.display()))?;
     Ok(file)
-}
-
-fn write_srt(path: &Path) -> TestResult {
-    fs::write(
-        path,
-        "1\n00:00:00,000 --> 00:00:00,900\nFrame subtitle integration\n",
-    )
-    .map_err(|error| format!("failed to write {}: {error}", path.display()))
-}
-
-fn write_delayed_srt(path: &Path) -> TestResult {
-    fs::write(path, "1\n00:00:01,000 --> 00:00:01,900\nVISIBLE\n")
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
-}
-
-fn count_visible_bgra_pixels(bytes: &[u8]) -> usize {
-    bytes
-        .chunks_exact(4)
-        .filter(|pixel| pixel[0] > 35 || pixel[1] > 35 || pixel[2] > 35)
-        .count()
 }
 
 fn assert_color_near(actual: Rgb, expected: Rgb, tolerance: u8, label: &str) -> TestResult {
@@ -2662,4 +2092,71 @@ fn sanitize_name(name: &str) -> String {
     name.chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
         .collect()
+}
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn exports_omit_source_subtitles_in_copy_and_reencode_modes() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("omit_subtitles")?;
+    let input = sandbox.path("source.mp4");
+    let subtitle = sandbox.path("captions.srt");
+    fs::write(&subtitle, "1\n00:00:00,000 --> 00:00:00,900\nCaptions\n")
+        .map_err(|error| error.to_string())?;
+    generate_subtitled_source(&tools, &input, &subtitle)?;
+    assert_eq!(probe_media(&tools, &input)?.subtitle_tracks.len(), 1);
+    for mode in ["copy", "reencode"] {
+        let mut config = video_config("mp4", "libx264", "aac");
+        config.processing_mode = mode.to_string();
+        config.selected_audio_tracks = vec![1];
+        let output = sandbox.path(&format!("{mode}.mp4"));
+        convert(&tools, &input, &output, &config)?;
+        let metadata = probe_media(&tools, &output)?;
+        assert!(metadata.subtitle_tracks.is_empty());
+        assert_eq!(metadata.video_codec.as_deref(), Some("h264"));
+        assert_eq!(metadata.audio_tracks.len(), 1);
+        decode_media(&tools, &output)?;
+    }
+    Ok(())
+}
+fn generate_subtitled_source(tools: &Toolchain, output: &Path, subtitle: &Path) -> TestResult {
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=64x48:rate=12:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-i",
+            &path_arg(subtitle),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-map",
+            "2:s:0",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "28",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-c:s",
+            "mov_text",
+            "-y",
+            &path_arg(output),
+        ]),
+    )
 }

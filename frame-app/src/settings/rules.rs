@@ -33,11 +33,6 @@ pub fn container_supports_audio(container: &str) -> bool {
 }
 
 #[must_use]
-pub fn container_supports_subtitles(container: &str) -> bool {
-    media_rules::container_supports_subtitles(container)
-}
-
-#[must_use]
 pub fn is_audio_codec_allowed_for_container(container: &str, codec: &str) -> bool {
     media_rules::is_audio_codec_allowed(container, codec)
 }
@@ -64,11 +59,6 @@ pub fn is_video_pixel_format_allowed_for_container(
     pixel_format: &str,
 ) -> bool {
     media_rules::is_video_pixel_format_allowed(container, encoder, pixel_format)
-}
-
-#[must_use]
-pub fn is_subtitle_codec_allowed_for_container(container: &str, codec: &str) -> bool {
-    media_rules::is_subtitle_stream_supported(container, codec)
 }
 
 #[must_use]

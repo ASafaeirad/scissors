@@ -5,9 +5,8 @@
 
 use super::*;
 use crate::settings::{
-    AudioFiltersConfig, CropSettings, DeinterlaceMode, ExternalSubtitleTrack, FilterStrength,
-    FilterValue, MetadataConfig, MetadataMode, ProcessingMode, VideoColorFiltersConfig,
-    VideoFiltersConfig,
+    AudioFiltersConfig, CropSettings, DeinterlaceMode, FilterStrength, FilterValue, MetadataConfig,
+    MetadataMode, ProcessingMode, VideoColorFiltersConfig, VideoFiltersConfig,
 };
 use std::{
     fs,
@@ -32,13 +31,6 @@ fn core_config_from_gpui_preserves_active_conversion_fields() {
         audio_channels: "stereo".to_string(),
         audio_volume: 125,
         audio_normalize: true,
-        external_subtitle_tracks: vec![ExternalSubtitleTrack {
-            path: "/tmp/dialogue.srt".to_string(),
-            language: Some("eng".to_string()),
-            title: Some("English".to_string()),
-            is_default: true,
-            is_forced: false,
-        }],
         video_filters: VideoFiltersConfig {
             color: VideoColorFiltersConfig {
                 brightness: FilterValue {
@@ -137,12 +129,6 @@ fn core_config_from_gpui_preserves_active_conversion_fields() {
             service_provider: Some("Frame Provider".to_string()),
             ..MetadataConfig::default()
         },
-        subtitle_burn_path: Some("/tmp/dialogue.srt".to_string()),
-        subtitle_font_name: Some("Arial".to_string()),
-        subtitle_font_size: Some("24".to_string()),
-        subtitle_font_color: Some("#ffffff".to_string()),
-        subtitle_outline_color: Some("#000000".to_string()),
-        subtitle_position: Some("bottom".to_string()),
         rotation: "90".to_string(),
         flip_horizontal: true,
         flip_vertical: true,
@@ -159,7 +145,6 @@ fn core_config_from_gpui_preserves_active_conversion_fields() {
         overlay: None,
         external_audio_tracks: Vec::new(),
         selected_audio_tracks: vec![1, 2],
-        selected_subtitle_tracks: vec![3],
         video_codec: "libx265".to_string(),
         video_bitrate_mode: "bitrate".to_string(),
         video_bitrate: "9000".to_string(),
@@ -240,23 +225,6 @@ fn core_config_from_gpui_preserves_active_conversion_fields() {
     assert!(core.flip_horizontal);
     assert!(core.flip_vertical);
     assert_eq!(core.selected_audio_tracks, [1, 2]);
-    assert_eq!(core.selected_subtitle_tracks, [3]);
-    assert_eq!(core.external_subtitle_tracks.len(), 1);
-    assert_eq!(core.external_subtitle_tracks[0].path, "/tmp/dialogue.srt");
-    assert_eq!(
-        core.external_subtitle_tracks[0].language.as_deref(),
-        Some("eng")
-    );
-    assert!(core.external_subtitle_tracks[0].is_default);
-    assert_eq!(
-        core.subtitle_burn_path.as_deref(),
-        Some("/tmp/dialogue.srt")
-    );
-    assert_eq!(core.subtitle_font_name.as_deref(), Some("Arial"));
-    assert_eq!(core.subtitle_font_size.as_deref(), Some("24"));
-    assert_eq!(core.subtitle_font_color.as_deref(), Some("#ffffff"));
-    assert_eq!(core.subtitle_outline_color.as_deref(), Some("#000000"));
-    assert_eq!(core.subtitle_position.as_deref(), Some("bottom"));
     assert_eq!(core.crop.as_ref().map(|crop| crop.width), Some(300.0));
     assert_eq!(core.metadata.mode, frame_core::types::MetadataMode::Replace);
     assert_eq!(core.metadata.title.as_deref(), Some("Render Title"));

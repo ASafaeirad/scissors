@@ -509,7 +509,6 @@ pub(in crate::app) fn settings_audio_track_button(
             primary: option.codec,
             detail: option.detail,
             trailing: option.bitrate,
-            layout: FrameTrackListItemLayout::Detailed,
         },
         option.is_selected,
         is_enabled,

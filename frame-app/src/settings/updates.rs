@@ -4,29 +4,27 @@ use super::{
         CutSegment, DEFAULT_AUDIO_BITRATE_MODE, DEFAULT_AUDIO_CHANNELS, DEFAULT_AUDIO_QUALITY,
         DEFAULT_AUDIO_VOLUME, DEFAULT_FPS, DEFAULT_GIF_DITHER, DEFAULT_IMAGE_JPEG_HUFFMAN,
         DEFAULT_IMAGE_PNG_PREDICTION, DEFAULT_IMAGE_TIFF_COMPRESSION, DEFAULT_IMAGE_WEBP_PRESET,
-        DEFAULT_PIXEL_FORMAT, DEFAULT_RESOLUTION, DEFAULT_VIDEO_BITRATE_MODE,
-        ExternalSubtitleTrack, FPS_OPTIONS, GIF_DITHER_OPTIONS, GIF_FPS_OPTIONS,
-        IMAGE_JPEG_HUFFMAN_OPTIONS, IMAGE_PNG_PREDICTION_OPTIONS, IMAGE_TIFF_COMPRESSION_OPTIONS,
-        IMAGE_WEBP_PRESET_OPTIONS, MAX_AUDIO_VOLUME, MAX_GIF_COLORS, MAX_GIF_LOOP,
-        MAX_IMAGE_JPEG_QUALITY, MAX_IMAGE_PNG_COMPRESSION, MAX_IMAGE_WEBP_COMPRESSION,
-        MAX_IMAGE_WEBP_QUALITY, MetadataField, MetadataMode, PresetDefinition, ProcessingMode,
-        RESOLUTION_OPTIONS, SCALING_ALGORITHM_OPTIONS, SUBTITLE_FONT_SIZES, SourceKind,
-        SourceMetadata, SubtitlePosition, VIDEO_CODEC_DEFINITIONS, VIDEO_PIXEL_FORMAT_DEFINITIONS,
+        DEFAULT_PIXEL_FORMAT, DEFAULT_RESOLUTION, DEFAULT_VIDEO_BITRATE_MODE, FPS_OPTIONS,
+        GIF_DITHER_OPTIONS, GIF_FPS_OPTIONS, IMAGE_JPEG_HUFFMAN_OPTIONS,
+        IMAGE_PNG_PREDICTION_OPTIONS, IMAGE_TIFF_COMPRESSION_OPTIONS, IMAGE_WEBP_PRESET_OPTIONS,
+        MAX_AUDIO_VOLUME, MAX_GIF_COLORS, MAX_GIF_LOOP, MAX_IMAGE_JPEG_QUALITY,
+        MAX_IMAGE_PNG_COMPRESSION, MAX_IMAGE_WEBP_COMPRESSION, MAX_IMAGE_WEBP_QUALITY,
+        MetadataField, MetadataMode, PresetDefinition, ProcessingMode, RESOLUTION_OPTIONS,
+        SCALING_ALGORITHM_OPTIONS, SourceKind, SourceMetadata, VIDEO_CODEC_DEFINITIONS,
+        VIDEO_PIXEL_FORMAT_DEFINITIONS,
     },
     options::{
         first_allowed_video_codec, first_allowed_video_pixel_format, first_allowed_video_preset,
         is_hardware_video_codec, is_nvenc_video_codec, is_video_preset_allowed,
-        is_videotoolbox_video_codec, mp2_original_channels_are_unsupported, normalized_hex_color,
+        is_videotoolbox_video_codec, mp2_original_channels_are_unsupported,
     },
     rules::{
-        container_supports_audio, container_supports_subtitles, default_audio_codec_for_container,
+        container_supports_audio, default_audio_codec_for_container,
         is_audio_codec_allowed_for_container, is_audio_only_container, is_gif_container,
-        is_image_container, is_subtitle_codec_allowed_for_container,
-        is_video_codec_allowed_for_container, is_video_pixel_format_allowed_for_container,
-        source_kind_for,
+        is_image_container, is_video_codec_allowed_for_container,
+        is_video_pixel_format_allowed_for_container, source_kind_for,
     },
 };
-use crate::file_filters::is_supported_selectable_subtitle_path_for_container;
 use crate::numeric::u32_to_u16;
 
 #[must_use]
@@ -197,210 +195,20 @@ pub fn apply_metadata_field(
     true
 }
 
-pub fn apply_subtitle_burn_path(config: &mut ConversionConfig, path: Option<String>) -> bool {
-    let path = path
-        .map(|path| path.trim().to_string())
-        .filter(|path| !path.is_empty());
-    if config.subtitle_burn_path == path {
-        return false;
-    }
-
-    config.subtitle_burn_path = path;
-    true
-}
-
-pub fn add_external_subtitle_tracks(
-    config: &mut ConversionConfig,
-    paths: impl IntoIterator<Item = String>,
-) -> Option<usize> {
-    let mut last_added = None;
-    for path in paths {
-        let path = path.trim();
-        if path.is_empty()
-            || !is_supported_selectable_subtitle_path_for_container(
-                std::path::Path::new(path),
-                &config.container,
-            )
-            || config
-                .external_subtitle_tracks
-                .iter()
-                .any(|track| track.path == path)
-        {
-            continue;
-        }
-
-        config.external_subtitle_tracks.push(ExternalSubtitleTrack {
-            path: path.to_string(),
-            ..ExternalSubtitleTrack::default()
-        });
-        last_added = Some(config.external_subtitle_tracks.len() - 1);
-    }
-    last_added
-}
-
-pub fn remove_external_subtitle_track(config: &mut ConversionConfig, index: usize) -> bool {
-    if index >= config.external_subtitle_tracks.len() {
-        return false;
-    }
-    config.external_subtitle_tracks.remove(index);
-    true
-}
-
-pub fn apply_external_subtitle_language(
-    config: &mut ConversionConfig,
-    index: usize,
-    language: &str,
-) -> bool {
-    let Some(track) = config.external_subtitle_tracks.get_mut(index) else {
-        return false;
-    };
-    let language = normalize_subtitle_metadata_value(language);
-    if track.language == language {
-        return false;
-    }
-    track.language = language;
-    true
-}
-
-pub fn apply_external_subtitle_title(
-    config: &mut ConversionConfig,
-    index: usize,
-    title: &str,
-) -> bool {
-    let Some(track) = config.external_subtitle_tracks.get_mut(index) else {
-        return false;
-    };
-    let title = normalize_subtitle_metadata_value(title);
-    if track.title == title {
-        return false;
-    }
-    track.title = title;
-    true
-}
-
-pub fn apply_external_subtitle_default(
-    config: &mut ConversionConfig,
-    index: usize,
-    is_default: bool,
-) -> bool {
-    if index >= config.external_subtitle_tracks.len() {
-        return false;
-    }
-
-    let mut changed = false;
-    for (track_index, track) in config.external_subtitle_tracks.iter_mut().enumerate() {
-        let next = is_default && track_index == index;
-        if track.is_default != next && (track_index == index || is_default) {
-            track.is_default = next;
-            changed = true;
-        }
-    }
-    changed
-}
-
-pub fn apply_external_subtitle_forced(
-    config: &mut ConversionConfig,
-    index: usize,
-    is_forced: bool,
-) -> bool {
-    let Some(track) = config.external_subtitle_tracks.get_mut(index) else {
-        return false;
-    };
-    if track.is_forced == is_forced {
-        return false;
-    }
-    track.is_forced = is_forced;
-    true
-}
-
-fn normalize_subtitle_metadata_value(value: &str) -> Option<String> {
-    let value: String = value.chars().filter(|ch| !ch.is_control()).collect();
-    (!value.trim().is_empty()).then_some(value)
-}
-
-pub fn apply_subtitle_font_name(config: &mut ConversionConfig, font: &str) -> bool {
-    let font = font.trim();
-    let font = if font.is_empty() {
-        None
-    } else {
-        Some(font.to_string())
-    };
-    if config.subtitle_font_name == font {
-        return false;
-    }
-
-    config.subtitle_font_name = font;
-    true
-}
-
-pub fn apply_subtitle_font_size(config: &mut ConversionConfig, size: &str) -> bool {
-    let size = size.trim();
-    let size = if size.is_empty() {
-        None
-    } else if SUBTITLE_FONT_SIZES.contains(&size) {
-        Some(size.to_string())
-    } else {
-        return false;
-    };
-
-    if config.subtitle_font_size == size {
-        return false;
-    }
-
-    config.subtitle_font_size = size;
-    true
-}
-
-pub fn apply_subtitle_font_color(config: &mut ConversionConfig, color: &str) -> bool {
-    apply_subtitle_color(&mut config.subtitle_font_color, color)
-}
-
-pub fn apply_subtitle_outline_color(config: &mut ConversionConfig, color: &str) -> bool {
-    apply_subtitle_color(&mut config.subtitle_outline_color, color)
-}
-
-pub fn apply_subtitle_position(config: &mut ConversionConfig, position: SubtitlePosition) -> bool {
-    let position = Some(position.id().to_string());
-    if config.subtitle_position == position {
-        return false;
-    }
-
-    config.subtitle_position = position;
-    true
-}
-
-pub fn toggle_subtitle_track_selection(config: &mut ConversionConfig, index: u32) -> bool {
-    if config.selected_subtitle_tracks.contains(&index) {
-        config
-            .selected_subtitle_tracks
-            .retain(|selected_index| *selected_index != index);
-    } else {
-        config.selected_subtitle_tracks.push(index);
-    }
-
-    true
-}
-
 pub fn apply_preset(
     config: &mut ConversionConfig,
     preset: &PresetDefinition,
     metadata: Option<&SourceMetadata>,
 ) -> bool {
     let before = config.clone();
-    // Presets describe output settings; stream indices and subtitle paths belong to the source.
+    // Presets describe output settings; track selections and cut segments belong to the source.
     let external_audio_tracks = std::mem::take(&mut config.external_audio_tracks);
     let selected_audio_tracks = std::mem::take(&mut config.selected_audio_tracks);
-    let selected_subtitle_tracks = std::mem::take(&mut config.selected_subtitle_tracks);
-    let external_subtitle_tracks = std::mem::take(&mut config.external_subtitle_tracks);
-    let subtitle_burn_path = config.subtitle_burn_path.take();
     let cut_segments = std::mem::take(&mut config.cut_segments);
 
     *config = preset.config.clone();
     config.external_audio_tracks = external_audio_tracks;
     config.selected_audio_tracks = selected_audio_tracks;
-    config.selected_subtitle_tracks = selected_subtitle_tracks;
-    config.external_subtitle_tracks = external_subtitle_tracks;
-    config.subtitle_burn_path = subtitle_burn_path;
     config.cut_segments = cut_segments;
     normalize_output_config(config, metadata);
     // A format without audio (GIF, images) clears the track selection. Moving back to a format
@@ -840,8 +648,6 @@ pub fn normalize_output_config(
         config.end_time = None;
         config.cut_segments.clear();
         config.selected_audio_tracks.clear();
-        config.selected_subtitle_tracks.clear();
-        reset_subtitle_settings(config);
         config.metadata.album = None;
         config.metadata.genre = None;
         reset_audio_filter_settings(config);
@@ -850,7 +656,6 @@ pub fn normalize_output_config(
     if source_kind == SourceKind::Audio || is_audio_only_container(&config.container) {
         config.crop = None;
         reset_video_filter_settings(config);
-        reset_subtitle_settings(config);
     }
 
     if (source_kind == SourceKind::Image || is_gif_container(&config.container))
@@ -862,49 +667,11 @@ pub fn normalize_output_config(
     if config.processing_mode == ProcessingMode::Copy {
         reset_audio_filter_settings(config);
         reset_video_filter_settings(config);
-        config.subtitle_burn_path = None;
     }
 
     if !container_supports_audio(&config.container) {
         config.selected_audio_tracks.clear();
         reset_audio_filter_settings(config);
-    }
-
-    if container_supports_subtitles(&config.container) {
-        config.external_subtitle_tracks.retain(|track| {
-            is_supported_selectable_subtitle_path_for_container(
-                std::path::Path::new(&track.path),
-                &config.container,
-            )
-        });
-        match frame_core::container::transport_stream_profile(&config.container) {
-            Some(frame_core::container::TransportStreamProfile::M2ts192) => {
-                for track in &mut config.external_subtitle_tracks {
-                    track.language = None;
-                    track.title = None;
-                    track.is_default = false;
-                    track.is_forced = false;
-                }
-            }
-            Some(frame_core::container::TransportStreamProfile::MpegTs188) => {
-                for track in &mut config.external_subtitle_tracks {
-                    track.title = None;
-                    track.is_default = false;
-                    track.is_forced = false;
-                }
-            }
-            None => {}
-        }
-        if let Some(metadata) = metadata {
-            config.selected_subtitle_tracks.retain(|selected_index| {
-                metadata.subtitle_tracks.iter().any(|track| {
-                    track.index == *selected_index
-                        && is_subtitle_codec_allowed_for_container(&config.container, &track.codec)
-                })
-            });
-        }
-    } else {
-        reset_subtitle_settings(config);
     }
 
     if config.processing_mode != ProcessingMode::Copy
@@ -955,16 +722,12 @@ pub fn normalize_video_config(
     if source_kind == SourceKind::Image {
         config.processing_mode = ProcessingMode::Reencode;
         config.selected_audio_tracks.clear();
-        config.selected_subtitle_tracks.clear();
         config.video_filters.deinterlace = super::model::DeinterlaceMode::Off;
-        reset_subtitle_settings(config);
     }
 
     if is_audio_container {
         config.pixel_format = DEFAULT_PIXEL_FORMAT.to_string();
-        config.selected_subtitle_tracks.clear();
         reset_video_filter_settings(config);
-        reset_subtitle_settings(config);
     }
 
     if is_gif_output {
@@ -1074,17 +837,6 @@ fn reset_audio_filter_settings(config: &mut ConversionConfig) {
     config.audio_filters = super::model::AudioFiltersConfig::default();
 }
 
-fn reset_subtitle_settings(config: &mut ConversionConfig) {
-    config.selected_subtitle_tracks.clear();
-    config.external_subtitle_tracks.clear();
-    config.subtitle_burn_path = None;
-    config.subtitle_font_name = None;
-    config.subtitle_font_size = None;
-    config.subtitle_font_color = None;
-    config.subtitle_outline_color = None;
-    config.subtitle_position = None;
-}
-
 fn reset_video_filter_settings(config: &mut ConversionConfig) {
     config.pixel_format = DEFAULT_PIXEL_FORMAT.to_string();
     config.resolution = DEFAULT_RESOLUTION.to_string();
@@ -1100,18 +852,6 @@ fn reset_video_filter_settings(config: &mut ConversionConfig) {
     config.nvenc_temporal_aq = false;
     config.videotoolbox_allow_sw = false;
     config.video_filters = super::model::VideoFiltersConfig::default();
-}
-
-fn apply_subtitle_color(target: &mut Option<String>, color: &str) -> bool {
-    let Some(color) = normalized_hex_color(color) else {
-        return false;
-    };
-    if target.as_deref() == Some(color.as_str()) {
-        return false;
-    }
-
-    *target = Some(color);
-    true
 }
 
 #[must_use]

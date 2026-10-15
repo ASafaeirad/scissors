@@ -15,7 +15,7 @@
 
 **Frame** is a native media conversion utility built in Rust. It provides a
 desktop interface for FFmpeg operations, with granular control over video,
-audio, image, subtitle, and metadata settings. The application uses a GPUI-CE
+audio, image, and metadata settings. The application uses a GPUI-CE
 front end and a reusable Rust conversion core for FFmpeg argument generation,
 source probing, compatibility validation, task control, and progress parsing.
 
@@ -98,12 +98,6 @@ details, tier suggestions, and a launch checklist.
   explicit per-track selection; only checked source tracks are exported.
 - **Audio Filters:** Normalize, limiter, compressor, bass, treble, high-pass,
   low-pass, noise reduction, de-esser, and stereo width controls.
-- **Subtitles:** Explicit stream selection (only checked source tracks are exported),
-  `.srt` / `.ass` / `.vtt` burn-in with font,
-  size, color, outline, and position controls; selectable text sidecars for
-  MP4/MOV/MKV/WebM; and `.sup`/PGS, DVB subtitle, DVB teletext, ARIB caption,
-  and HDMV subtitle workflows for M2T/MTS/M2TS. M2T converts bitmap PGS/DVDSub
-  to standard DVB subtitles instead of private data.
 - **Metadata:** Preserve, clean, or replace generic metadata fields, plus
   MPEG-TS/M2TS program service name and provider metadata read through
   `ffprobe -show_programs`.
@@ -129,8 +123,7 @@ details, tier suggestions, and a launch checklist.
 
 - **Language:** Rust Edition 2024.
 - **UI:** GPUI-CE.
-- **Native Dialogs:** `rfd`, with extension filtering for supported media and
-  subtitle files.
+- **Native Dialogs:** `rfd`, with extension filtering for supported media files.
 - **Assets:** Embedded SVG icons, bundled Overused Grotesk font, and native app
   icon resources for macOS, Windows, and Linux packages.
 

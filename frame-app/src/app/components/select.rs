@@ -5,8 +5,7 @@ use super::{
     animated_button_colors, apply_accessible_select_option,
     apply_accessible_select_option_with_focus, apply_accessible_select_trigger,
     apply_accessible_select_trigger_with_focus, apply_button_motion, assets, button_colors,
-    button_highlight_shadows, button_mouse_down, card_surface_shadows, color, div, icon_svg,
-    input_highlight_shadows, parse_hex, theme,
+    button_highlight_shadows, button_mouse_down, card_surface_shadows, color, div, icon_svg, theme,
 };
 use crate::app::accessibility::handle_modal_tab_navigation;
 use crate::numeric::usize_to_f32;
@@ -15,38 +14,6 @@ use gpui::FocusHandle;
 pub(in crate::app) const FRAME_SELECT_MAX_HEIGHT: f32 = 192.0;
 pub(in crate::app) const FRAME_SELECT_CONTENT_PADDING: f32 = 4.0;
 pub(in crate::app) const FRAME_SELECT_OPTION_HEIGHT: f32 = 28.0;
-pub(in crate::app) const FRAME_COLOR_SWATCH_SIZE: f32 = 14.0;
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Select triggers need explicit labels, state, palette, and GPUI render context."
-)]
-pub(in crate::app) fn frame_select_trigger(
-    id: impl Into<String>,
-    label: impl Into<String>,
-    display: &str,
-    enabled: bool,
-    expanded: bool,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Stateful<gpui::Div> {
-    frame_select_trigger_content(
-        id,
-        label,
-        div()
-            .flex_1()
-            .min_w_0()
-            .truncate()
-            .text_color(color(palette.text_primary))
-            .child(theme::ui_text(display)),
-        enabled,
-        expanded,
-        palette,
-        window,
-        cx,
-    )
-}
 
 #[expect(
     clippy::too_many_arguments,
@@ -72,53 +39,6 @@ pub(in crate::app) fn frame_select_trigger_with_focus(
             .truncate()
             .text_color(color(palette.text_primary))
             .child(theme::ui_text(display)),
-        enabled,
-        expanded,
-        Some(focus),
-        palette,
-        window,
-        cx,
-    )
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Content-based select triggers need explicit semantics, state, palette, and render context."
-)]
-pub(in crate::app) fn frame_select_trigger_content(
-    id: impl Into<String>,
-    label: impl Into<String>,
-    content: impl IntoElement,
-    enabled: bool,
-    expanded: bool,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Stateful<gpui::Div> {
-    frame_select_trigger_content_inner(
-        id, label, content, enabled, expanded, None, palette, window, cx,
-    )
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Select triggers need optional explicit focus handles while preserving the existing visual builder."
-)]
-pub(in crate::app) fn frame_select_trigger_content_with_focus(
-    id: impl Into<String>,
-    label: impl Into<String>,
-    content: impl IntoElement,
-    enabled: bool,
-    expanded: bool,
-    focus: &FocusHandle,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Stateful<gpui::Div> {
-    frame_select_trigger_content_inner(
-        id,
-        label,
-        content,
         enabled,
         expanded,
         Some(focus),
@@ -275,61 +195,6 @@ pub(in crate::app) fn frame_select_target_index(
     }
 }
 
-pub(in crate::app) const fn frame_select_option_focus<'a>(
-    index: usize,
-    option_count: usize,
-    first_focus: Option<&'a FocusHandle>,
-    last_focus: Option<&'a FocusHandle>,
-) -> Option<&'a FocusHandle> {
-    if index == 0 {
-        first_focus
-    } else if index + 1 == option_count {
-        last_focus
-    } else {
-        None
-    }
-}
-
-pub(in crate::app) const fn frame_select_last_focus<'a>(
-    option_count: usize,
-    first_focus: Option<&'a FocusHandle>,
-    last_focus: Option<&'a FocusHandle>,
-) -> Option<&'a FocusHandle> {
-    if option_count <= 1 {
-        first_focus
-    } else {
-        last_focus
-    }
-}
-
-pub(in crate::app) fn focus_frame_select_initial_target(
-    key: &str,
-    option_count: usize,
-    first_focus: Option<&FocusHandle>,
-    last_focus: Option<&FocusHandle>,
-    scroll_handle: &ScrollHandle,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) {
-    if option_count == 0 {
-        return;
-    }
-    let target_index = if matches!(key, "up" | "end") {
-        option_count.saturating_sub(1)
-    } else {
-        0
-    };
-    scroll_handle.scroll_to_item(target_index);
-    let focus = if target_index == 0 {
-        first_focus
-    } else {
-        last_focus.or(first_focus)
-    };
-    if let Some(focus) = focus {
-        focus.focus(window, cx);
-    }
-}
-
 pub(in crate::app) fn apply_frame_select_popover_focus_trap(
     popover: gpui::Stateful<gpui::Div>,
     panel_focus: Option<&FocusHandle>,
@@ -352,42 +217,6 @@ pub(in crate::app) fn apply_frame_select_popover_focus_trap(
                 handle_modal_tab_navigation(event, &first_focus, &last_focus, window, cx);
             }),
         )
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::app) struct FrameSelectFocusTarget<'a> {
-    pub(in crate::app) current_index: usize,
-    pub(in crate::app) target_index: usize,
-    pub(in crate::app) first_focus: Option<&'a FocusHandle>,
-    pub(in crate::app) last_focus: Option<&'a FocusHandle>,
-    pub(in crate::app) scroll_handle: &'a ScrollHandle,
-}
-
-pub(in crate::app) fn focus_frame_select_target(
-    key: &str,
-    target: FrameSelectFocusTarget<'_>,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) {
-    target.scroll_handle.scroll_to_item(target.target_index);
-    let boundary_focus = match key {
-        "home" => target.first_focus,
-        "end" => target.last_focus,
-        "down" if target.target_index <= target.current_index => target.first_focus,
-        "up" if target.target_index >= target.current_index => target.last_focus,
-        "down" => {
-            window.focus_next(cx);
-            None
-        }
-        "up" => {
-            window.focus_prev(cx);
-            None
-        }
-        _ => None,
-    };
-    if let Some(focus) = boundary_focus {
-        focus.focus(window, cx);
-    }
 }
 
 pub(in crate::app) fn frame_select_option(
@@ -468,41 +297,6 @@ fn frame_select_option_inner(
     } else {
         apply_accessible_select_option(option, label, enabled, selected, palette)
     }
-}
-
-pub(in crate::app) fn frame_color_select_value(
-    value: &str,
-    palette: &'static theme::ThemePalette,
-) -> gpui::Div {
-    div()
-        .flex()
-        .flex_1()
-        .min_w_0()
-        .items_center()
-        .gap_2()
-        .child(frame_color_swatch(value, palette))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .w_full()
-                .truncate()
-                .text_color(color(palette.text_primary))
-                .child(value.to_uppercase()),
-        )
-}
-
-pub(in crate::app) fn frame_color_swatch(
-    value: &str,
-    palette: &'static theme::ThemePalette,
-) -> gpui::Div {
-    div()
-        .w(theme::ui_rem(FRAME_COLOR_SWATCH_SIZE))
-        .h(theme::ui_rem(FRAME_COLOR_SWATCH_SIZE))
-        .flex_shrink_0()
-        .rounded(theme::ui_rem(theme::RADIUS_XS))
-        .bg(parse_hex(value))
-        .shadow(input_highlight_shadows(palette))
 }
 
 fn refresh_select_hover_after_scroll(

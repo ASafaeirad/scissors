@@ -247,11 +247,10 @@ pub(super) struct WorkspaceState {
     pub(super) export_enabled: bool,
 }
 
-const TOOLS: [(Symbol, &str); 6] = [
+const TOOLS: [(Symbol, &str); 5] = [
     (Symbol::VideoLibrary, "Library"),
     (Symbol::Movie, "Video"),
     (Symbol::VolumeUp, "Audio"),
-    (Symbol::ClosedCaption, "Captions"),
     (Symbol::Layers, "Queue"),
     (Symbol::Info, "Logs"),
 ];
@@ -286,7 +285,7 @@ pub(super) fn workspace_view(
     let project = preview_props.project.as_ref();
     let project_enabled = project.is_some();
     let rail = navigation_rail(state.tool, scheme, window, cx);
-    if state.tool == 4 {
+    if state.tool == 3 {
         let queue = project.map_or(file_queue, |project| &project.exports);
         return div()
             .size_full()
@@ -490,7 +489,7 @@ pub(super) fn logs_workspace_view(
         .bg(color(scheme.surface))
         .text_color(color(scheme.on_surface))
         .m3_type(typography::BODY_MEDIUM)
-        .child(navigation_rail(6, scheme, window, cx))
+        .child(navigation_rail(4, scheme, window, cx))
         .child(
             div()
                 .flex_1()
@@ -534,7 +533,7 @@ fn navigation_rail(
         cx.notify();
     }))
     .on_select(cx.listener(|root, index: &usize, _, cx| {
-        if *index == 5 {
+        if *index == 4 {
             root.active_view = ActiveView::Logs;
             cx.notify();
             return;
@@ -544,7 +543,6 @@ fn navigation_rail(
         root.settings_ui.active_tab = match index {
             1 => SettingsTab::VideoFilters,
             2 => SettingsTab::Audio,
-            3 => SettingsTab::Subtitles,
             _ => root.settings_ui.active_tab,
         };
         cx.notify();

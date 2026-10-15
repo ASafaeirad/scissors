@@ -15,7 +15,7 @@ use crate::app::{
 use crate::material::{shape, typography};
 use gpui::{prelude::FluentBuilder, relative};
 
-const TOOLS: [(Symbol, &str, &str); 5] = [
+const TOOLS: [(Symbol, &str, &str); 4] = [
     (
         Symbol::VideoLibrary,
         "Library",
@@ -30,11 +30,6 @@ const TOOLS: [(Symbol, &str, &str); 5] = [
         Symbol::VolumeUp,
         "Audio",
         "Adjust the volume of the selected clip.",
-    ),
-    (
-        Symbol::ClosedCaption,
-        "Captions",
-        "Add subtitles or burn them into the video.",
     ),
     (
         Symbol::FileExport,
@@ -60,10 +55,6 @@ const MEDIA: [(Symbol, &str, &str); 6] = [
 ];
 
 #[derive(Clone, Debug, Default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "Each flag mirrors one independent toggle in the gallery layout."
-)]
 pub(in crate::app) struct M3GalleryState {
     tool: usize,
     filter: usize,
@@ -72,7 +63,6 @@ pub(in crate::app) struct M3GalleryState {
     encoder: usize,
     muted: bool,
     fade: bool,
-    burn_captions: bool,
     playing: bool,
     hidden_tracks: [bool; 3],
 }
@@ -180,7 +170,6 @@ impl FrameRoot {
             0 => Self::library_panel(state, scheme, window, cx),
             1 => Self::crop_panel(state, scheme, window, cx),
             2 => Self::audio_panel(state, scheme, window, cx),
-            3 => Self::captions_panel(state, scheme, window, cx),
             _ => Self::output_panel(state, scheme, window, cx),
         };
 
@@ -453,8 +442,7 @@ impl FrameRoot {
             .child(ListItem::new("Sample rate").value("48 kHz").build(scheme))
     }
 
-    fn captions_panel(
-        state: &M3GalleryState,
+    fn button_samples(
         scheme: &ColorScheme,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -463,19 +451,9 @@ impl FrameRoot {
             .flex()
             .flex_col()
             .gap(theme::ui_rem(8.0))
-            .child(switch_row(
-                "Burn in captions",
-                Switch::new("m3-burn", "Burn in captions", state.burn_captions)
-                    .build(scheme, window, cx)
-                    .on_click(cx.listener(|root, _, _, cx| {
-                        root.update_m3_gallery(cx, |gallery| {
-                            gallery.burn_captions = !gallery.burn_captions;
-                        });
-                    })),
-            ))
             .child(
                 div().flex().child(
-                    Button::new("m3-subtitle", "Add subtitle file", ButtonVariant::Outlined)
+                    Button::new("m3-add-file", "Add file", ButtonVariant::Outlined)
                         .icon(Symbol::UploadFile)
                         .build(scheme, window, cx),
                 ),
@@ -523,6 +501,7 @@ impl FrameRoot {
                     }))
                     .build(scheme, window, cx),
             )
+            .child(Self::button_samples(scheme, window, cx))
             .child(label_value_row("Quality", "Balanced", scheme))
             .child(
                 div().pt(theme::ui_rem(56.0)).child(

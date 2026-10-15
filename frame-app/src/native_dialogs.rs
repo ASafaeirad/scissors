@@ -3,9 +3,7 @@
 use std::path::PathBuf;
 
 use crate::file_filters::{
-    AUDIO_FILE_EXTENSIONS, BURN_SUBTITLE_FILE_EXTENSIONS, IMAGE_FILE_EXTENSIONS,
-    SELECTABLE_SUBTITLE_FILE_EXTENSIONS, SOURCE_FILE_EXTENSIONS, VIDEO_FILE_EXTENSIONS,
-    selectable_subtitle_extensions_for_container,
+    AUDIO_FILE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, SOURCE_FILE_EXTENSIONS, VIDEO_FILE_EXTENSIONS,
 };
 use gpui::Window;
 use rfd::{AsyncFileDialog, FileHandle};
@@ -42,17 +40,6 @@ pub const SOURCE_FILE_DIALOG_FILTERS: [NativeDialogFilterSpec; 4] = [
     },
 ];
 
-pub const SUBTITLE_FILE_DIALOG_FILTERS: [NativeDialogFilterSpec; 1] = [NativeDialogFilterSpec {
-    label: "Subtitles",
-    extensions: BURN_SUBTITLE_FILE_EXTENSIONS,
-}];
-
-pub const SELECTABLE_SUBTITLE_FILE_DIALOG_FILTERS: [NativeDialogFilterSpec; 1] =
-    [NativeDialogFilterSpec {
-        label: "Subtitles",
-        extensions: SELECTABLE_SUBTITLE_FILE_EXTENSIONS,
-    }];
-
 pub const OVERLAY_IMAGE_DIALOG_FILTERS: [NativeDialogFilterSpec; 1] = [NativeDialogFilterSpec {
     label: "Images",
     extensions: IMAGE_FILE_EXTENSIONS,
@@ -74,18 +61,6 @@ pub const OUTPUT_FOLDER_DIALOG_SPEC: NativeDialogSpec = NativeDialogSpec {
     title: "Choose Default Output Folder",
     filters: &[],
     allows_multiple: false,
-};
-
-pub const SUBTITLE_FILE_DIALOG_SPEC: NativeDialogSpec = NativeDialogSpec {
-    title: "Select subtitle file",
-    filters: &SUBTITLE_FILE_DIALOG_FILTERS,
-    allows_multiple: false,
-};
-
-pub const EXTERNAL_SUBTITLE_FILE_DIALOG_SPEC: NativeDialogSpec = NativeDialogSpec {
-    title: "Add selectable subtitles",
-    filters: &SELECTABLE_SUBTITLE_FILE_DIALOG_FILTERS,
-    allows_multiple: true,
 };
 
 pub const OVERLAY_IMAGE_DIALOG_SPEC: NativeDialogSpec = NativeDialogSpec {
@@ -110,18 +85,6 @@ pub async fn pick_output_folder(dialog: AsyncFileDialog) -> Option<PathBuf> {
     dialog.pick_folder().await.as_ref().map(file_handle_to_path)
 }
 
-pub async fn pick_subtitle_file(dialog: AsyncFileDialog) -> Option<PathBuf> {
-    dialog.pick_file().await.as_ref().map(file_handle_to_path)
-}
-
-pub async fn pick_external_subtitle_files(dialog: AsyncFileDialog) -> Option<Vec<PathBuf>> {
-    dialog
-        .pick_files()
-        .await
-        .as_deref()
-        .map(file_handles_to_paths)
-}
-
 pub async fn pick_overlay_image_file(dialog: AsyncFileDialog) -> Option<PathBuf> {
     dialog.pick_file().await.as_ref().map(file_handle_to_path)
 }
@@ -139,22 +102,6 @@ pub fn source_folder_dialog(parent: &Window) -> AsyncFileDialog {
 #[must_use]
 pub fn output_folder_dialog(parent: &Window) -> AsyncFileDialog {
     file_dialog_from_spec(OUTPUT_FOLDER_DIALOG_SPEC).set_parent(parent)
-}
-
-#[must_use]
-pub fn subtitle_file_dialog(parent: &Window) -> AsyncFileDialog {
-    file_dialog_from_spec(SUBTITLE_FILE_DIALOG_SPEC).set_parent(parent)
-}
-
-#[must_use]
-pub fn external_subtitle_file_dialog(parent: &Window, container: &str) -> AsyncFileDialog {
-    AsyncFileDialog::new()
-        .set_title(EXTERNAL_SUBTITLE_FILE_DIALOG_SPEC.title)
-        .add_filter(
-            "Subtitles",
-            selectable_subtitle_extensions_for_container(container),
-        )
-        .set_parent(parent)
 }
 
 #[must_use]
@@ -217,34 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn subtitle_dialog_spec_matches_runtime_subtitle_validation_extensions() {
-        assert_eq!(
-            SUBTITLE_FILE_DIALOG_SPEC.filters,
-            [NativeDialogFilterSpec {
-                label: "Subtitles",
-                extensions: BURN_SUBTITLE_FILE_EXTENSIONS,
-            }]
-        );
-        assert_eq!(
-            EXTERNAL_SUBTITLE_FILE_DIALOG_SPEC.filters,
-            SELECTABLE_SUBTITLE_FILE_DIALOG_FILTERS
-        );
-    }
-
-    #[test]
-    fn selectable_subtitle_extensions_follow_output_container_capabilities() {
-        assert_eq!(selectable_subtitle_extensions_for_container("mts"), ["sup"]);
-        assert_eq!(
-            selectable_subtitle_extensions_for_container("mp4"),
-            ["srt", "ass", "vtt"]
-        );
-        assert_eq!(
-            selectable_subtitle_extensions_for_container("mkv"),
-            ["srt", "ass", "vtt", "sup"]
-        );
-    }
-
-    #[test]
     fn overlay_image_dialog_spec_matches_runtime_image_validation_extensions() {
         assert_eq!(
             OVERLAY_IMAGE_DIALOG_SPEC.filters,
@@ -260,8 +179,6 @@ mod tests {
         const {
             assert!(SOURCE_FILE_DIALOG_SPEC.allows_multiple);
             assert!(!SOURCE_FOLDER_DIALOG_SPEC.allows_multiple);
-            assert!(!SUBTITLE_FILE_DIALOG_SPEC.allows_multiple);
-            assert!(EXTERNAL_SUBTITLE_FILE_DIALOG_SPEC.allows_multiple);
             assert!(!OVERLAY_IMAGE_DIALOG_SPEC.allows_multiple);
         }
     }

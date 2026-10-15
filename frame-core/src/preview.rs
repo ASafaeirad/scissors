@@ -88,7 +88,6 @@ pub fn build_ffmpeg_preview_args(
             width: geometry.preview_width,
             height: geometry.preview_height,
             fps,
-            source_time_seconds: options.start_seconds,
         },
     );
 
@@ -662,14 +661,6 @@ mod tests {
             external_audio_tracks: vec![],
             timeline_sources: Vec::new(),
             selected_audio_tracks: vec![],
-            selected_subtitle_tracks: vec![],
-            external_subtitle_tracks: vec![],
-            subtitle_burn_path: None,
-            subtitle_font_name: None,
-            subtitle_font_size: None,
-            subtitle_font_color: None,
-            subtitle_outline_color: None,
-            subtitle_position: None,
             resolution: "original".to_string(),
             custom_width: None,
             custom_height: None,
@@ -773,35 +764,6 @@ mod tests {
                 .iter()
                 .any(|arg| arg.contains("[preview_export]fps=30,scale=1280:720"))
         );
-    }
-
-    #[test]
-    fn build_ffmpeg_preview_args_keeps_subtitle_style_escaping() {
-        let mut config = default_config();
-        config.subtitle_burn_path = Some("C:\\Media\\John's [cut],final.srt".to_string());
-
-        let plan = build_ffmpeg_preview_args("input.mp4", &config, &default_options())
-            .expect("preview args");
-
-        assert!(
-            plan.args
-                .iter()
-                .any(|arg| arg.contains("subtitles='C\\:/Media/John\\'s \\[cut\\]\\,final.srt'"))
-        );
-    }
-
-    #[test]
-    fn build_ffmpeg_preview_args_rebases_subtitle_timebase_to_source_seek() {
-        let mut config = default_config();
-        config.subtitle_burn_path = Some("/tmp/sub.srt".to_string());
-        let mut options = default_options();
-        options.start_seconds = 10.0;
-
-        let plan = build_ffmpeg_preview_args("input.mp4", &config, &options).expect("preview args");
-
-        assert!(plan.args.iter().any(|arg| {
-            arg.contains("setpts=PTS+10.000/TB,subtitles='/tmp/sub.srt',setpts=PTS-10.000/TB")
-        }));
     }
 
     #[test]

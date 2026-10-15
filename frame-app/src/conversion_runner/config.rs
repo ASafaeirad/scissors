@@ -63,24 +63,6 @@ pub fn core_config_from_gpui(config: &GpuiConversionConfig) -> CoreConversionCon
         external_audio_tracks: config.external_audio_tracks.clone(),
         timeline_sources: Vec::new(),
         selected_audio_tracks: config.selected_audio_tracks.clone(),
-        selected_subtitle_tracks: config.selected_subtitle_tracks.clone(),
-        external_subtitle_tracks: config
-            .external_subtitle_tracks
-            .iter()
-            .map(|track| frame_core::types::ExternalSubtitleTrack {
-                path: track.path.clone(),
-                language: track.language.clone(),
-                title: track.title.clone(),
-                is_default: track.is_default,
-                is_forced: track.is_forced,
-            })
-            .collect(),
-        subtitle_burn_path: config.subtitle_burn_path.clone(),
-        subtitle_font_name: config.subtitle_font_name.clone(),
-        subtitle_font_size: config.subtitle_font_size.clone(),
-        subtitle_font_color: config.subtitle_font_color.clone(),
-        subtitle_outline_color: config.subtitle_outline_color.clone(),
-        subtitle_position: config.subtitle_position.clone(),
         resolution: non_empty_or(&config.resolution, DEFAULT_RESOLUTION),
         custom_width: config.custom_width.clone(),
         custom_height: config.custom_height.clone(),

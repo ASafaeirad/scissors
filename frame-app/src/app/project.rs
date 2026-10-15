@@ -132,9 +132,7 @@ impl FrameRoot {
         config.flip_horizontal = false;
         config.flip_vertical = false;
         config.selected_audio_tracks.clear();
-        config.selected_subtitle_tracks.clear();
         config.external_audio_tracks.clear();
-        config.external_subtitle_tracks.clear();
         config.video_filters = frame_core::types::VideoFiltersConfig::default();
         config.audio_filters = frame_core::types::AudioFiltersConfig::default();
         config.processing_mode = "reencode".to_string();

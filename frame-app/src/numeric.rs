@@ -53,18 +53,6 @@ pub(super) const fn unit_f64_to_f32(value: f64) -> f32 {
 }
 
 #[must_use]
-pub(super) fn rounded_f64_to_u8(value: f64) -> u8 {
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "The channel value is rounded and clamped to the u8 range before casting."
-    )]
-    {
-        value.round().clamp(0.0, f64::from(u8::MAX)) as u8
-    }
-}
-
-#[must_use]
 pub(super) fn rounded_f64_to_u32(value: f64) -> u32 {
     #[expect(
         clippy::cast_possible_truncation,

@@ -1234,18 +1234,6 @@ dependencies = [
 
 [[package]]
 name = "core-text"
-version = "20.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9d2790b5c08465d49f8dc05c8bcae9fea467855947db39b0f8145c091aaced5"
-dependencies = [
- "core-foundation 0.9.4",
- "core-graphics 0.23.2",
- "foreign-types",
- "libc",
-]
-
-[[package]]
-name = "core-text"
 version = "21.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a593227b66cbd4007b2a050dfdd9e1d1318311409c8d600dc82ba1b15ca9c130"
@@ -1968,31 +1956,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
-name = "font-kit"
-version = "0.14.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c7e611d49285d4c4b2e1727b72cf05353558885cc5252f93707b845dfcaf3d3"
-dependencies = [
- "bitflags 2.13.2",
- "byteorder",
- "core-foundation 0.9.4",
- "core-graphics 0.23.2",
- "core-text 20.1.0",
- "dirs",
- "dwrote",
- "float-ord",
- "freetype-sys",
- "lazy_static",
- "libc",
- "log",
- "pathfinder_geometry",
- "pathfinder_simd",
- "walkdir",
- "winapi",
- "yeslogic-fontconfig-sys",
-]
-
-[[package]]
 name = "font-types"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2093,7 +2056,6 @@ dependencies = [
 name = "frame-core"
 version = "0.33.1"
 dependencies = [
- "font-kit",
  "regex",
  "serde",
  "serde_json",
@@ -2470,7 +2432,7 @@ dependencies = [
  "core-foundation 0.10.0",
  "core-foundation-sys",
  "core-graphics 0.24.0",
- "core-text 21.0.0",
+ "core-text",
  "core-video 0.6.1",
  "ctor",
  "derive_more",
@@ -2597,7 +2559,7 @@ dependencies = [
  "core-foundation 0.10.0",
  "core-foundation-sys",
  "core-graphics 0.24.0",
- "core-text 21.0.0",
+ "core-text",
  "core-video 0.6.1",
  "ctor",
  "derive_more",
@@ -8235,7 +8197,7 @@ dependencies = [
  "byteorder",
  "core-foundation 0.10.0",
  "core-graphics 0.24.0",
- "core-text 21.0.0",
+ "core-text",
  "dirs",
  "dwrote",
  "float-ord",

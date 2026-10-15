@@ -6,8 +6,7 @@ use crate::{
     },
     error::ConversionError,
     filters::{
-        apply_preview_subtitle_timebase, build_audio_filters, build_overlay_filter_complex,
-        build_video_filters, has_overlay,
+        build_audio_filters, build_overlay_filter_complex, build_video_filters, has_overlay,
     },
     types::{ConversionConfig, TimelineSource},
     utils::parse_time,
@@ -271,9 +270,7 @@ pub fn add_graph(args: &mut Vec<String>, clips: &[TimelineSource], window: &Rend
             ];
             filters.extend(build_video_cut_filters(&span.cuts));
             if !has_overlay(config) {
-                let mut clip_filters = build_video_filters(config, false);
-                // Burned subtitles keep the timing they had without the seek.
-                apply_preview_subtitle_timebase(&mut clip_filters, span.skip * clip.speed);
+                let clip_filters = build_video_filters(config, false);
                 filters.extend(clip_filters);
             }
             if (clip.speed - 1.0).abs() > f64::EPSILON {

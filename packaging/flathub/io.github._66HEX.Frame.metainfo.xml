@@ -4,10 +4,10 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>Frame</name>
-  <summary>Convert video, audio, images, subtitles, and metadata with FFmpeg</summary>
+  <summary>Convert video, audio, images, and metadata with FFmpeg</summary>
   <description>
     <p>
-      Frame is a native media conversion app for video, audio, image, subtitle,
+      Frame is a native media conversion app for video, audio, image,
       and metadata workflows. It provides preset-based exports, trim and crop
       controls, source probing, conversion logs, and FFmpeg-backed previews.
     </p>

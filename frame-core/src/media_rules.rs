@@ -26,8 +26,6 @@ struct MediaRulesRaw {
     #[serde(default)]
     container_audio_stream_codec_compatibility: HashMap<String, Vec<String>>,
     #[serde(default)]
-    container_subtitle_codec_compatibility: HashMap<String, Vec<String>>,
-    #[serde(default)]
     default_audio_codec: HashMap<String, String>,
     default_audio_codec_fallback: String,
     #[serde(default)]
@@ -46,7 +44,6 @@ struct MediaRules {
     container_video_stream_codec_compatibility: HashMap<String, HashSet<String>>,
     container_audio_codec_compatibility: HashMap<String, HashSet<String>>,
     container_audio_stream_codec_compatibility: HashMap<String, HashSet<String>>,
-    container_subtitle_codec_compatibility: HashMap<String, HashSet<String>>,
     default_audio_codec: HashMap<String, String>,
     default_audio_codec_fallback: String,
     video_codec_fallback_order: Vec<String>,
@@ -77,9 +74,6 @@ impl From<MediaRulesRaw> for MediaRules {
             ),
             container_audio_stream_codec_compatibility: normalized_codec_map(
                 raw.container_audio_stream_codec_compatibility,
-            ),
-            container_subtitle_codec_compatibility: normalized_codec_map(
-                raw.container_subtitle_codec_compatibility,
             ),
             default_audio_codec: raw
                 .default_audio_codec
@@ -157,13 +151,6 @@ pub fn container_supports_audio(container: &str) -> bool {
 }
 
 #[must_use]
-pub fn container_supports_subtitles(container: &str) -> bool {
-    !is_audio_only_container(container)
-        && !is_video_only_container(container)
-        && !is_image_container(container)
-}
-
-#[must_use]
 pub fn is_video_codec_allowed(container: &str, codec: &str) -> bool {
     codec_allowed(
         container,
@@ -226,59 +213,6 @@ pub fn is_audio_stream_codec_allowed(container: &str, codec: &str) -> bool {
         codec,
         &MEDIA_RULES.container_audio_stream_codec_compatibility,
         true,
-    )
-}
-
-#[must_use]
-pub fn is_subtitle_codec_allowed(container: &str, codec: &str) -> bool {
-    codec_allowed(
-        container,
-        codec,
-        &MEDIA_RULES.container_subtitle_codec_compatibility,
-        true,
-    )
-}
-
-/// Returns whether a subtitle stream can be copied or standards-compliantly
-/// transcoded for the selected output profile.
-#[must_use]
-pub fn is_subtitle_stream_supported(container: &str, codec: &str) -> bool {
-    if is_subtitle_codec_allowed(container, codec) {
-        return true;
-    }
-    let codec = normalize(codec);
-    if is_text_subtitle_codec(&codec) {
-        return matches!(media_rules_key(container).as_str(), "mp4" | "webm");
-    }
-    crate::container::transport_stream_profile(container).is_some_and(|profile| {
-        profile == crate::container::TransportStreamProfile::MpegTs188
-            && matches!(codec.as_str(), "hdmv_pgs_subtitle" | "dvd_subtitle")
-    })
-}
-
-fn is_text_subtitle_codec(codec: &str) -> bool {
-    matches!(
-        codec,
-        "text"
-            | "ssa"
-            | "mov_text"
-            | "srt"
-            | "microdvd"
-            | "eia_608"
-            | "jacosub"
-            | "sami"
-            | "realtext"
-            | "stl"
-            | "subviewer1"
-            | "subviewer"
-            | "subrip"
-            | "webvtt"
-            | "mpl2"
-            | "vplayer"
-            | "pjs"
-            | "ass"
-            | "hdmv_text_subtitle"
-            | "ttml"
     )
 }
 
@@ -384,31 +318,9 @@ mod tests {
     fn transport_stream_profiles_have_strict_complete_rules() {
         assert!(is_video_codec_allowed("m2t", "mpeg2video"));
         assert!(is_audio_codec_allowed("m2t", "mp2"));
-        assert!(is_subtitle_codec_allowed("m2t", "dvb_subtitle"));
-        assert!(is_subtitle_stream_supported("m2t", "hdmv_pgs_subtitle"));
         assert!(is_video_stream_codec_allowed("m2ts", "h264"));
         assert!(is_audio_stream_codec_allowed("mts", "ac3"));
-        assert!(is_subtitle_codec_allowed("m2ts", "hdmv_pgs_subtitle"));
-        assert!(!is_subtitle_codec_allowed("m2ts", "subrip"));
         assert!(!is_video_codec_allowed("unknown", "libx264"));
-    }
-
-    #[test]
-    fn mp4_accepts_text_subtitle_transcode_but_rejects_pgs() {
-        assert!(is_subtitle_stream_supported("mp4", "subrip"));
-        assert!(!is_subtitle_stream_supported("mp4", "hdmv_pgs_subtitle"));
-    }
-
-    #[test]
-    fn mp4_supports_audio_and_subtitles_like_shared_rules() {
-        assert!(container_supports_audio("mp4"));
-        assert!(container_supports_subtitles("mp4"));
-    }
-
-    #[test]
-    fn image_containers_do_not_support_audio_or_subtitles() {
-        assert!(!container_supports_audio("png"));
-        assert!(!container_supports_subtitles("png"));
     }
 
     #[test]
