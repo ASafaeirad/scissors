@@ -82,6 +82,7 @@ the final GPUI rendering.
 | `preview-multitrack` | Video timeline with music and a muted voice track | Shared ruler, audio clip positions, add audio, mute and remove controls in both themes. |
 | `preview-ready` | Workspace with a selected ready video source | M3 workspace navigation, media card library, floating playback controls, separate trim timeline, empty frame handling, and source video state. |
 | `preview-crop` | Preview panel with crop mode enabled | Crop aspect bar, crop overlay geometry, crop handles, preview toolbar coexistence, and canvas framing while editing crop bounds. |
+| `settings-video-filters` | Video tool with enabled filters | Compact video header, expandable stream details, track speed, M3 filter controls, and scrolling in both themes. |
 | `settings-audio` | Audio settings tab with an audio source and tracks | Audio codec controls, VBR quality, channel selection, volume and normalize controls, track selection rows, and audio-only source treatment. |
 | `settings-images` | Image settings tab with a selected PNG source | Image output controls, custom image dimensions, image-source metadata, and non-video settings visibility. |
 | `settings-metadata` | Metadata tab with source tags and output metadata drafts | Source metadata presentation, editable metadata fields, long value wrapping, and tag/value alignment. |

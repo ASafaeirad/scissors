@@ -245,6 +245,7 @@ pub(super) struct WorkspaceState {
     pub(super) tool: usize,
     pub(super) filter: usize,
     pub(super) export_enabled: bool,
+    pub(super) video_details: bool,
 }
 
 const TOOLS: [(Symbol, &str); 5] = [
@@ -349,22 +350,25 @@ pub(super) fn workspace_view(
                     cx,
                 )
             });
-        let video_stream = settings
+        let video_header = settings
             .metadata
             .filter(|_| state.tool == VIDEO_TOOL)
-            .and_then(crate::settings::source_video_stream_rows)
-            .map(|rows| {
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_col()
-                    .mb(theme::ui_rem(spacing::SPACE_3))
-                    .child(m3::list_subheader("Video stream", scheme))
-                    .children(
-                        rows.into_iter()
-                            .map(|row| m3::ListItem::new(row.label).value(row.value).build(scheme)),
-                    )
-            });
+            .map(|metadata| video_source_header(metadata, state.video_details, scheme, window, cx));
+        let video_filters = (state.tool == VIDEO_TOOL
+            && crate::settings::visible_settings_tabs(settings.config, settings.metadata)
+                .contains(&SettingsTab::VideoFilters))
+        .then(|| {
+            super::settings_panel::settings_video_filters_tab(
+                settings.config,
+                settings.settings_disabled,
+                crate::settings::source_kind_for(settings.metadata)
+                    == crate::settings::SourceKind::Image,
+                settings.available_filters,
+                scheme,
+                window,
+                cx,
+            )
+        });
         let audio_metadata = settings
             .metadata
             .filter(|_| state.tool == AUDIO_TOOL)
@@ -378,10 +382,13 @@ pub(super) fn workspace_view(
                 .flex()
                 .flex_col()
                 .p(theme::ui_rem(spacing::SPACE_3))
+                .children(video_header)
                 .children(speed)
                 .children(audio_metadata)
-                .children(video_stream)
-                .child(settings_panel(settings, window, cx).flex_none()),
+                .children(video_filters)
+                .when(state.tool != VIDEO_TOOL, |panel| {
+                    panel.child(settings_panel(settings, window, cx).flex_none())
+                }),
         )
     } else {
         m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
@@ -431,6 +438,83 @@ pub(super) fn workspace_view(
                         ),
                 ),
         )
+}
+
+fn video_source_summary(metadata: &crate::settings::SourceMetadata) -> String {
+    let mut parts = vec![crate::settings::format_source_resolution(metadata)];
+    if metadata
+        .frame_rate
+        .is_some_and(|rate| rate.is_finite() && rate > 0.0)
+    {
+        parts.push(crate::settings::format_source_frame_rate(
+            metadata.frame_rate,
+        ));
+    }
+    if let Some(codec) = metadata
+        .video_codec
+        .as_deref()
+        .filter(|codec| !codec.trim().is_empty())
+    {
+        parts.push(codec.to_string());
+    }
+    parts.join(" · ")
+}
+
+fn video_source_header(
+    metadata: &crate::settings::SourceMetadata,
+    expanded: bool,
+    scheme: &ColorScheme,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .mb(theme::ui_rem(spacing::SPACE_3))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(theme::ui_rem(spacing::SPACE_2))
+                .child(m3::m3_icon(
+                    Symbol::Movie,
+                    false,
+                    18.0,
+                    color(scheme.on_surface_variant),
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .m3_type(typography::BODY_SMALL)
+                        .text_color(color(scheme.on_surface_variant))
+                        .child(video_source_summary(metadata)),
+                )
+                .child(
+                    m3::Button::new(
+                        "video-source-details",
+                        if expanded { "Hide details" } else { "Details" },
+                        m3::ButtonVariant::Text,
+                    )
+                    .size(m3::ButtonSize::ExtraSmall)
+                    .build(scheme, window, cx)
+                    .aria_expanded(expanded)
+                    .on_click(cx.listener(|root, _, _, cx| {
+                        root.workspace_ui.video_details = !root.workspace_ui.video_details;
+                        cx.notify();
+                    })),
+                ),
+        )
+        .when(expanded, |header| {
+            header.children(
+                crate::settings::source_video_stream_rows(metadata)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|row| m3::ListItem::new(row.label).value(row.value).build(scheme)),
+            )
+        })
 }
 
 /// Source file and audio stream details below the selected clip's speed control.

@@ -3637,7 +3637,7 @@ mod visual_fixtures {
     }
 
     #[test]
-    fn settings_video_filters_fixture_opens_video_filters_tab_with_enabled_filters() {
+    fn settings_video_filters_fixture_opens_video_tool_with_enabled_filters() {
         let mut root = FrameRoot::new();
 
         root.apply_visual_fixture(Some(VisualFixture::SettingsVideoFilters));
@@ -3646,7 +3646,7 @@ mod visual_fixtures {
             .file_queue
             .selected_file()
             .expect("video filters fixture should select a file");
-        assert_eq!(root.settings_ui.active_tab, SettingsTab::VideoFilters);
+        assert_eq!(root.workspace_ui.tool, 1);
         assert!(selected.config.video_filters.color.brightness.enabled);
         assert!(selected.config.video_filters.color.contrast.enabled);
         assert!(selected.config.video_filters.temperature.enabled);

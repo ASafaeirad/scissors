@@ -28,6 +28,7 @@ use std::time::Duration;
 
 mod button;
 mod card;
+mod checkbox;
 mod chip;
 mod dialog;
 mod gallery;
@@ -45,6 +46,7 @@ mod toolbar;
 
 pub(in crate::app) use button::*;
 pub(in crate::app) use card::*;
+pub(in crate::app) use checkbox::*;
 pub(in crate::app) use chip::*;
 pub(in crate::app) use dialog::*;
 pub(in crate::app) use gallery::M3GalleryState;

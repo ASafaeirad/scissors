@@ -298,7 +298,7 @@ impl FrameRoot {
         self.export_ui.advanced = true;
     }
     pub(super) fn apply_settings_video_filters_fixture(&mut self) {
-        self.apply_preview_ready_fixture();
+        self.apply_project_timeline_fixture();
         self.settings_ui.active_tab = SettingsTab::VideoFilters;
         if let Some(file) = self.file_queue.selected_file_mut() {
             file.config.video_filters.color.brightness.enabled = true;

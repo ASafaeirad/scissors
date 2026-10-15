@@ -1,4 +1,6 @@
 use super::*;
+use crate::app::m3::{self, M3Text};
+use crate::material::{ColorScheme, Symbol, shape, spacing, typography};
 use crate::settings::{
     DeinterlaceMode, FilterStrength, VideoScalarFilter, apply_video_deinterlace,
     apply_video_denoise, apply_video_grayscale, apply_video_scalar_filter, reset_video_filters,
@@ -43,175 +45,192 @@ pub(in crate::app) fn settings_video_filters_tab(
     settings_disabled: bool,
     is_image_source: bool,
     available_filters: &AvailableFilters,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let filters = config.video_filters;
-    let mut content =
-        div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(settings_section("Video Filters", palette).child(
-                settings_video_filters_reset_all(settings_disabled, palette, window, cx),
-            ))
-            .child(
-                settings_section("Color Adjustments", palette)
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::Brightness,
-                            filters.color.brightness.enabled,
-                            filters.color.brightness.value,
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    ))
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::Contrast,
-                            filters.color.contrast.enabled,
-                            i32::try_from(filters.color.contrast.value).unwrap_or(100),
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    ))
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::Saturation,
-                            filters.color.saturation.enabled,
-                            i32::try_from(filters.color.saturation.value).unwrap_or(100),
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    ))
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::Gamma,
-                            filters.color.gamma.enabled,
-                            i32::try_from(filters.color.gamma.value).unwrap_or(100),
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    )),
-            )
-            .child(
-                settings_section("Tone", palette)
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::Hue,
-                            filters.hue.enabled,
-                            filters.hue.value,
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    ))
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::Temperature,
-                            filters.temperature.enabled,
-                            i32::try_from(filters.temperature.value).unwrap_or(6500),
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    )),
-            )
-            .child(
-                settings_section("Detail", palette)
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::Sharpen,
-                            filters.sharpen.enabled,
-                            i32::try_from(filters.sharpen.value).unwrap_or(25),
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    ))
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::GaussianBlur,
-                            filters.gaussian_blur.enabled,
-                            i32::try_from(filters.gaussian_blur.value).unwrap_or(20),
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    )),
-            )
-            .child(
-                settings_section("Cleanup", palette)
-                    .child(settings_video_denoise_control(
-                        filters.denoise_enabled,
-                        filters.denoise_strength,
-                        settings_disabled || !available_filters.hqdn3d,
-                        palette,
-                        window,
-                        cx,
-                    ))
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::Deband,
-                            filters.deband.enabled,
-                            i32::try_from(filters.deband.value).unwrap_or(25),
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    )),
-            )
-            .child(
-                settings_section("Style", palette)
-                    .child(settings_video_filter_range_field(
-                        video_filter_spec(
-                            VideoFilterRangeTarget::Vignette,
-                            filters.vignette.enabled,
-                            i32::try_from(filters.vignette.value).unwrap_or(35),
-                            available_filters,
-                        ),
-                        settings_disabled,
-                        palette,
-                        window,
-                        cx,
-                    ))
-                    .child(settings_video_grayscale_control(
-                        filters.grayscale,
-                        settings_disabled || !available_filters.hue,
-                        palette,
-                        cx,
-                    )),
-            );
+    let mut content = div()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(spacing::SPACE_6))
+        .text_color(color(scheme.on_surface))
+        .m3_type(typography::BODY_MEDIUM)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .m3_type(typography::TITLE_SMALL)
+                        .child("Video filters"),
+                )
+                .child(settings_video_filters_reset_all(
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                )),
+        )
+        .child(
+            video_filter_section("Color adjustments", scheme)
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::Brightness,
+                        filters.color.brightness.enabled,
+                        filters.color.brightness.value,
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                ))
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::Contrast,
+                        filters.color.contrast.enabled,
+                        i32::try_from(filters.color.contrast.value).unwrap_or(100),
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                ))
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::Saturation,
+                        filters.color.saturation.enabled,
+                        i32::try_from(filters.color.saturation.value).unwrap_or(100),
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                ))
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::Gamma,
+                        filters.color.gamma.enabled,
+                        i32::try_from(filters.color.gamma.value).unwrap_or(100),
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                )),
+        )
+        .child(
+            video_filter_section("Tone", scheme)
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::Hue,
+                        filters.hue.enabled,
+                        filters.hue.value,
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                ))
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::Temperature,
+                        filters.temperature.enabled,
+                        i32::try_from(filters.temperature.value).unwrap_or(6500),
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                )),
+        )
+        .child(
+            video_filter_section("Detail", scheme)
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::Sharpen,
+                        filters.sharpen.enabled,
+                        i32::try_from(filters.sharpen.value).unwrap_or(25),
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                ))
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::GaussianBlur,
+                        filters.gaussian_blur.enabled,
+                        i32::try_from(filters.gaussian_blur.value).unwrap_or(20),
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                )),
+        )
+        .child(
+            video_filter_section("Cleanup", scheme)
+                .child(settings_video_denoise_control(
+                    filters.denoise_enabled,
+                    filters.denoise_strength,
+                    settings_disabled || !available_filters.hqdn3d,
+                    scheme,
+                    window,
+                    cx,
+                ))
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::Deband,
+                        filters.deband.enabled,
+                        i32::try_from(filters.deband.value).unwrap_or(25),
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                )),
+        )
+        .child(
+            video_filter_section("Style", scheme)
+                .child(settings_video_filter_range_field(
+                    video_filter_spec(
+                        VideoFilterRangeTarget::Vignette,
+                        filters.vignette.enabled,
+                        i32::try_from(filters.vignette.value).unwrap_or(35),
+                        available_filters,
+                    ),
+                    settings_disabled,
+                    scheme,
+                    window,
+                    cx,
+                ))
+                .child(settings_video_grayscale_control(
+                    filters.grayscale,
+                    settings_disabled || !available_filters.hue,
+                    scheme,
+                    window,
+                    cx,
+                )),
+        );
 
     if !is_image_source {
-        content = content.child(settings_section("Interlace", palette).child(
+        content = content.child(video_filter_section("Interlace", scheme).child(
             settings_video_deinterlace_control(
                 filters.deinterlace,
                 settings_disabled || !available_filters.bwdif,
-                palette,
+                scheme,
                 window,
                 cx,
             ),
@@ -269,9 +288,9 @@ fn video_filter_spec(
         VideoFilterRangeTarget::Gamma => video_spec(
             target, "Gamma", enabled, available, value, 100, 10, 300, "%",
         ),
-        VideoFilterRangeTarget::Hue => video_spec(
-            target, "Hue", enabled, available, value, 0, -180, 180, " deg",
-        ),
+        VideoFilterRangeTarget::Hue => {
+            video_spec(target, "Hue", enabled, available, value, 0, -180, 180, "°")
+        }
         VideoFilterRangeTarget::Temperature => video_spec(
             target,
             "Temperature",
@@ -288,7 +307,7 @@ fn video_filter_spec(
         ),
         VideoFilterRangeTarget::GaussianBlur => video_spec(
             target,
-            "Gaussian Blur",
+            "Gaussian blur",
             enabled,
             available,
             value,
@@ -359,7 +378,7 @@ fn video_spec(
 fn settings_video_filter_range_field(
     spec: VideoFilterRangeSpec,
     settings_disabled: bool,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -370,15 +389,15 @@ fn settings_video_filter_range_field(
     div()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap(theme::ui_rem(spacing::SPACE_2))
         .child(
             div()
                 .flex()
-                .items_end()
+                .items_center()
                 .justify_between()
-                .gap_2()
+                .gap(theme::ui_rem(spacing::SPACE_2))
                 .child(
-                    frame_checkbox_row(
+                    video_filter_checkbox(
                         format!(
                             "settings-video-filter-{}-toggle",
                             video_target_id(spec.target)
@@ -391,7 +410,8 @@ fn settings_video_filter_range_field(
                         },
                         spec.enabled,
                         control_disabled,
-                        palette,
+                        scheme,
+                        window,
                         cx,
                         move |root, _event, _window, cx| {
                             if control_disabled {
@@ -415,13 +435,13 @@ fn settings_video_filter_range_field(
                     div()
                         .flex()
                         .items_center()
-                        .gap_1()
-                        .child(settings_value_badge(spec.value_label.clone(), palette))
+                        .gap(theme::ui_rem(spacing::SPACE_1))
+                        .child(video_filter_value(spec.value_label.clone(), scheme))
                         .child(settings_video_filter_reset(
                             spec.target,
                             spec.default_value,
                             control_disabled,
-                            palette,
+                            scheme,
                             window,
                             cx,
                         )),
@@ -433,7 +453,7 @@ fn settings_video_filter_range_field(
             spec.max,
             slider_disabled,
             spec.target,
-            palette,
+            scheme,
             cx,
         ))
 }
@@ -444,21 +464,22 @@ fn settings_video_filter_range_slider(
     max: i32,
     disabled: bool,
     target: VideoFilterRangeTarget,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     cx: &Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let fraction = signed_range_fraction(value, min, max);
     let drag = VideoFilterRangeDrag { target, min, max };
     let owner = cx.entity();
     let decrement_owner = owner.clone();
 
-    frame_slider(
+    m3::Slider::new(
         video_slider_id(target),
         video_slider_label(target),
-        fraction,
-        disabled,
-        palette,
+        f64::from(value),
+        f64::from(min),
+        f64::from(max),
     )
+    .enabled(!disabled)
+    .build(scheme)
     .on_a11y_action(gpui::AccessibleAction::Increment, move |_, _window, cx| {
         if disabled {
             return;
@@ -495,7 +516,10 @@ fn settings_video_filter_range_slider(
         })
     })
     .on_drag_move(cx.listener(
-        |root, event: &DragMoveEvent<VideoFilterRangeDrag>, _window, cx| {
+        move |root, event: &DragMoveEvent<VideoFilterRangeDrag>, _window, cx| {
+            if disabled {
+                return;
+            }
             let drag = *event.drag(cx);
             let fraction = timeline_slider_percent_from_bounds(event.event.position, event.bounds);
             let value = signed_range_value_from_fraction(fraction, drag.min, drag.max);
@@ -509,6 +533,9 @@ fn settings_video_filter_range_slider(
     ))
     .on_key_down(
         cx.listener(move |root, event: &gpui::KeyDownEvent, _window, cx| {
+            if disabled {
+                return;
+            }
             let Some(value) =
                 signed_range_value_for_key(value, min, max, event.keystroke.key.as_str())
             else {
@@ -523,40 +550,23 @@ fn settings_video_filter_range_slider(
             cx.stop_propagation();
         }),
     )
-    .child(
-        frame_slider_handle(video_handle_id(target), fraction, !disabled).when(
-            !disabled,
-            |handle| {
-                handle.on_drag(drag, |_drag, _position, _window, cx| {
-                    cx.new(|_| VideoFilterRangeDragPreview)
-                })
-            },
-        ),
-    )
 }
 
 fn settings_video_filter_reset(
     target: VideoFilterRangeTarget,
     default_value: i32,
     disabled: bool,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    frame_icon_button(
+    m3::IconButton::new(
         format!("settings-video-filter-{}-reset", video_target_id(target)),
-        assets::ICON_REFRESH,
+        Symbol::RestartAlt,
         "Reset filter",
-        FrameIconButtonVariant::Ghost,
-        !disabled,
-        FrameIconButtonSize {
-            button: FRAME_ICON_BUTTON_SM_SIZE,
-            icon: FRAME_ICON_SM_SIZE,
-        },
-        palette,
-        window,
-        cx,
     )
+    .enabled(!disabled)
+    .build(scheme, window, cx)
     .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
         if disabled {
             return;
@@ -573,78 +583,79 @@ fn settings_video_denoise_control(
     enabled: bool,
     strength: FilterStrength,
     disabled: bool,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let mut grid = div().grid().grid_cols(3).mt_1().gap_2();
-    for (candidate, label) in [
-        (FilterStrength::Low, "Low"),
-        (FilterStrength::Medium, "Medium"),
-        (FilterStrength::High, "High"),
-    ] {
-        grid = grid.child(
-            frame_choice_button(
-                format!("settings-video-denoise-{}", filter_strength_id(candidate)),
-                label,
-                enabled && strength == candidate,
-                !disabled,
-                palette,
-                window,
-                cx,
-            )
-            .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                if disabled {
-                    return;
-                }
-                if root
-                    .update_selected_config(|config| apply_video_denoise(config, true, candidate))
-                {
-                    cx.notify();
-                }
-            })),
-        );
-    }
-
+    let strengths = [
+        FilterStrength::Low,
+        FilterStrength::Medium,
+        FilterStrength::High,
+    ];
     div()
         .flex()
         .flex_col()
-        .gap_2()
-        .child(frame_checkbox_row(
+        .gap(theme::ui_rem(spacing::SPACE_2))
+        .child(video_filter_checkbox(
             "settings-video-denoise-toggle",
             "Denoise",
             "",
             enabled,
             disabled,
-            palette,
+            scheme,
+            window,
             cx,
-            move |root, _event, _window, cx| {
-                if disabled {
-                    return;
-                }
-                if root.update_selected_config(|config| {
-                    apply_video_denoise(config, !enabled, strength)
-                }) {
+            move |root, _, _, cx| {
+                if !disabled
+                    && root.update_selected_config(|config| {
+                        apply_video_denoise(config, !enabled, strength)
+                    })
+                {
                     cx.notify();
                 }
             },
         ))
-        .child(grid)
+        .child(
+            m3::SegmentedButton::new(
+                "settings-video-denoise",
+                "Denoise strength",
+                ["Low", "Medium", "High"],
+            )
+            .selected(
+                strengths
+                    .iter()
+                    .position(|candidate| *candidate == strength),
+            )
+            .enabled(!disabled && enabled)
+            .on_select(cx.listener(move |root, index: &usize, _, cx| {
+                if !disabled
+                    && enabled
+                    && root.update_selected_config(|config| {
+                        apply_video_denoise(config, true, strengths[*index])
+                    })
+                {
+                    cx.notify();
+                }
+            }))
+            .build(scheme, window, cx),
+        )
 }
 
 fn settings_video_grayscale_control(
     checked: bool,
     disabled: bool,
-    palette: &'static theme::ThemePalette,
-    cx: &Context<FrameRoot>,
+    scheme: &ColorScheme,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    frame_checkbox_row(
+    video_filter_checkbox(
         "settings-video-grayscale-toggle",
         "Grayscale",
         "",
         checked,
         disabled,
-        palette,
+        scheme,
+        window,
         cx,
         move |root, _event, _window, cx| {
             if disabled {
@@ -660,56 +671,55 @@ fn settings_video_grayscale_control(
 fn settings_video_deinterlace_control(
     mode: DeinterlaceMode,
     disabled: bool,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let mut grid = div().grid().grid_cols(3).gap_2();
-    for (candidate, label) in [
-        (DeinterlaceMode::Off, "Off"),
-        (DeinterlaceMode::Auto, "Auto"),
-        (DeinterlaceMode::On, "On"),
-    ] {
-        grid = grid.child(
-            frame_choice_button(
-                format!("settings-video-deinterlace-{}", deinterlace_id(candidate)),
-                label,
-                mode == candidate,
-                !disabled,
-                palette,
-                window,
-                cx,
+    let modes = [
+        DeinterlaceMode::Off,
+        DeinterlaceMode::Auto,
+        DeinterlaceMode::On,
+    ];
+    div()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(spacing::SPACE_2))
+        .child("Deinterlace")
+        .child(
+            m3::SegmentedButton::new(
+                "settings-video-deinterlace",
+                "Deinterlace",
+                ["Off", "Auto", "On"],
             )
-            .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                if disabled {
-                    return;
-                }
-                if root.update_selected_config(|config| apply_video_deinterlace(config, candidate))
+            .selected(modes.iter().position(|candidate| *candidate == mode))
+            .enabled(!disabled)
+            .on_select(cx.listener(move |root, index: &usize, _, cx| {
+                if !disabled
+                    && root.update_selected_config(|config| {
+                        apply_video_deinterlace(config, modes[*index])
+                    })
                 {
                     cx.notify();
                 }
-            })),
-        );
-    }
-    grid
+            }))
+            .build(scheme, window, cx),
+        )
 }
 
 fn settings_video_filters_reset_all(
     disabled: bool,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    frame_text_button(
+    m3::Button::new(
         "settings-video-filters-reset-all",
-        "Reset video filters",
-        ButtonVariant::Secondary,
-        false,
-        !disabled,
-        palette,
-        window,
-        cx,
+        "Reset all",
+        m3::ButtonVariant::Text,
     )
+    .icon(Symbol::RestartAlt)
+    .enabled(!disabled)
+    .build(scheme, window, cx)
     .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
         if disabled {
             return;
@@ -739,19 +749,6 @@ fn apply_video_filter_range(
         VideoFilterRangeTarget::Vignette => VideoScalarFilter::Vignette,
     };
     apply_video_scalar_filter(config, filter, enabled, value)
-}
-
-fn signed_range_fraction(value: i32, min: i32, max: i32) -> f32 {
-    if max <= min {
-        return 0.0;
-    }
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "Filter slider ranges are small bounded UI values."
-    )]
-    {
-        ((value.clamp(min, max) - min) as f32) / ((max - min) as f32)
-    }
 }
 
 fn signed_range_value_from_fraction(fraction: f64, min: i32, max: i32) -> i32 {
@@ -810,21 +807,6 @@ const fn video_slider_id(target: VideoFilterRangeTarget) -> &'static str {
     }
 }
 
-const fn video_handle_id(target: VideoFilterRangeTarget) -> &'static str {
-    match target {
-        VideoFilterRangeTarget::Brightness => "settings-video-filter-brightness-handle",
-        VideoFilterRangeTarget::Contrast => "settings-video-filter-contrast-handle",
-        VideoFilterRangeTarget::Saturation => "settings-video-filter-saturation-handle",
-        VideoFilterRangeTarget::Gamma => "settings-video-filter-gamma-handle",
-        VideoFilterRangeTarget::Hue => "settings-video-filter-hue-handle",
-        VideoFilterRangeTarget::Temperature => "settings-video-filter-temperature-handle",
-        VideoFilterRangeTarget::Sharpen => "settings-video-filter-sharpen-handle",
-        VideoFilterRangeTarget::GaussianBlur => "settings-video-filter-gaussian-blur-handle",
-        VideoFilterRangeTarget::Deband => "settings-video-filter-deband-handle",
-        VideoFilterRangeTarget::Vignette => "settings-video-filter-vignette-handle",
-    }
-}
-
 const fn video_slider_label(target: VideoFilterRangeTarget) -> &'static str {
     match target {
         VideoFilterRangeTarget::Brightness => "Brightness",
@@ -840,18 +822,54 @@ const fn video_slider_label(target: VideoFilterRangeTarget) -> &'static str {
     }
 }
 
-const fn filter_strength_id(strength: FilterStrength) -> &'static str {
-    match strength {
-        FilterStrength::Low => "low",
-        FilterStrength::Medium => "medium",
-        FilterStrength::High => "high",
-    }
+fn video_filter_section(label: &'static str, scheme: &ColorScheme) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(spacing::SPACE_3))
+        .child(
+            div()
+                .m3_type(typography::LABEL_MEDIUM)
+                .text_color(color(scheme.primary))
+                .child(label),
+        )
 }
 
-const fn deinterlace_id(mode: DeinterlaceMode) -> &'static str {
-    match mode {
-        DeinterlaceMode::Off => "off",
-        DeinterlaceMode::Auto => "auto",
-        DeinterlaceMode::On => "on",
-    }
+fn video_filter_value(value: String, scheme: &ColorScheme) -> gpui::Div {
+    div()
+        .px(theme::ui_rem(spacing::SPACE_2))
+        .py(theme::ui_rem(spacing::SPACE_1))
+        .rounded(theme::ui_rem(shape::CORNER_SMALL))
+        .bg(color(scheme.surface_container_highest))
+        .text_color(color(scheme.on_surface_variant))
+        .m3_type(typography::LABEL_SMALL)
+        .child(value)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Checkbox rows share the filter label, availability, and update handler."
+)]
+fn video_filter_checkbox(
+    id: impl Into<gpui::SharedString>,
+    label: &'static str,
+    description: &'static str,
+    checked: bool,
+    disabled: bool,
+    scheme: &ColorScheme,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+    handler: impl Fn(&mut FrameRoot, &ClickEvent, &mut Window, &mut Context<FrameRoot>) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    m3::Checkbox::new(id, label, checked)
+        .enabled(!disabled)
+        .build(scheme, window, cx)
+        .when(!description.is_empty(), |row| {
+            row.child(div().m3_type(typography::BODY_SMALL).child(description))
+        })
+        .on_click(cx.listener(move |root, event, window, cx| {
+            if !disabled {
+                handler(root, event, window, cx);
+            }
+        }))
 }

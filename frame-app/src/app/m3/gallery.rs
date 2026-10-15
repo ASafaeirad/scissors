@@ -3,10 +3,10 @@
 //! It is not a working editor.
 
 use super::{
-    Button, ButtonVariant, Chip, ChipKind, ColorScheme, Dialog, IconButton, IconButtonVariant,
-    LinearProgress, ListItem, M3Text, Menu, MenuItem, NavigationItem, NavigationRail, RadioItem,
-    SegmentedButton, SelectCard, Slider, Switch, Symbol, TextField, ToolbarColor, ToolbarVariant,
-    color, div, list_subheader, m3_icon, m3_surface, theme, toolbar,
+    Button, ButtonVariant, Checkbox, Chip, ChipKind, ColorScheme, Dialog, IconButton,
+    IconButtonVariant, LinearProgress, ListItem, M3Text, Menu, MenuItem, NavigationItem,
+    NavigationRail, RadioItem, SegmentedButton, SelectCard, Slider, Switch, Symbol, TextField,
+    ToolbarColor, ToolbarVariant, color, div, list_subheader, m3_icon, m3_surface, theme, toolbar,
 };
 use crate::app::{
     Context, FrameRoot, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled,
@@ -418,6 +418,13 @@ impl FrameRoot {
                     .value_text(format!("{volume:.0}%"))
                     .enabled(!state.muted)
                     .build(scheme),
+            )
+            .child(
+                Checkbox::new("m3-checkbox", "Enable filter", state.fade)
+                    .build(scheme, window, cx)
+                    .on_click(cx.listener(|root, _, _, cx| {
+                        root.update_m3_gallery(cx, |gallery| gallery.fade = !gallery.fade);
+                    })),
             )
             .child(switch_row(
                 "Mute clip",

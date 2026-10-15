@@ -2,14 +2,12 @@ use super::super::accessibility::focus_visible_ring;
 use super::{
     ButtonVariant, ClickEvent, Context, FluentBuilder, FrameRoot, FrameSurface, InteractiveElement,
     IntoElement, PANEL_HEADER_HEIGHT, ParentElement, SETTINGS_PANEL_PADDING,
-    SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE, SettingsRenderState, SettingsTab, SourceKind,
+    SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE, SettingsRenderState, SettingsTab,
     StatefulInteractiveElement, Styled, Window, apply_button_motion, button_colors,
     button_highlight_shadows, button_motion, color, div, frame_tooltip, icon_svg, mix_color,
-    panel_bottom_separator, resolve_active_settings_tab, settings_audio_filters_tab,
-    settings_audio_tab, settings_images_tab, settings_metadata_tab, settings_section_label,
-    settings_tab_icon, settings_video_filters_tab, theme, visible_settings_tabs,
+    panel_bottom_separator, settings_audio_filters_tab, settings_audio_tab, settings_images_tab,
+    settings_metadata_tab, settings_section_label, settings_tab_icon, theme, visible_settings_tabs,
 };
-use crate::settings::source_kind_for;
 
 pub(in crate::app) fn settings_panel(
     settings: &SettingsRenderState<'_>,
@@ -17,9 +15,18 @@ pub(in crate::app) fn settings_panel(
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let palette = settings.palette;
-    let active_tab =
-        resolve_active_settings_tab(settings.active_tab, settings.config, settings.metadata);
-    let visible_tabs = visible_settings_tabs(settings.config, settings.metadata);
+    let visible_tabs: Vec<_> = visible_settings_tabs(settings.config, settings.metadata)
+        .into_iter()
+        .filter(|tab| *tab != SettingsTab::VideoFilters)
+        .collect();
+    let active_tab = if visible_tabs.contains(&settings.active_tab) {
+        settings.active_tab
+    } else {
+        visible_tabs
+            .first()
+            .copied()
+            .unwrap_or(SettingsTab::Metadata)
+    };
     let mut tab_rail = div()
         .id("settings-tab-list")
         .role(gpui::Role::TabList)
@@ -189,15 +196,7 @@ pub(in crate::app) fn settings_tab_content(
         .text_color(color(palette.text_muted));
 
     match tab {
-        SettingsTab::VideoFilters => content.child(settings_video_filters_tab(
-            settings.config,
-            settings.settings_disabled,
-            source_kind_for(settings.metadata) == SourceKind::Image,
-            settings.available_filters,
-            palette,
-            window,
-            cx,
-        )),
+        SettingsTab::VideoFilters => content,
         SettingsTab::Images => content.child(settings_images_tab(
             settings.config,
             settings.settings_disabled,
