@@ -30,6 +30,9 @@ pub(in crate::app) struct PreviewShellState {
     pub(in crate::app) palette: &'static theme::ThemePalette,
     pub(in crate::app) selected_file_name: Option<String>,
     pub(in crate::app) waveforms: Vec<Option<Arc<super::super::waveform::Waveform>>>,
+    pub(in crate::app) filmstrip: Option<Arc<super::super::filmstrip::Filmstrip>>,
+    /// Whether the source exports an audio stream, drawn as a waveform under its thumbnails.
+    pub(in crate::app) source_audio: bool,
     pub(in crate::app) audio_tracks: Vec<frame_core::types::ExternalAudioTrack>,
     pub(in crate::app) metadata_status: PreviewMetadataStatus,
     pub(in crate::app) metadata_error: Option<String>,
@@ -190,17 +193,24 @@ pub(in crate::app) fn preview_panel(
     });
 
     if !project_enabled {
-        let source = file_queue
-            .selected_file()
-            .filter(|_| state.availability.media_kind == PreviewMediaKind::Audio)
-            .and_then(|file| {
-                super::super::waveform::request(
-                    &file.path,
-                    file.config.selected_audio_tracks.first().copied(),
-                    state.duration_seconds,
-                    cx,
-                )
-            });
+        let selected = file_queue.selected_file();
+        let video = state.availability.media_kind == PreviewMediaKind::Video;
+        state.filmstrip = selected.filter(|_| video).and_then(|file| {
+            super::super::filmstrip::request(&file.path, state.duration_seconds, cx)
+        });
+        // Audio sources fall back to their first stream. A video shows the audio it exports.
+        let source = selected.and_then(|file| {
+            let stream = file.config.selected_audio_tracks.first().copied();
+            match state.availability.media_kind {
+                PreviewMediaKind::Audio => Some((file, stream)),
+                PreviewMediaKind::Video => stream.map(|stream| (file, Some(stream))),
+                PreviewMediaKind::Image | PreviewMediaKind::Unknown => None,
+            }
+        });
+        state.source_audio = source.is_some();
+        let source = source.and_then(|(file, stream)| {
+            super::super::waveform::request(&file.path, stream, state.duration_seconds, cx)
+        });
         state.waveforms.push(source);
         for track in &state.audio_tracks {
             state.waveforms.push(super::super::waveform::request(
@@ -349,6 +359,8 @@ pub(in crate::app) fn preview_shell_state(input: PreviewShellStateInput<'_>) -> 
         palette: settings.palette,
         selected_file_name: selected_file.map(|file| file.name.clone()),
         waveforms: Vec::new(),
+        filmstrip: None,
+        source_audio: false,
         audio_tracks: selected_file
             .map(|file| file.config.external_audio_tracks.clone())
             .unwrap_or_default(),

@@ -358,7 +358,11 @@ fn empty_track_row(
                 .aria_label(format!("Empty {label} track"))
                 .flex_1()
                 .min_w_0()
-                .h(theme::ui_rem(40.0))
+                .h(theme::ui_rem(if audio {
+                    LANE_HEIGHT
+                } else {
+                    VIDEO_LANE_HEIGHT
+                }))
                 .relative()
                 .overflow_hidden()
                 .rounded(theme::ui_rem(shape::CORNER_SMALL))
@@ -382,6 +386,11 @@ fn empty_track_row(
                 ),
         )
 }
+
+const LANE_HEIGHT: f32 = 40.0;
+/// Video lanes stack thumbnails over a waveform band for the exported audio.
+const VIDEO_LANE_HEIGHT: f32 = 56.0;
+const VIDEO_WAVEFORM_HEIGHT: f32 = 20.0;
 
 fn project_timeline_toolbar(
     state: &ProjectTimelineState,
@@ -481,16 +490,25 @@ fn track_row(
     };
     let grab = std::rc::Rc::new(std::cell::Cell::new(px(0.0)));
     let source_name = file.name.clone();
-    let waveform = (placement.kind == SourceKind::Audio)
-        .then(|| {
-            super::waveform::request(
-                &source.path,
-                source.config.selected_audio_tracks.first().copied(),
-                std::time::Duration::from_millis(source.duration_millis).as_secs_f64(),
-                cx,
-            )
-        })
+    let source_duration = std::time::Duration::from_millis(source.duration_millis).as_secs_f64();
+    let video = placement.kind == SourceKind::Video;
+    let filmstrip = video
+        .then(|| super::filmstrip::request(&source.path, source_duration, cx))
         .flatten();
+    // Audio sources fall back to their first stream. A video shows the audio it exports,
+    // so one without a selected track has no waveform band.
+    let waveform_stream = match placement.kind {
+        SourceKind::Audio => Some(source.config.selected_audio_tracks.first().copied()),
+        SourceKind::Video => source
+            .config
+            .selected_audio_tracks
+            .first()
+            .copied()
+            .map(Some),
+        SourceKind::Image => None,
+    };
+    let waveform = waveform_stream
+        .and_then(|stream| super::waveform::request(&source.path, stream, source_duration, cx));
     let trim_start = source
         .config
         .start_time
@@ -502,7 +520,7 @@ fn track_row(
         .end_time
         .as_deref()
         .and_then(frame_core::utils::parse_time)
-        .unwrap_or_else(|| std::time::Duration::from_millis(source.duration_millis).as_secs_f64());
+        .unwrap_or(source_duration);
     let mut ranges = Vec::new();
     let mut cursor = trim_start;
     for cut in frame_core::cuts::output_cut_ranges(&source.config) {
@@ -607,7 +625,11 @@ fn track_row(
                 .id(format!("project-lane-{id}"))
                 .flex_1()
                 .min_w_0()
-                .h(theme::ui_rem(40.0))
+                .h(theme::ui_rem(if video {
+                    VIDEO_LANE_HEIGHT
+                } else {
+                    LANE_HEIGHT
+                }))
                 .relative()
                 .overflow_hidden()
                 .rounded(theme::ui_rem(shape::CORNER_SMALL))
@@ -738,8 +760,19 @@ fn track_row(
                                 },
                             )
                         })
+                        .when_some(filmstrip, |clip, filmstrip| {
+                            clip.child(
+                                super::filmstrip::element(filmstrip, ranges.clone())
+                                    .top_0()
+                                    .bottom(theme::ui_rem(if waveform_stream.is_some() {
+                                        VIDEO_WAVEFORM_HEIGHT
+                                    } else {
+                                        0.0
+                                    })),
+                            )
+                        })
                         .when_some(waveform, |clip, waveform| {
-                            clip.items_start().pt(theme::ui_rem(2.0)).child(
+                            clip.child(
                                 super::waveform::element(
                                     waveform,
                                     ranges,
@@ -748,12 +781,33 @@ fn track_row(
                                     } else {
                                         scheme.on_secondary_container
                                     }),
-                                ),
+                                )
+                                .bottom(theme::ui_rem(3.0))
+                                .top(theme::ui_rem(if video {
+                                    VIDEO_LANE_HEIGHT - VIDEO_WAVEFORM_HEIGHT + 2.0
+                                } else {
+                                    20.0
+                                })),
                             )
+                        })
+                        .when(video || waveform_stream.is_some(), |clip| {
+                            clip.items_start()
+                                .pt(theme::ui_rem(if video { 4.0 } else { 2.0 }))
                         })
                         .child(
                             div()
                                 .truncate()
+                                // The name sits on the thumbnails, so it keeps the clip's fill.
+                                .when(video, |label| {
+                                    label
+                                        .px(theme::ui_rem(6.0))
+                                        .rounded(theme::ui_rem(shape::CORNER_EXTRA_SMALL))
+                                        .bg(color(if selected {
+                                            scheme.primary_container
+                                        } else {
+                                            scheme.secondary_container
+                                        }))
+                                })
                                 .child(format!("{source_name} • {length:.1}s")),
                         )
                         .children([true, false].into_iter().map(|start| {

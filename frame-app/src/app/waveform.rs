@@ -1,32 +1,13 @@
 //! Cached audio envelopes, decoded away from the UI thread.
+use super::decode_cache::DecodeKey;
 use super::*;
 use std::{
-    collections::HashMap,
     io::{BufReader, Read},
     process::{Command, Stdio},
 };
 
 const SAMPLE_RATE: u32 = 8_000;
 const MAX_PEAKS: u32 = 32_768;
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct Key {
-    path: String,
-    stream: Option<u32>,
-    duration_millis: u64,
-}
-
-#[derive(Default)]
-struct Cache {
-    entries: HashMap<Key, CacheEntry>,
-    clock: u64,
-}
-struct CacheEntry {
-    waveform: Option<Arc<Waveform>>,
-    pending: bool,
-    accessed: u64,
-}
-impl gpui::Global for Cache {}
 
 #[derive(Debug, PartialEq)]
 pub(super) struct Waveform {
@@ -41,66 +22,11 @@ pub(super) fn request(
     duration: f64,
     cx: &mut Context<FrameRoot>,
 ) -> Option<Arc<Waveform>> {
-    if !duration.is_finite() || duration <= 0.0 {
-        return None;
-    }
-    let key = Key {
-        path: path.into(),
-        stream,
-        duration_millis: crate::numeric::rounded_f64_to_u64(duration * 1000.0),
-    };
-    if cx.try_global::<Cache>().is_none() {
-        cx.set_global(Cache::default());
-    }
-    let cache = cx.global_mut::<Cache>();
-    cache.clock += 1;
-    if let Some(entry) = cache.entries.get_mut(&key) {
-        entry.accessed = cache.clock;
-        return entry.waveform.clone();
-    }
-    // Limit concurrent decoders. Completion triggers a redraw to request queued tracks.
-    if cache.entries.values().filter(|entry| entry.pending).count() >= 2 {
-        return None;
-    }
-    if cache.entries.len() >= 64 {
-        let oldest = cache
-            .entries
-            .iter()
-            .filter(|(_, entry)| !entry.pending)
-            .min_by_key(|(_, entry)| entry.accessed)
-            .map(|(key, _)| key.clone());
-        if let Some(oldest) = oldest {
-            cache.entries.remove(&oldest);
-        }
-    }
-    cache.entries.insert(
-        key.clone(),
-        CacheEntry {
-            waveform: None,
-            pending: true,
-            accessed: cache.clock,
-        },
-    );
-    cx.spawn(async move |this, cx| {
-        let decode_key = key.clone();
-        let result = cx
-            .background_spawn(async move { decode(&decode_key).map(Arc::new) })
-            .await;
-        this.update(cx, |_, cx| {
-            if let Some(entry) = cx.global_mut::<Cache>().entries.get_mut(&key) {
-                entry.waveform = result;
-                entry.pending = false;
-            }
-            cx.notify();
-        })
-        .ok();
-    })
-    .detach();
-    None
+    super::decode_cache::request(path, stream, duration, 64, decode, cx)
 }
 
-fn decode(key: &Key) -> Option<Waveform> {
-    let duration = std::time::Duration::from_millis(key.duration_millis).as_secs_f64();
+fn decode(key: &DecodeKey) -> Option<Waveform> {
+    let duration = key.duration();
     let samples_per_peak = crate::numeric::rounded_f64_to_u64(
         (duration * f64::from(SAMPLE_RATE) / f64::from(MAX_PEAKS))
             .ceil()
@@ -191,11 +117,12 @@ impl Waveform {
 }
 
 /// Source ranges concatenate after cuts. Their lengths also account for playback speed.
+/// The canvas is absolutely positioned across its parent; callers set its top and bottom.
 pub(super) fn element(
     waveform: Arc<Waveform>,
     ranges: Vec<(f64, f64)>,
     tint: Rgba,
-) -> impl IntoElement {
+) -> gpui::Canvas<()> {
     gpui::canvas(
         |_, _, _| (),
         move |bounds, (), window, _| {
@@ -254,8 +181,6 @@ pub(super) fn element(
     .absolute()
     .left_0()
     .right_0()
-    .bottom(theme::ui_rem(3.0))
-    .top(theme::ui_rem(20.0))
 }
 
 #[cfg(test)]
@@ -279,7 +204,7 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
-        let mut key = Key {
+        let mut key = DecodeKey {
             path: path.to_string_lossy().into_owned(),
             stream: None,
             duration_millis: 1000,

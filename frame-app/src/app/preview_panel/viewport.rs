@@ -716,6 +716,8 @@ mod tests {
             palette: theme::palette(crate::appearance::ColorTheme::Dark),
             selected_file_name: Some("sample.mov".to_string()),
             waveforms: Vec::new(),
+            filmstrip: None,
+            source_audio: false,
             audio_tracks: Vec::new(),
             metadata_status: PreviewMetadataStatus::Ready,
             metadata_error: None,

@@ -101,6 +101,18 @@ pub(in crate::app) struct PreviewTimelineTrack {
     pub(in crate::app) clips: Vec<TimelineClip>,
 }
 
+/// The source lane of a video stacks thumbnails over a waveform band for its exported audio.
+const VIDEO_LANE_HEIGHT: f32 = 64.0;
+const VIDEO_WAVEFORM_HEIGHT: f32 = 20.0;
+
+fn preview_timeline_lane_height(state: &PreviewShellState, track_index: usize) -> f32 {
+    if track_index == 0 && state.availability.media_kind == PreviewMediaKind::Video {
+        VIDEO_LANE_HEIGHT
+    } else {
+        PREVIEW_TIMELINE_LANE_HEIGHT
+    }
+}
+
 pub(in crate::app) fn preview_timeline_tracks(
     state: &PreviewShellState,
 ) -> Vec<PreviewTimelineTrack> {
@@ -256,7 +268,7 @@ fn preview_timeline_track_labels(
         .child(div().h(theme::ui_rem(PREVIEW_TIMELINE_RULER_HEIGHT)))
         .children(tracks.iter().enumerate().map(|(index, track)| {
             div()
-                .h(theme::ui_rem(PREVIEW_TIMELINE_LANE_HEIGHT))
+                .h(theme::ui_rem(preview_timeline_lane_height(state, index)))
                 .pl_2()
                 .flex()
                 .items_center()
@@ -588,7 +600,10 @@ fn preview_timeline_lane(
     div()
         .relative()
         .w_full()
-        .h(theme::ui_rem(PREVIEW_TIMELINE_LANE_HEIGHT))
+        .h(theme::ui_rem(preview_timeline_lane_height(
+            state,
+            track_index,
+        )))
         .rounded(theme::ui_rem(shape::CORNER_SMALL))
         .bg(color(scheme.surface_container))
         .opacity(
@@ -599,27 +614,49 @@ fn preview_timeline_lane(
             },
         )
         .children(track.clips.iter().enumerate().map(|(clip_index, clip)| {
+            let source_start = if track_index == 0 { clip.start } else { 0.0 };
+            let ranges = vec![(source_start, source_start + clip.duration())];
+            let video = preview_timeline_lane_height(state, track_index) == VIDEO_LANE_HEIGHT;
+            let waveform = state.waveforms.get(track_index).and_then(Clone::clone);
+            let filmstrip = state.filmstrip.clone().filter(|_| video).map(|filmstrip| {
+                super::super::filmstrip::element(filmstrip, ranges.clone())
+                    .top_0()
+                    // Thumbnails leave room for a waveform band only when the video
+                    // exports audio.
+                    .bottom(theme::ui_rem(if state.source_audio {
+                        VIDEO_WAVEFORM_HEIGHT
+                    } else {
+                        0.0
+                    }))
+            });
             preview_timeline_clip(
                 state,
                 *clip,
                 Some(*clip) == active_clip,
                 &clip_name,
                 track.icon,
+                filmstrip,
                 cx,
             )
-            .when_some(
-                state.waveforms.get(track_index).and_then(Clone::clone),
-                |element, waveform| {
-                    let source_start = if track_index == 0 { clip.start } else { 0.0 };
-                    element.items_start().pt(theme::ui_rem(2.0)).child(
-                        super::super::waveform::element(
-                            waveform,
-                            vec![(source_start, source_start + clip.duration())],
-                            color(scheme.on_primary_container),
-                        ),
+            .when(video || waveform.is_some(), |element| {
+                element
+                    .items_start()
+                    .pt(theme::ui_rem(if video { 4.0 } else { 2.0 }))
+            })
+            .when_some(waveform, |element, waveform| {
+                element.child(
+                    super::super::waveform::element(
+                        waveform,
+                        ranges,
+                        color(scheme.on_primary_container),
                     )
-                },
-            )
+                    .bottom(theme::ui_rem(3.0))
+                    .when(video, |band| {
+                        band.h(theme::ui_rem(VIDEO_WAVEFORM_HEIGHT - 5.0))
+                    })
+                    .when(!video, |band| band.top(theme::ui_rem(20.0))),
+                )
+            })
             .id(format!("timeline-clip-{track_index}-{clip_index}"))
             .when(
                 track_index > 0 && enabled && !state.controls_disabled,
@@ -701,12 +738,15 @@ fn preview_audio_clip(
         )
 }
 
+/// A `background` canvas, such as thumbnails, is painted under the label, which then sits
+/// on the clip's fill to stay legible.
 fn preview_timeline_clip(
     state: &PreviewShellState,
     clip: TimelineClip,
     active: bool,
     name: &str,
     icon: Symbol,
+    background: Option<gpui::Canvas<()>>,
     cx: &gpui::App,
 ) -> gpui::Div {
     let palette = state.palette;
@@ -714,6 +754,7 @@ fn preview_timeline_clip(
     let start_fraction =
         timeline_fraction_from_percent(state.playback.to_timeline_percent(clip.start));
     let end_fraction = timeline_fraction_from_percent(state.playback.to_timeline_percent(clip.end));
+    let label_on_fill = background.is_some();
 
     div()
         .absolute()
@@ -734,19 +775,32 @@ fn preview_timeline_clip(
         .px(theme::ui_rem(PREVIEW_TIMELINE_CLIP_HANDLE_WIDTH + 4.0))
         .flex()
         .items_center()
-        .gap(theme::ui_rem(6.0))
         .text_color(color(scheme.on_primary_container))
-        .child(div().flex_none().child(m3::m3_icon(
-            icon,
-            false,
-            16.0,
-            color(scheme.on_primary_container),
-        )))
+        .when(!label_on_fill, |clip| clip.gap(theme::ui_rem(6.0)))
+        .children(background)
+        // Label parts stay direct children so text truncates against the clip's width.
+        // On thumbnails, each part takes the fill and padding replaces the gap between them.
+        .child(
+            div()
+                .flex_none()
+                .when(label_on_fill, |icon| {
+                    label_fill(icon, scheme)
+                        .pl(theme::ui_rem(6.0))
+                        .rounded_l(theme::ui_rem(shape::CORNER_EXTRA_SMALL))
+                })
+                .child(m3::m3_icon(
+                    icon,
+                    false,
+                    16.0,
+                    color(scheme.on_primary_container),
+                )),
+        )
         .child(
             div()
                 .min_w_0()
                 .truncate()
                 .m3_type(typography::LABEL_MEDIUM)
+                .when(label_on_fill, |name| label_fill(name, scheme))
                 .child(name.to_string()),
         )
         .child(
@@ -754,8 +808,19 @@ fn preview_timeline_clip(
                 .flex_none()
                 .m3_type(typography::BODY_SMALL)
                 .text_color(color(scheme.on_primary_container))
+                .when(label_on_fill, |duration| {
+                    label_fill(duration, scheme).rounded_r(theme::ui_rem(shape::CORNER_EXTRA_SMALL))
+                })
                 .child(format_clip_duration(clip.duration())),
         )
+}
+
+fn label_fill(part: gpui::Div, scheme: &material::ColorScheme) -> gpui::Div {
+    part.h(theme::ui_rem(20.0))
+        .flex()
+        .items_center()
+        .pr(theme::ui_rem(6.0))
+        .bg(color(scheme.primary_container))
 }
 
 fn preview_timeline_cut_region(

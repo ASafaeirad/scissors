@@ -122,6 +122,8 @@ impl FrameRoot {
         video.config.start_time = None;
         video.config.end_time = None;
         video.config.cut_segments.clear();
+        // Stream 1 is the fixture video's audio, selected as metadata loading would.
+        video.config.selected_audio_tracks = vec![1];
         self.file_queue = FileQueue::new();
         self.project.enabled = true;
         self.project.library.add_file(video);
