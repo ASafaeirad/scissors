@@ -20,7 +20,6 @@ use syn::{
 
 const CI_WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
 const DEPENDENCY_REVIEW_WORKFLOW_PATH: &str = ".github/workflows/dependency-review.yml";
-const CODEQL_WORKFLOW_PATH: &str = ".github/workflows/codeql.yml";
 const RUN_BUNDLING_WORKFLOW_PATH: &str = ".github/workflows/run_bundling.yml";
 const RELEASE_WORKFLOW_PATH: &str = ".github/workflows/release.yml";
 const PUBLISH_NIXPKGS_WORKFLOW_PATH: &str = ".github/workflows/publish_nixpkgs.yml";
@@ -52,7 +51,6 @@ const ACTION_CHECKOUT_SHA: &str = "3d3c42e5aac5ba805825da76410c181273ba90b1";
 const ACTION_UPLOAD_ARTIFACT_SHA: &str = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const ACTION_DOWNLOAD_ARTIFACT_SHA: &str = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const ACTION_DEPENDENCY_REVIEW_SHA: &str = "a1d282b36b6f3519aa1f3fc636f609c47dddb294";
-const ACTION_CODEQL_SHA: &str = "2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2";
 const ACTION_ATTEST_BUILD_PROVENANCE_SHA: &str = "4d101475d8b20a2381f78447822ac1eab6504dd8";
 const ACTION_INSTALL_NIX_SHA: &str = "13d8dd58da0234aa297dedd986986ccb8e7f3e24";
 
@@ -1643,7 +1641,6 @@ fn generated_workflows() -> Vec<(&'static str, String)> {
             DEPENDENCY_REVIEW_WORKFLOW_PATH,
             dependency_review_workflow(),
         ),
-        (CODEQL_WORKFLOW_PATH, codeql_workflow()),
         (RUN_BUNDLING_WORKFLOW_PATH, run_bundling_workflow()),
         (RELEASE_WORKFLOW_PATH, release_workflow()),
         (PUBLISH_NIXPKGS_WORKFLOW_PATH, publish_nixpkgs_workflow()),
@@ -1856,14 +1853,6 @@ fn pin_workflow_actions(workflow: &mut String) {
             "cachix/install-nix-action@v31",
             format!("cachix/install-nix-action@{ACTION_INSTALL_NIX_SHA} # v31.11.1"),
         ),
-        (
-            "github/codeql-action/init@v4.37.1",
-            format!("github/codeql-action/init@{ACTION_CODEQL_SHA} # v4.38.2"),
-        ),
-        (
-            "github/codeql-action/analyze@v4.37.1",
-            format!("github/codeql-action/analyze@{ACTION_CODEQL_SHA} # v4.38.2"),
-        ),
     ];
     for (reference, pinned) in action_replacements {
         *workflow = workflow.replace(reference, &pinned);
@@ -2009,49 +1998,6 @@ jobs:
         fail-on-severity: moderate
         comment-summary-in-pr: never
     timeout-minutes: 10
-",
-    )
-}
-
-fn codeql_workflow() -> String {
-    render_workflow(
-        r"# Generated from xtask::workflows::codeql
-# Rebuild with `cargo xtask workflows`.
-name: codeql
-on:
-  pull_request:
-  push:
-    branches:
-      - master
-  schedule:
-    - cron: '23 4 * * 3'
-permissions:
-  contents: read
-  security-events: write
-concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-jobs:
-  analyze:
-    name: codeql rust
-    runs-on: ubuntu-22.04
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@v7.0.0
-      with:
-        persist-credentials: false
-    - name: security::initialize_codeql
-      uses: github/codeql-action/init@v4.37.1
-      with:
-        languages: rust
-        build-mode: none
-        # Empty input keeps the default suite for PR and push scans.
-        queries: ${{ github.event_name == 'schedule' && 'security-extended' || '' }}
-    - name: security::analyze_code
-      uses: github/codeql-action/analyze@v4.37.1
-      with:
-        category: /language:rust
-    timeout-minutes: 30
 ",
     )
 }
@@ -3718,8 +3664,6 @@ mod tests {
         assert_eq!(release.matches("      attestations: write").count(), 1);
         assert!(!release.contains("      actions: write"));
 
-        let codeql = codeql_workflow();
-        assert_eq!(codeql.matches("  security-events: write").count(), 1);
     }
 
     #[test]
