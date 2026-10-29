@@ -154,19 +154,19 @@ jobs:
         test "$actual" = "$expected"
         test -s target/release/Frame-x86_64.AppImage.zsync
     - name: release::upload_linux_x86_64
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: release-asset-frame-linux-x86_64
         path: target/release/frame-linux-x86_64.tar.gz
         if-no-files-found: error
     - name: release::upload_linux_x86_64_appimage
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: release-asset-Frame-x86_64-AppImage
         path: target/release/Frame-x86_64.AppImage
         if-no-files-found: error
     - name: release::upload_linux_x86_64_appimage_zsync
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: release-asset-Frame-x86_64-AppImage-zsync
         path: target/release/Frame-x86_64.AppImage.zsync
@@ -214,19 +214,19 @@ jobs:
         test "$actual" = "$expected"
         test -s target/release/Frame-aarch64.AppImage.zsync
     - name: release::upload_linux_aarch64
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: release-asset-frame-linux-aarch64
         path: target/release/frame-linux-aarch64.tar.gz
         if-no-files-found: error
     - name: release::upload_linux_aarch64_appimage
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: release-asset-Frame-aarch64-AppImage
         path: target/release/Frame-aarch64.AppImage
         if-no-files-found: error
     - name: release::upload_linux_aarch64_appimage_zsync
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: release-asset-Frame-aarch64-AppImage-zsync
         path: target/release/Frame-aarch64.AppImage.zsync
@@ -305,14 +305,14 @@ jobs:
     - name: release::build_isolated_manifest_signer
       run: cargo build --manifest-path tooling/manifest-signer/Cargo.toml --release --locked
     - name: release::upload_unsigned_metadata
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: unsigned-release-metadata
         path: target/release-files
         if-no-files-found: error
         retention-days: 3
     - name: release::upload_manifest_signer
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: manifest-signer
         path: target/release/frame-manifest-signer
@@ -350,7 +350,7 @@ jobs:
           --manifest target/release-files/update-manifest.json \
           --out target/release-files/update-manifest.json.sig
     - name: release::upload_manifest_signature
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: signed-update-manifest
         path: target/release-files/update-manifest.json.sig
@@ -434,7 +434,7 @@ jobs:
       with:
         subject-checksums: target/release-package/SHA256SUMS
     - name: release::upload_complete_release_package
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: complete-release-package
         path: target/release-package
