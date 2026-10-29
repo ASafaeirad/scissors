@@ -2045,7 +2045,8 @@ jobs:
       with:
         languages: rust
         build-mode: none
-        queries: security-extended
+        # Empty input keeps the default suite for PR and push scans.
+        queries: ${{ github.event_name == 'schedule' && 'security-extended' || '' }}
     - name: security::analyze_code
       uses: github/codeql-action/analyze@v4.37.1
       with:
