@@ -1980,32 +1980,6 @@ jobs:
     - name: ci::test_media_thumbnails
       run: cargo test --locked -p frame-app app::media_assets::tests -- --ignored --test-threads=1
     timeout-minutes: 60
-  cargo_check_macos:
-    name: cargo check macos
-    runs-on: macos-14
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@v7.0.0
-      with:
-        persist-credentials: false
-    - name: steps::setup_rust
-      run: rustup toolchain install __RUST_VERSION__ --profile minimal --component clippy,rustfmt
-    - name: ci::check_macos
-      run: cargo check --manifest-path frame-app/Cargo.toml --locked
-    timeout-minutes: 60
-  cargo_check_windows:
-    name: cargo check windows
-    runs-on: windows-2022
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@v7.0.0
-      with:
-        persist-credentials: false
-    - name: steps::setup_rust
-      run: rustup toolchain install __RUST_VERSION__ --profile minimal --component clippy,rustfmt
-    - name: ci::check_windows
-      run: cargo check --manifest-path frame-app/Cargo.toml --target x86_64-pc-windows-msvc --locked
-    timeout-minutes: 60
 ",
     )
 }
@@ -2096,9 +2070,6 @@ permissions:
     let jobs = [
         linux_job("x86_64", "ubuntu-22.04"),
         linux_job("aarch64", "ubuntu-22.04-arm"),
-        macos_job("x86_64", "x86_64-apple-darwin", "macos-26-intel"),
-        macos_job("aarch64", "aarch64-apple-darwin", "macos-26"),
-        windows_job("x86_64", "windows-2022"),
     ]
     .join("");
 
@@ -2120,19 +2091,6 @@ const fn checkout_step() -> &'static str {
 const fn setup_rust_step() -> &'static str {
     r"    - name: steps::setup_rust
       run: rustup toolchain install __RUST_VERSION__ --profile minimal --component clippy,rustfmt
-"
-}
-
-const fn setup_dmgbuild_step() -> &'static str {
-    r"    - name: steps::setup_dmgbuild
-      shell: bash
-      run: |
-        python3 -m pip install \
-          --disable-pip-version-check \
-          --no-deps \
-          --require-hashes \
-          --target target/dmgbuild \
-          --requirement packaging/macos/dmgbuild-requirements.txt
 "
 }
 
@@ -2202,76 +2160,9 @@ fn linux_job(arch: &str, runner: &str) -> String {
     )
 }
 
-fn macos_job(arch: &str, target: &str, runner: &str) -> String {
-    format!(
-        r"  bundle_macos_{arch}:
-    if: |-
-{if_expression}
-    runs-on: {runner}
-    environment: run-bundling
-    env:
-      CARGO_INCREMENTAL: 0
-    steps:
-{checkout}{rust}{dmgbuild}    - name: steps::install_cargo_bundle
-      run: cargo install cargo-bundle --version __CARGO_BUNDLE_VERSION__ --locked
-    - name: ./script/bundle-mac
-      env:
-        PYTHONPATH: target/dmgbuild
-      run: ./script/bundle-mac {target}
-    - name: run_bundling::upload_artifact
-      uses: actions/upload-artifact@v7.0.1
-      with:
-        name: Frame-{arch}.dmg
-        path: target/{target}/release/Frame-{arch}.dmg
-        if-no-files-found: error
-    - name: run_bundling::upload_update_artifact
-      uses: actions/upload-artifact@v7.0.1
-      with:
-        name: Frame-{arch}.app.zip
-        path: target/{target}/release/Frame-{arch}.app.zip
-        if-no-files-found: error
-    timeout-minutes: 60
-",
-        if_expression = bundle_if_expression(),
-        checkout = checkout_step(),
-        rust = setup_rust_step(),
-        dmgbuild = setup_dmgbuild_step(),
-    )
-}
-
-fn windows_job(arch: &str, runner: &str) -> String {
-    format!(
-        r"  bundle_windows_{arch}:
-    if: |-
-{if_expression}
-    runs-on: {runner}
-    environment: run-bundling
-    env:
-      CARGO_INCREMENTAL: 0
-    steps:
-{checkout}{rust}    - name: steps::setup_inno
-      shell: pwsh
-      run: choco install innosetup --version __INNO_SETUP_VERSION__ --no-progress --yes
-    - name: ./script/bundle-windows.ps1
-      shell: pwsh
-      run: ./script/bundle-windows.ps1 -Architecture {arch}
-    - name: run_bundling::upload_artifact
-      uses: actions/upload-artifact@v7.0.1
-      with:
-        name: Frame-{arch}.exe
-        path: target/Frame-{arch}.exe
-        if-no-files-found: error
-    timeout-minutes: 60
-",
-        if_expression = bundle_if_expression(),
-        checkout = checkout_step(),
-        rust = setup_rust_step(),
-    )
-}
-
 #[expect(
     clippy::too_many_lines,
-    reason = "The generated GitHub Actions workflow is kept as one raw template for easier diffing against YAML output."
+    reason = "Keep the release workflow template together."
 )]
 fn release_workflow() -> String {
     let workflow = r#"# Generated from xtask::workflows::release
@@ -2498,261 +2389,12 @@ jobs:
         if-no-files-found: error
     timeout-minutes: 90
 
-  build_macos_x86_64:
-    runs-on: macos-26-intel
-    needs: prepare_release
-    outputs:
-      unsigned_sha256: ${{ steps.unsigned.outputs.sha256 }}
-    env:
-      CARGO_INCREMENTAL: 0
-      FRAME_UPDATE_PUBLIC_KEY: ${{ vars.FRAME_UPDATE_PUBLIC_KEY }}
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ needs.prepare_release.outputs.commit_sha }}
-    - name: release::check_public_key
-      run: test -n "$FRAME_UPDATE_PUBLIC_KEY"
-    - name: steps::setup_rust
-      uses: dtolnay/rust-toolchain@stable
-    - name: steps::install_cargo_bundle
-      run: cargo install cargo-bundle --locked
-    - name: release::build_macos_x86_64_unsigned
-      run: ./script/bundle-mac -b x86_64-apple-darwin
-    - name: release::archive_macos_x86_64_unsigned
-      id: unsigned
-      run: |
-        ditto -c -k --sequesterRsrc --keepParent \
-          target/x86_64-apple-darwin/release/bundle/osx/Frame.app \
-          target/Frame-x86_64-unsigned.app.zip
-        echo "sha256=$(shasum -a 256 target/Frame-x86_64-unsigned.app.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-    - name: release::upload_macos_x86_64_unsigned
-      uses: actions/upload-artifact@v4
-      with:
-        name: packaging-input-Frame-x86_64-app
-        path: target/Frame-x86_64-unsigned.app.zip
-        if-no-files-found: error
-        retention-days: 3
-    timeout-minutes: 90
-
-  package_macos_x86_64:
-    runs-on: macos-26-intel
-    needs:
-      - prepare_release
-      - build_macos_x86_64
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ needs.prepare_release.outputs.commit_sha }}
-    - name: release::download_macos_x86_64_unsigned
-      uses: actions/download-artifact@v4
-      with:
-        name: packaging-input-Frame-x86_64-app
-        path: target/packaging-input
-    - name: release::extract_macos_x86_64_unsigned
-      run: |
-        echo '${{ needs.build_macos_x86_64.outputs.unsigned_sha256 }}  target/packaging-input/Frame-x86_64-unsigned.app.zip' | shasum -a 256 --check
-        mkdir -p target/x86_64-apple-darwin/release/bundle/osx
-        ditto -x -k target/packaging-input/Frame-x86_64-unsigned.app.zip \
-          target/x86_64-apple-darwin/release/bundle/osx
-        test -d target/x86_64-apple-darwin/release/bundle/osx/Frame.app
-    - name: steps::setup_dmgbuild
-      shell: bash
-      run: |
-        python3 -m pip install \
-          --disable-pip-version-check \
-          --no-deps \
-          --require-hashes \
-          --target target/dmgbuild \
-          --requirement packaging/macos/dmgbuild-requirements.txt
-    - name: release::package_macos_x86_64
-      env:
-        PYTHONPATH: target/dmgbuild
-      run: ./script/bundle-mac -p x86_64-apple-darwin
-    - name: release::upload_macos_x86_64_dmg
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-asset-Frame-x86_64-dmg
-        path: target/x86_64-apple-darwin/release/Frame-x86_64.dmg
-        if-no-files-found: error
-    - name: release::upload_macos_x86_64_update
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-asset-Frame-x86_64-app-zip
-        path: target/x86_64-apple-darwin/release/Frame-x86_64.app.zip
-        if-no-files-found: error
-    timeout-minutes: 90
-
-  build_macos_aarch64:
-    runs-on: macos-26
-    needs: prepare_release
-    outputs:
-      unsigned_sha256: ${{ steps.unsigned.outputs.sha256 }}
-    env:
-      CARGO_INCREMENTAL: 0
-      FRAME_UPDATE_PUBLIC_KEY: ${{ vars.FRAME_UPDATE_PUBLIC_KEY }}
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ needs.prepare_release.outputs.commit_sha }}
-    - name: release::check_public_key
-      run: test -n "$FRAME_UPDATE_PUBLIC_KEY"
-    - name: steps::setup_rust
-      uses: dtolnay/rust-toolchain@stable
-    - name: steps::install_cargo_bundle
-      run: cargo install cargo-bundle --locked
-    - name: release::build_macos_aarch64_unsigned
-      run: ./script/bundle-mac -b aarch64-apple-darwin
-    - name: release::archive_macos_aarch64_unsigned
-      id: unsigned
-      run: |
-        ditto -c -k --sequesterRsrc --keepParent \
-          target/aarch64-apple-darwin/release/bundle/osx/Frame.app \
-          target/Frame-aarch64-unsigned.app.zip
-        echo "sha256=$(shasum -a 256 target/Frame-aarch64-unsigned.app.zip | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-    - name: release::upload_macos_aarch64_unsigned
-      uses: actions/upload-artifact@v4
-      with:
-        name: packaging-input-Frame-aarch64-app
-        path: target/Frame-aarch64-unsigned.app.zip
-        if-no-files-found: error
-        retention-days: 3
-    timeout-minutes: 90
-
-  package_macos_aarch64:
-    runs-on: macos-26
-    needs:
-      - prepare_release
-      - build_macos_aarch64
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ needs.prepare_release.outputs.commit_sha }}
-    - name: release::download_macos_aarch64_unsigned
-      uses: actions/download-artifact@v4
-      with:
-        name: packaging-input-Frame-aarch64-app
-        path: target/packaging-input
-    - name: release::extract_macos_aarch64_unsigned
-      run: |
-        echo '${{ needs.build_macos_aarch64.outputs.unsigned_sha256 }}  target/packaging-input/Frame-aarch64-unsigned.app.zip' | shasum -a 256 --check
-        mkdir -p target/aarch64-apple-darwin/release/bundle/osx
-        ditto -x -k target/packaging-input/Frame-aarch64-unsigned.app.zip \
-          target/aarch64-apple-darwin/release/bundle/osx
-        test -d target/aarch64-apple-darwin/release/bundle/osx/Frame.app
-    - name: steps::setup_dmgbuild
-      shell: bash
-      run: |
-        python3 -m pip install \
-          --disable-pip-version-check \
-          --no-deps \
-          --require-hashes \
-          --target target/dmgbuild \
-          --requirement packaging/macos/dmgbuild-requirements.txt
-    - name: release::package_macos_aarch64
-      env:
-        PYTHONPATH: target/dmgbuild
-      run: ./script/bundle-mac -p aarch64-apple-darwin
-    - name: release::upload_macos_aarch64_dmg
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-asset-Frame-aarch64-dmg
-        path: target/aarch64-apple-darwin/release/Frame-aarch64.dmg
-        if-no-files-found: error
-    - name: release::upload_macos_aarch64_update
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-asset-Frame-aarch64-app-zip
-        path: target/aarch64-apple-darwin/release/Frame-aarch64.app.zip
-        if-no-files-found: error
-    timeout-minutes: 90
-
-  build_windows_x86_64:
-    runs-on: windows-2022
-    needs: prepare_release
-    outputs:
-      unsigned_sha256: ${{ steps.unsigned.outputs.sha256 }}
-    env:
-      CARGO_INCREMENTAL: 0
-      FRAME_UPDATE_PUBLIC_KEY: ${{ vars.FRAME_UPDATE_PUBLIC_KEY }}
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ needs.prepare_release.outputs.commit_sha }}
-    - name: release::check_public_key
-      shell: pwsh
-      run: |
-        if (-not $env:FRAME_UPDATE_PUBLIC_KEY) { throw "FRAME_UPDATE_PUBLIC_KEY is required" }
-    - name: steps::setup_rust
-      uses: dtolnay/rust-toolchain@stable
-    - name: release::build_windows_x86_64_unsigned
-      shell: pwsh
-      run: ./script/bundle-windows.ps1 -Architecture x86_64 -PrepareOnly
-    - name: release::archive_windows_x86_64_unsigned
-      id: unsigned
-      shell: pwsh
-      run: |
-        Compress-Archive -Path target/inno/x86_64/* -DestinationPath target/Frame-x86_64-inno-inputs.zip
-        $sha256 = (Get-FileHash target/Frame-x86_64-inno-inputs.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-        "sha256=$sha256" >> $env:GITHUB_OUTPUT
-    - name: release::upload_windows_x86_64_unsigned
-      uses: actions/upload-artifact@v4
-      with:
-        name: packaging-input-Frame-x86_64-windows
-        path: target/Frame-x86_64-inno-inputs.zip
-        if-no-files-found: error
-        retention-days: 3
-    timeout-minutes: 90
-
-  package_windows_x86_64:
-    runs-on: windows-2022
-    needs:
-      - prepare_release
-      - build_windows_x86_64
-    steps:
-    - name: steps::checkout_repo
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ needs.prepare_release.outputs.commit_sha }}
-    - name: release::download_windows_x86_64_unsigned
-      uses: actions/download-artifact@v4
-      with:
-        name: packaging-input-Frame-x86_64-windows
-        path: target/packaging-input
-    - name: release::extract_windows_x86_64_unsigned
-      shell: pwsh
-      run: |
-        $expected = '${{ needs.build_windows_x86_64.outputs.unsigned_sha256 }}'
-        $actual = (Get-FileHash target/packaging-input/Frame-x86_64-inno-inputs.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actual -ne $expected) { throw "Unsigned Windows input digest mismatch: $actual != $expected" }
-        Expand-Archive -Path target/packaging-input/Frame-x86_64-inno-inputs.zip -DestinationPath target/inno/x86_64
-    - name: steps::setup_inno
-      shell: pwsh
-      run: choco install innosetup --no-progress -y
-    - name: release::package_windows_x86_64
-      shell: pwsh
-      run: ./script/bundle-windows.ps1 -Architecture x86_64 -PackageOnly
-    - name: release::upload_windows_x86_64
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-asset-Frame-x86_64-exe
-        path: target/Frame-x86_64.exe
-        if-no-files-found: error
-    timeout-minutes: 60
-
   generate_release_metadata:
     runs-on: ubuntu-22.04
     needs:
       - prepare_release
       - build_linux_x86_64
       - build_linux_aarch64
-      - package_macos_x86_64
-      - package_macos_aarch64
-      - package_windows_x86_64
     env:
       TAURI_BRIDGE_RELEASE_TAG: '0.29.3'
     steps:
@@ -2797,9 +2439,6 @@ jobs:
         cargo xtask update-manifest \
           --version "${{ needs.prepare_release.outputs.version }}" \
           --release-tag "${{ needs.prepare_release.outputs.tag }}" \
-          --artifact target/release-artifacts/Frame-aarch64.app.zip:macos-aarch64:macos_app_zip \
-          --artifact target/release-artifacts/Frame-x86_64.app.zip:macos-x86_64:macos_app_zip \
-          --artifact target/release-artifacts/Frame-x86_64.exe:windows-x86_64:windows_inno \
           --artifact target/release-artifacts/frame-linux-x86_64.tar.gz:linux-x86_64:linux_managed_tar \
           --artifact target/release-artifacts/frame-linux-aarch64.tar.gz:linux-aarch64:linux_managed_tar \
           --release-notes-markdown "$(< target/release-files/release-notes.md)" \
@@ -2876,9 +2515,6 @@ jobs:
       - prepare_release
       - build_linux_x86_64
       - build_linux_aarch64
-      - package_macos_x86_64
-      - package_macos_aarch64
-      - package_windows_x86_64
       - generate_release_metadata
       - sign_release_metadata
     permissions:
@@ -2919,13 +2555,8 @@ jobs:
         expected=(
           Frame-aarch64.AppImage
           Frame-aarch64.AppImage.zsync
-          Frame-aarch64.app.zip
-          Frame-aarch64.dmg
           Frame-x86_64.AppImage
           Frame-x86_64.AppImage.zsync
-          Frame-x86_64.app.zip
-          Frame-x86_64.dmg
-          Frame-x86_64.exe
           Frame.cdx.json
           frame-linux-aarch64.tar.gz
           frame-linux-x86_64.tar.gz
@@ -3036,82 +2667,6 @@ jobs:
         gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false >/dev/null
     timeout-minutes: 30
 
-  update_homebrew_tap:
-    runs-on: ubuntu-22.04
-    needs:
-      - prepare_release
-      - publish_release
-    environment: production-distribution
-    steps:
-    - name: release::download_macos_dmgs
-      id: hashes
-      env:
-        GH_TOKEN: ${{ github.token }}
-        VERSION: ${{ needs.prepare_release.outputs.tag }}
-      shell: bash
-      run: |
-        mkdir -p target/homebrew
-        gh release download "$VERSION" --repo 66HEX/frame --pattern Frame-aarch64.dmg --dir target/homebrew
-        gh release download "$VERSION" --repo 66HEX/frame --pattern Frame-x86_64.dmg --dir target/homebrew
-        gh release download "$VERSION" --repo 66HEX/frame --pattern SHA256SUMS --dir target/homebrew
-        (cd target/homebrew && sha256sum --check --strict --ignore-missing SHA256SUMS)
-        echo "HASH_ARM=$(sha256sum target/homebrew/Frame-aarch64.dmg | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-        echo "HASH_INTEL=$(sha256sum target/homebrew/Frame-x86_64.dmg | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-    - name: release::checkout_tap
-      uses: actions/checkout@v4
-      with:
-        repository: 66HEX/homebrew-frame
-        token: ${{ secrets.TAP_GITHUB_TOKEN }}
-        path: tap
-    - name: release::update_cask
-      working-directory: tap
-      env:
-        VERSION: ${{ needs.prepare_release.outputs.tag }}
-        HASH_ARM: ${{ steps.hashes.outputs.HASH_ARM }}
-        HASH_INTEL: ${{ steps.hashes.outputs.HASH_INTEL }}
-        GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-      shell: bash
-      run: |
-        mkdir -p Casks
-        cat <<EOF > Casks/frame.rb
-        cask "frame" do
-          arch arm: "aarch64", intel: "x86_64"
-
-          version "$VERSION"
-          sha256 arm:   "$HASH_ARM",
-                 intel: "$HASH_INTEL"
-
-          url "https://github.com/66HEX/frame/releases/download/#{version}/Frame-#{arch}.dmg"
-          name "Frame"
-          desc "High-performance media conversion utility"
-          homepage "https://github.com/66HEX/frame"
-
-          auto_updates true
-
-          app "Frame.app"
-
-          zap trash: [
-            "~/Library/Application Support/com.66hex.frame",
-            "~/Library/Caches/com.66hex.frame",
-            "~/Library/Preferences/com.66hex.frame.plist",
-            "~/Library/Saved Application State/com.66hex.frame.savedState",
-          ]
-
-        end
-        EOF
-
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add Casks/frame.rb
-        if git diff --staged --quiet; then
-          echo "No Homebrew cask changes to publish."
-        else
-          git commit -m "Update Frame to $VERSION"
-          gh auth setup-git
-          git push
-        fi
-    timeout-minutes: 20
-
   update_flathub:
     runs-on: ubuntu-22.04
     needs:
@@ -3215,41 +2770,6 @@ jobs:
     timeout-minutes: 20
 
   __NIXPKGS_JOBS__
-
-
-  publish_winget:
-    runs-on: ubuntu-22.04
-    needs:
-      - prepare_release
-      - publish_release
-    environment: production-distribution
-    env:
-      KOMAC_FORK_OWNER: 66HEX
-      VERSION: ${{ needs.prepare_release.outputs.tag }}
-    steps:
-    - name: release::install_verified_komac
-      shell: bash
-      run: |
-        set -euo pipefail
-        archive="komac-__KOMAC_VERSION__-x86_64-unknown-linux-gnu.tar.gz"
-        curl --fail --location --proto '=https' --tlsv1.2 \
-          --output "/tmp/$archive" \
-          "https://github.com/russellbanks/Komac/releases/download/v__KOMAC_VERSION__/$archive"
-        echo '__KOMAC_LINUX_X86_64_SHA256__  /tmp/'"$archive" | sha256sum --check --strict
-        tar --extract --gzip --file "/tmp/$archive" --directory /tmp komac
-        install -m 0755 /tmp/komac /usr/local/bin/komac
-    - name: release::publish_winget
-      env:
-        GITHUB_TOKEN: ${{ secrets.WINGET_ACC_TOKEN }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        test -n "$GITHUB_TOKEN"
-        komac update 66HEX.Frame \
-          --version "$VERSION" \
-          --urls "https://github.com/66HEX/frame/releases/download/$VERSION/Frame-x86_64.exe" \
-          --submit
-    timeout-minutes: 30
 "#
     .replace(
         "  __NIXPKGS_JOBS__\n",
@@ -4290,9 +3810,6 @@ mod tests {
             "TAG_OBJECT_SHA",
             "Verified release commit is no longer an ancestor of master",
             "generate_release_metadata:",
-            "package_macos_x86_64:",
-            "package_macos_aarch64:",
-            "package_windows_x86_64:",
             "sign_release_metadata:",
             "assemble_release:",
             "publish_release:",
@@ -4316,14 +3833,13 @@ mod tests {
     }
 
     #[test]
-    fn ci_workflow_checks_the_windows_target_on_a_windows_runner() {
-        let workflow = ci_workflow();
-        let windows_job = workflow_job(&workflow, "cargo_check_windows");
-
-        assert!(windows_job.contains("runs-on: windows-2022"));
-        assert!(windows_job.contains(
-            "cargo check --manifest-path frame-app/Cargo.toml --target x86_64-pc-windows-msvc --locked"
-        ));
+    fn workflows_only_build_linux() {
+        for workflow in [ci_workflow(), run_bundling_workflow(), release_workflow()] {
+            assert!(!workflow.contains("runs-on: macos"));
+            assert!(!workflow.contains("runs-on: windows"));
+            assert!(!workflow.contains("package_macos_"));
+            assert!(!workflow.contains("package_windows_"));
+        }
     }
 
     #[test]
@@ -4339,46 +3855,6 @@ mod tests {
 
         for dependency in ["windows", "windows-core", "windows-numerics"] {
             assert!(windows_group.contains(&format!("          - {dependency}\n")));
-        }
-    }
-
-    #[test]
-    fn release_workflow_packages_unsigned_platform_artifacts_without_secrets() {
-        let workflow = release_workflow();
-
-        for (build_job, package_job) in [
-            ("build_macos_x86_64", "package_macos_x86_64"),
-            ("build_macos_aarch64", "package_macos_aarch64"),
-            ("build_windows_x86_64", "package_windows_x86_64"),
-        ] {
-            let build = workflow_job(&workflow, build_job);
-            assert!(build.contains("unsigned"));
-            assert!(!build.contains("secrets."));
-            assert!(!build.contains("environment: production-release"));
-
-            let package = workflow_job(&workflow, package_job);
-            assert!(!package.contains("environment: production-release"));
-            assert!(!package.contains("secrets."));
-            assert!(package.contains("outputs.unsigned_sha256"));
-            assert!(!package.contains("cargo build"));
-            assert!(!package.contains("cargo bundle"));
-        }
-
-        for forbidden in [
-            "MACOS_SIGNING_IDENTITY",
-            "MACOS_CERTIFICATES_P12",
-            "MACOS_CERTIFICATES_PASSWORD",
-            "APPLE_NOTARIZATION_KEY",
-            "APPLE_NOTARIZATION_KEY_ID",
-            "APPLE_NOTARIZATION_ISSUER_ID",
-            "WINDOWS_SIGNTOOL",
-            "Apple-Actions/import-codesign-certs",
-            "Get-AuthenticodeSignature",
-        ] {
-            assert!(
-                !workflow.contains(forbidden),
-                "release workflow unexpectedly requires platform signing: {forbidden}"
-            );
         }
     }
 
@@ -4398,7 +3874,7 @@ mod tests {
 
         assert!(workflow.contains("types:\n      - labeled"));
         assert!(!workflow.contains("synchronize"));
-        assert_eq!(workflow.matches("environment: run-bundling").count(), 5);
+        assert_eq!(workflow.matches("environment: run-bundling").count(), 2);
         assert!(!workflow.contains("secrets."));
     }
 
