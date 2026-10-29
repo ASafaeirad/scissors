@@ -3864,16 +3864,6 @@ mod tests {
         }
     }
 
-    fn workflow_job<'a>(workflow: &'a str, name: &str) -> &'a str {
-        let marker = format!("\n  {name}:\n");
-        let (_, rest) = workflow
-            .split_once(&marker)
-            .unwrap_or_else(|| panic!("missing workflow job {name}"));
-        rest.split("\n\n  ")
-            .next()
-            .expect("workflow job should have content")
-    }
-
     #[test]
     fn run_bundling_requires_a_new_labeled_event_and_protected_environment() {
         let workflow = run_bundling_workflow();
