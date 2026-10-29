@@ -72,9 +72,9 @@ the final GPUI rendering.
 
 | Fixture | Visual scenario | What it is useful for checking |
 | --- | --- | --- |
-| `app-settings` | Runtime app settings sheet | Settings modal layout, accent presets and custom hex field, concurrency draft value, modal focus treatment, close action, and app-level settings spacing. |
-| `app-settings-theme-open` | App settings with the Theme select open | Dark/Light option order, selected checkmark, keyboard focus treatment, popover placement, and equal-width Appearance columns. |
-| `app-settings-ui-open` | App settings with UI scale open at 200% | Scaled geometry and typography, scrollable sheet body, popover placement, and titlebar coexistence. |
+| `app-settings` | Runtime app settings sheet | Settings sheet layout, accent swatches, concurrency stepper, appearance segments, switches, modal focus treatment, and close action. |
+| `app-settings-theme-open` | App settings appearance controls | Light, Dark and System segments, selected checkmark, and keyboard focus treatment. |
+| `app-settings-ui-open` | App settings at 200% UI scale | Scaled geometry and typography, scrollable sheet body, and titlebar coexistence. |
 | `export-dialog` | Export dialog for a ready video with a stereo audio track, a custom size, and the audio and advanced sections open | M3 dialog, scrim and focus trap, preset library, format cards, custom width and height fields with the aspect link, frame rate and quality controls, audio channels, codec radios and bitrate field, encoder and pixel format radios, encoding speed slider, file name field, summary panel, and footer actions. |
 | `logs-active` | Logs tab with an active FFmpeg conversion | Log tab navigation, active file state, plain FFmpeg log rendering, progress line wrapping, monospaced text rendering, and scroll density. |
 | `m3-gallery` | Material 3 component gallery modeled on the video editor timeline design | M3 color roles, Roboto type scale, buttons, icon buttons, chips, switches, sliders, segmented button, select cards, radio items, text fields, linear progress, dialog, navigation rail, and floating toolbar, six media cards, timeline ruler, playhead, and clip lanes in both themes while migrating screens to `app::m3`. |

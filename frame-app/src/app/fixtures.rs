@@ -40,7 +40,6 @@ impl FrameRoot {
             Some(VisualFixture::AppSettings) => self.open_app_settings(),
             Some(VisualFixture::AppSettingsThemeOpen) => {
                 self.open_app_settings();
-                self.open_app_settings_appearance_popover(AppearancePopover::Theme);
             }
             Some(VisualFixture::AppSettingsUiOpen) => {
                 self.appearance = AppearanceSettings {
@@ -48,7 +47,6 @@ impl FrameRoot {
                     ..self.appearance
                 };
                 self.open_app_settings();
-                self.toggle_app_settings_appearance_popover(AppearancePopover::UiScale);
             }
             Some(VisualFixture::LogsActive) => self.apply_logs_active_fixture(),
             Some(VisualFixture::M3Gallery) => self.m3_gallery = Some(m3::M3GalleryState::new()),

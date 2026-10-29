@@ -89,34 +89,6 @@ pub(in crate::app) fn frame_text_button(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "Focused buttons mirror the existing explicit button builder and add only the focus handle."
-)]
-pub(in crate::app) fn frame_text_button_with_focus(
-    id: impl Into<String>,
-    label: impl Into<String>,
-    variant: ButtonVariant,
-    selected: bool,
-    enabled: bool,
-    focus: &FocusHandle,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Stateful<gpui::Div> {
-    frame_text_button_inner(
-        id,
-        label,
-        variant,
-        selected,
-        enabled,
-        Some(focus),
-        palette,
-        window,
-        cx,
-    )
-}
-
-#[expect(
-    clippy::too_many_arguments,
     reason = "The shared implementation preserves the existing explicit button builder contract."
 )]
 fn frame_text_button_inner(

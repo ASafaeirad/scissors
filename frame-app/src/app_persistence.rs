@@ -283,6 +283,7 @@ struct PersistedAppSettings {
     ui_scale_percent: u16,
     #[serde(deserialize_with = "deserialize_optional_string")]
     color_theme: Option<String>,
+    follow_system_theme: bool,
     #[serde(deserialize_with = "deserialize_optional_string")]
     accent_color: Option<String>,
     max_concurrency: usize,
@@ -313,6 +314,7 @@ impl PersistedAppSettings {
             version: APP_SETTINGS_VERSION,
             ui_scale_percent: settings.appearance.ui_scale.percent(),
             color_theme: Some(settings.appearance.color_theme.persisted().to_string()),
+            follow_system_theme: settings.appearance.follow_system_theme,
             accent_color: Some(settings.appearance.accent_color.hex()),
             max_concurrency: valid_max_concurrency(settings.max_concurrency),
             default_output_directory: settings.default_output_directory.clone(),
@@ -329,6 +331,7 @@ impl PersistedAppSettings {
             appearance: AppearanceSettings {
                 ui_scale: ScalePreset::from_percent(self.ui_scale_percent).unwrap_or_default(),
                 color_theme: ColorTheme::from_persisted(self.color_theme.as_deref()),
+                follow_system_theme: self.follow_system_theme,
                 accent_color: self
                     .accent_color
                     .as_deref()
@@ -352,6 +355,7 @@ impl Default for PersistedAppSettings {
             version: APP_SETTINGS_VERSION,
             ui_scale_percent: ScalePreset::Percent100.percent(),
             color_theme: None,
+            follow_system_theme: false,
             accent_color: None,
             max_concurrency: DEFAULT_MAX_CONCURRENCY,
             default_output_directory: None,
@@ -655,6 +659,7 @@ mod tests {
             appearance: AppearanceSettings {
                 ui_scale: ScalePreset::Percent125,
                 color_theme: ColorTheme::Light,
+                follow_system_theme: false,
                 accent_color: crate::appearance::AccentColor::default(),
             },
             max_concurrency: 4,
@@ -688,6 +693,7 @@ mod tests {
                 appearance: AppearanceSettings {
                     ui_scale,
                     color_theme: ColorTheme::Dark,
+                    follow_system_theme: false,
                     accent_color: crate::appearance::AccentColor::default(),
                 },
                 ..AppSettings::default()
@@ -819,12 +825,23 @@ mod tests {
     }
 
     #[test]
+    fn system_theme_preference_round_trips_with_resolved_color_theme() {
+        let persistence = AppPersistence::from_settings_path(test_settings_path());
+        let mut settings = AppSettings::default();
+        settings.appearance.follow_system_theme = true;
+        settings.appearance.color_theme = ColorTheme::Light;
+        persistence.save(&settings).unwrap();
+        assert_eq!(persistence.load().unwrap().appearance, settings.appearance);
+    }
+
+    #[test]
     fn every_supported_color_theme_round_trips() {
         for color_theme in ColorTheme::ALL {
             let settings = AppSettings {
                 appearance: AppearanceSettings {
                     ui_scale: ScalePreset::Percent100,
                     color_theme,
+                    follow_system_theme: false,
                     accent_color: crate::appearance::AccentColor::default(),
                 },
                 ..AppSettings::default()

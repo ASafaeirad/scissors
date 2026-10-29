@@ -3,7 +3,7 @@
 //! It is not a working editor.
 
 use super::{
-    Button, ButtonVariant, Checkbox, Chip, ChipKind, ColorScheme, Dialog, IconButton,
+    Button, ButtonVariant, Checkbox, Chip, ChipKind, ColorScheme, ColorSwatch, Dialog, IconButton,
     IconButtonVariant, LinearProgress, ListItem, M3Text, Menu, MenuItem, NavigationItem,
     NavigationRail, RadioItem, SegmentedButton, SelectCard, Slider, Switch, Symbol, TextField,
     ToolbarColor, ToolbarVariant, color, div, list_subheader, m3_icon, m3_surface, theme, toolbar,
@@ -108,6 +108,22 @@ impl FrameRoot {
             .text_color(color(scheme.on_surface))
             .m3_type(typography::BODY_MEDIUM)
             .child(rail)
+            .child(
+                div().flex().flex_col().justify_center().children(
+                    crate::material::accent_preset_schemes(self.appearance.color_theme)
+                        .iter()
+                        .enumerate()
+                        .map(|(index, preview)| {
+                            ColorSwatch::new(
+                                format!("gallery-swatch-{index}"),
+                                crate::appearance::AccentColor::PRESETS[index].0,
+                                preview,
+                            )
+                            .selected(index == 1)
+                            .build(scheme, window, cx)
+                        }),
+                ),
+            )
             .child(
                 div()
                     .flex_1()

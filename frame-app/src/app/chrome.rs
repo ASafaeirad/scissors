@@ -1,28 +1,21 @@
 use super::accessibility::{apply_accessible_button_with_focus, handle_modal_tab_navigation};
-use super::components::{
-    FRAME_SELECT_MAX_HEIGHT, apply_frame_select_popover_focus_trap, frame_checkbox_row_with_focus,
-    frame_select_content_height, frame_select_option, frame_select_option_with_focus,
-    frame_select_options_list, frame_select_popover, frame_select_target_index,
-    frame_select_trigger_with_focus, frame_text_button, frame_text_button_with_focus,
-    frame_vertical_scrollbar,
-};
-use super::input::{FrameTextInputSpec, frame_text_input};
+use super::components::{frame_text_button, frame_vertical_scrollbar};
+use super::m3::{self, M3Text};
 use super::primitives::{
     ButtonVariant, action_button, animated_button_colors, apply_button_motion, button_colors,
     card_surface_shadows, color, icon_svg, panel_bottom_separator,
 };
-use super::settings_panel::{settings_field_label, settings_hint_text, settings_section};
 use super::{
-    AppearancePopover, AppearanceSettings, ClickEvent, ColorTheme, Context, ExternalPaths,
-    FILE_LIST_ACTION_ICON_SIZE, FRAME_APP_VERSION, FluentBuilder, FocusHandle, FrameRoot,
-    FrameTextInputKind, INTERACTION_MOTION_DURATION, InteractiveElement, IntoElement, MouseButton,
-    PANEL_HEADER_HEIGHT, ParentElement, PopoverState, SETTINGS_CONTROL_HEIGHT,
+    AppearanceSettings, ClickEvent, ColorTheme, Context, ExternalPaths, FILE_LIST_ACTION_ICON_SIZE,
+    FRAME_APP_VERSION, FluentBuilder, FocusHandle, FrameRoot, InteractiveElement, IntoElement,
+    MouseButton, PANEL_HEADER_HEIGHT, ParentElement, SETTINGS_CONTROL_HEIGHT,
     SURFACE_MOTION_DURATION, ScalePreset, ScrollHandle, StatefulInteractiveElement, Styled,
     UPDATE_INSTALL_WAIT_MESSAGE, UpdateInfo, UpdateStatus, Window, WindowControlArea, assets, div,
-    ease_in_out, format_total_size, motion_is_hidden, motion_target, popover_slide_offset, px,
-    relative, set_motion_target, settings_sheet_right_inset, theme,
+    ease_in_out, format_total_size, motion_is_hidden, motion_target, px, relative,
+    set_motion_target, settings_sheet_right_inset, theme,
 };
-use gpui::{HighlightStyle, StyledText, deferred};
+use crate::material::{ColorScheme, Symbol, shape, typography};
+use gpui::{HighlightStyle, StyledText};
 
 const MAX_RELEASE_NOTES_CHARS: usize = 8_000;
 const UPDATE_RELEASE_NOTES_MAX_HEIGHT: f32 = 360.0;
@@ -61,31 +54,26 @@ pub(super) fn titlebar_drag_surface(cx: &Context<FrameRoot>) -> gpui::Div {
 #[derive(Clone, Copy)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "Settings render props carry independent visibility, checkbox, and update availability states."
+    reason = "Settings visibility, switches and installation readiness are independent states."
 )]
 pub(super) struct AppSettingsSheetProps<'a> {
     pub(super) is_open: bool,
     pub(super) current_max_concurrency: usize,
-    pub(super) draft_max_concurrency: &'a str,
     pub(super) error: Option<&'a str>,
     pub(super) default_output_directory: Option<&'a str>,
     pub(super) output_directory_error: Option<&'a str>,
     pub(super) appearance: AppearanceSettings,
     pub(super) accent_preset_focuses: &'a [FocusHandle],
-    pub(super) palette: &'static theme::ThemePalette,
     pub(super) appearance_error: Option<&'a str>,
-    pub(super) theme_popover: PopoverState,
-    pub(super) ui_scale_popover: PopoverState,
     pub(super) scroll_handle: &'a ScrollHandle,
-    pub(super) theme_scroll_handle: &'a ScrollHandle,
-    pub(super) ui_scale_scroll_handle: &'a ScrollHandle,
-    pub(super) theme_focuses: AppSettingsSelectFocuses<'a>,
-    pub(super) ui_scale_focuses: AppSettingsSelectFocuses<'a>,
+    pub(super) theme_focuses: &'a [FocusHandle],
+    pub(super) ui_scale_focuses: &'a [FocusHandle],
+    pub(super) decrease_focus: &'a FocusHandle,
+    pub(super) increase_focus: &'a FocusHandle,
     pub(super) auto_update_check: bool,
     pub(super) show_fps_meter: bool,
     pub(super) update_status: &'a UpdateStatus,
     pub(super) update_install_ready: bool,
-    pub(super) value_focus: &'a FocusHandle,
     pub(super) output_directory_focus: &'a FocusHandle,
     pub(super) auto_update_focus: &'a FocusHandle,
     pub(super) fps_meter_focus: &'a FocusHandle,
@@ -98,43 +86,24 @@ pub(super) struct AppSettingsSheetProps<'a> {
     pub(super) last_focus: &'a FocusHandle,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct AppSettingsSelectFocuses<'a> {
-    pub(super) trigger: &'a FocusHandle,
-    pub(super) panel: &'a FocusHandle,
-    pub(super) options: &'a [FocusHandle],
-}
-
-#[expect(
-    clippy::too_many_lines,
-    clippy::large_types_passed_by_value,
-    reason = "The declarative settings render consumes a copyable bundle so all render inputs remain explicit."
-)]
 pub(super) fn app_settings_sheet(
     props: AppSettingsSheetProps<'_>,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> impl IntoElement {
-    let palette = props.palette;
-    let draft_is_dirty =
-        props.draft_max_concurrency.trim() != props.current_max_concurrency.to_string();
+    let scheme = &m3::scheme(props.appearance.color_theme, cx);
     let transition = window
         .use_keyed_transition(
             "app-settings-sheet-motion",
             cx,
-            SURFACE_MOTION_DURATION,
+            crate::material::motion::SHORT_4,
             |_window, _cx| 0.0_f32,
         )
-        .with_easing(ease_in_out);
-    let target = motion_target(props.is_open);
-    set_motion_target(&transition, target, cx);
+        .with_easing(|progress| crate::material::motion::STANDARD.ease(progress));
+    set_motion_target(&transition, motion_target(props.is_open), cx);
     let progress = *transition.evaluate(window, cx);
-    let right_inset = settings_sheet_right_inset(progress);
     let first_focus = props.close_focus.clone();
     let last_focus = props.last_focus.clone();
-    let theme_trigger_focus = props.theme_focuses.trigger.clone();
-    let ui_scale_trigger_focus = props.ui_scale_focuses.trigger.clone();
-
     if !props.is_open && motion_is_hidden(progress) {
         cx.defer_in(window, |root, _window, cx| {
             if root.finish_app_settings_close() {
@@ -142,783 +111,379 @@ pub(super) fn app_settings_sheet(
             }
         });
     }
-
-    div()
-        .id("app-settings-sheet")
-        .absolute()
-        .inset_0()
-        .on_key_down(cx.listener(
-            move |root, event: &gpui::KeyDownEvent, window, cx| {
-                match event.keystroke.key.as_str() {
-                    "escape" => {
-                        if root.settings_ui.theme_popover.is_open() {
-                            root.close_app_settings_appearance_popover(AppearancePopover::Theme);
-                            theme_trigger_focus.focus(window, cx);
-                        } else if root.settings_ui.ui_scale_popover.is_open() {
-                            root.close_app_settings_appearance_popover(AppearancePopover::UiScale);
-                            ui_scale_trigger_focus.focus(window, cx);
-                        } else {
-                            root.close_app_settings();
-                            root.restore_focus_after_settings_close(window, cx);
-                        }
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
-                    "tab" => {
-                        handle_modal_tab_navigation(event, &first_focus, &last_focus, window, cx);
-                    }
-                    _ => {}
-                }
-            },
-        ))
-        .child(
-            div()
-                .id("app-settings-backdrop")
-                .absolute()
-                .inset_0()
-                .bg(color(palette.canvas.with_alpha(0.60 * progress)))
-                .backdrop_blur(theme::ui_rem(4.0 * progress).to_pixels(window.rem_size()))
-                .occlude()
-                .on_click(cx.listener(|root, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
+    div().id("app-settings-sheet").absolute().inset_0()
+        .on_key_down(cx.listener(move |root, event: &gpui::KeyDownEvent, window, cx| {
+            match event.keystroke.key.as_str() {
+                "escape" => {
                     root.close_app_settings();
                     root.restore_focus_after_settings_close(window, cx);
-                    cx.notify();
-                })),
-        )
-        .child(
-            div()
-                .id("app-settings-panel")
-                .role(gpui::Role::Dialog)
-                .aria_label("Settings")
-                .track_focus(props.panel_focus)
-                .tab_stop(false)
-                .absolute()
-                .top_2()
-                .right(theme::ui_rem(right_inset))
-                .bottom_2()
-                .w(theme::ui_rem(360.0))
-                .max_w(relative(0.95))
-                .flex()
-                .flex_col()
-                .rounded(theme::ui_rem(theme::RADIUS_LG))
-                .bg(color(palette.surface))
-                .opacity(progress)
-                .shadow(card_surface_shadows(palette))
-                .occlude()
-                .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
                     cx.stop_propagation();
-                    if root.settings_ui.ui_scale_popover.is_open() {
-                        root.close_app_settings_appearance_popover(AppearancePopover::UiScale);
-                        cx.notify();
-                    }
-                    if root.settings_ui.theme_popover.is_open() {
-                        root.close_app_settings_appearance_popover(AppearancePopover::Theme);
-                        cx.notify();
-                    }
-                }))
-                .child(
-                    div()
-                        .h(theme::ui_rem(PANEL_HEADER_HEIGHT))
-                        .w_full()
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .px_4()
-                        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
-                        .font_weight(theme::TEXT_WEIGHT_MEDIUM)
-                        .text_color(color(palette.text_primary))
-                        .child(theme::ui_text("Settings"))
-                        .child(
-                            app_settings_close_button(
-                                "app-settings-close",
-                                "Close settings",
-                                true,
-                                props.close_focus,
-                                palette,
-                                window,
-                                cx,
-                            )
-                            .on_click(
-                                cx.listener(|root, _: &ClickEvent, window, cx| {
-                                    cx.stop_propagation();
-                                    root.close_app_settings();
-                                    root.restore_focus_after_settings_close(window, cx);
-                                    cx.notify();
-                                }),
-                            ),
-                        )
-                        .child(panel_bottom_separator(palette)),
-                )
-                .child(
-                    div()
-                        .id("app-settings-scroll-body")
-                        .flex_1()
-                        .flex()
-                        .flex_col()
-                        .overflow_y_scroll()
-                        .track_scroll(props.scroll_handle)
-                        .justify_between()
-                        .p_4()
-                        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_4()
-                                .child(app_settings_output_directory_section(
-                                    props.default_output_directory,
-                                    props.output_directory_error,
-                                    props.output_directory_focus,
-                                    palette,
-                                    window,
-                                    cx,
-                                ))
-                                .child(app_settings_appearance_section(
-                                    props.appearance,
-                                    props.appearance_error,
-                                    props.accent_preset_focuses,
-                                    props.theme_popover,
-                                    props.ui_scale_popover,
-                                    props.theme_scroll_handle,
-                                    props.ui_scale_scroll_handle,
-                                    props.theme_focuses,
-                                    props.ui_scale_focuses,
-                                    palette,
-                                    window,
-                                    cx,
-                                ))
-                                .child(
-                                    settings_section("Max concurrency", palette)
-                                        .child(app_settings_concurrency_control(
-                                            props.draft_max_concurrency,
-                                            draft_is_dirty,
-                                            props.error,
-                                            props.value_focus,
-                                            palette,
-                                            window,
-                                            cx,
-                                        ))
-                                        .child(settings_hint_text(
-                                            "Controls how many queued conversions can run at the same time.",
-                                            palette,
-                                        )),
-                                )
-                                .when_some(props.error.map(str::to_string), |this, error| {
-                                    this.child(
-                                        div()
-                                            .id("app-settings-max-concurrency-error")
-                                            .role(gpui::Role::Alert)
-                                            .aria_label(error.clone())
-                                            .text_color(color(palette.danger))
-                                            .child(error),
-                                    )
-                                })
-                                .child(
-                                    settings_section("Diagnostics", palette)
-                                        .child(frame_checkbox_row_with_focus(
-                                            "app-settings-fps-meter",
-                                            "Show FPS meter",
-                                            "Show UI FPS and frame times. Runs continuously while enabled.",
-                                            props.show_fps_meter,
-                                            false,
-                                            props.fps_meter_focus,
-                                            palette,
-                                            cx,
-                                            |root, _event, window, cx| {
-                                                root.toggle_fps_meter(
-                                                    &super::ToggleFpsMeter,
-                                                    window,
-                                                    cx,
-                                                );
-                                            },
-                                        )),
-                                )
-                                .child(app_settings_updates_section(
-                                    props.auto_update_check,
-                                    props.update_status,
-                                    props.update_install_ready,
-                                    AppSettingsUpdateFocuses {
-                                        auto_update: props.auto_update_focus,
-                                        check_now: props.check_now_focus,
-                                        download: props.download_focus,
-                                        skip: props.skip_focus,
-                                        install: props.install_focus,
-                                    },
-                                    palette,
-                                    window,
-                                    cx,
-                                )),
-                        )
-                        .child(app_settings_version_label(palette)),
-                ),
-        )
-}
-
-fn app_settings_version_label(palette: &'static theme::ThemePalette) -> gpui::Div {
-    div()
-        .w_full()
-        .flex()
-        .justify_end()
-        .pt_4()
-        .text_size(theme::ui_rem(11.0))
-        .text_color(color(palette.border_subtle))
-        .child(theme::ui_text_owned(format!("Frame v{FRAME_APP_VERSION}")))
-}
-
-fn app_settings_output_directory_section(
-    default_output_directory: Option<&str>,
-    error: Option<&str>,
-    focus: &FocusHandle,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Div {
-    let selected_path = default_output_directory
-        .unwrap_or("No folder selected")
-        .to_string();
-    let button_label = if default_output_directory.is_some() {
-        "Change default output folder"
-    } else {
-        "Choose default output folder"
-    };
-
-    let mut section = settings_section("Output folder", palette)
-        .child(
-            frame_text_button_with_focus(
-                "app-settings-output-directory",
-                button_label,
-                ButtonVariant::Secondary,
-                false,
-                true,
-                focus,
-                palette,
-                window,
-                cx,
-            )
-            .w_full()
-            .on_click(cx.listener(|_root, _: &ClickEvent, window, cx| {
-                cx.stop_propagation();
-                FrameRoot::prompt_default_output_folder(window, cx);
-            })),
-        )
-        .child(
-            div()
-                .id("app-settings-output-directory-path")
-                .overflow_hidden()
-                .text_color(color(palette.text_muted))
-                .child(selected_path),
-        );
-
-    if let Some(error) = error {
-        section = section.child(
-            div()
-                .id("app-settings-output-directory-error")
-                .role(gpui::Role::Alert)
-                .aria_label(error.to_string())
-                .text_color(color(palette.danger))
-                .child(error.to_string()),
-        );
-    }
-
-    section
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The appearance section explicitly receives both independent select states, focus groups, and theme context."
-)]
-fn app_settings_appearance_section(
-    appearance: AppearanceSettings,
-    error: Option<&str>,
-    accent_preset_focuses: &[FocusHandle],
-    theme_popover: PopoverState,
-    ui_scale_popover: PopoverState,
-    theme_scroll_handle: &ScrollHandle,
-    ui_scale_scroll_handle: &ScrollHandle,
-    theme_focuses: AppSettingsSelectFocuses<'_>,
-    ui_scale_focuses: AppSettingsSelectFocuses<'_>,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Div {
-    use crate::app::m3::M3Text;
-    let scheme = &crate::app::m3::scheme(appearance.color_theme, cx);
-    let mut section = crate::app::m3::m3_surface(
-        scheme.surface_container_low,
-        crate::material::shape::CORNER_LARGE,
-    )
-    .p(theme::ui_rem(16.0))
-    .flex()
-    .flex_col()
-    .gap(theme::ui_rem(16.0))
-    .text_color(color(scheme.on_surface))
-    .child(
-        div()
-            .m3_type(crate::material::typography::TITLE_MEDIUM)
-            .child("Appearance"),
-    )
-    .child(
-        div()
-            .grid()
-            .grid_cols(2)
-            .gap_2()
-            .child(app_settings_appearance_select(
-                AppSettingsAppearanceSelectProps {
-                    selected: appearance.color_theme,
-                    popover_state: theme_popover,
-                    scroll_handle: theme_scroll_handle,
-                    focuses: theme_focuses,
-                    palette,
-                },
-                window,
-                cx,
-            ))
-            .child(app_settings_appearance_select(
-                AppSettingsAppearanceSelectProps {
-                    selected: appearance.ui_scale,
-                    popover_state: ui_scale_popover,
-                    scroll_handle: ui_scale_scroll_handle,
-                    focuses: ui_scale_focuses,
-                    palette,
-                },
-                window,
-                cx,
-            )),
-    )
-    .child(app_settings_accent_color(
-        appearance,
-        accent_preset_focuses,
-        window,
-        cx,
-    ));
-
-    if let Some(error) = error {
-        section = section.child(
-            div()
-                .id("app-settings-appearance-error")
-                .role(gpui::Role::Alert)
-                .aria_label(error.to_string())
-                .text_color(color(scheme.error))
-                .m3_type(crate::material::typography::BODY_SMALL)
-                .child(error.to_string()),
-        );
-    }
-
-    section
-}
-
-fn app_settings_accent_color(
-    appearance: AppearanceSettings,
-    preset_focuses: &[FocusHandle],
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Div {
-    use crate::app::m3::{self, M3Text};
-    use crate::appearance::AccentColor;
-    use crate::material::typography;
-    let previews = crate::material::accent_preset_schemes(appearance.color_theme);
-    let presets = AccentColor::PRESETS.iter().enumerate().fold(
-        div().grid().grid_cols(2).gap(theme::ui_rem(8.0)),
-        |row, (index, &(label, accent))| {
-            // Each option previews the palette it will apply, including paired content colors.
-            let preview = &previews[index];
-            row.child(
-                m3::Chip::new(
-                    format!("app-settings-accent-{index}"),
-                    label,
-                    m3::ChipKind::Filter,
-                )
-                .selected(appearance.accent_color == accent)
-                .focus(&preset_focuses[index])
-                .build(preview, window, cx)
-                .w_full()
-                .justify_between()
-                .child(
-                    div()
-                        .size(theme::ui_rem(12.0))
-                        .rounded_full()
-                        .bg(color(preview.primary)),
-                )
-                .on_click(cx.listener(move |root, _, _, cx| {
-                    root.set_accent_color(accent);
                     cx.notify();
-                })),
-            )
-        },
-    );
+                }
+                "tab" => { handle_modal_tab_navigation(event, &first_focus, &last_focus, window, cx); }
+                _ => {}
+            }
+        }))
+        .child(div().id("app-settings-backdrop").absolute().inset_0()
+            .bg(color(scheme.scrim.with_alpha(0.60 * progress)))
+            .occlude().on_click(cx.listener(|root, _: &ClickEvent, window, cx| {
+                cx.stop_propagation();
+                root.close_app_settings();
+                root.restore_focus_after_settings_close(window, cx);
+                cx.notify();
+            })))
+        .child(div().id("app-settings-panel").role(gpui::Role::Dialog).aria_label("Settings")
+            .track_focus(props.panel_focus).tab_stop(false).absolute()
+            .top_0().right(theme::ui_rem(settings_sheet_right_inset(progress))).bottom_0()
+            .w(theme::ui_rem(384.0)).max_w(relative(0.95))
+            .flex().flex_col().bg(color(scheme.surface)).text_color(color(scheme.on_surface))
+            .m3_type(typography::BODY_LARGE).opacity(progress).occlude()
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .child(div().flex().flex_none().items_center().justify_between()
+                .h(theme::ui_rem(56.0)).px(theme::ui_rem(16.0))
+                .child(div().m3_type(typography::TITLE_LARGE).child("Settings"))
+                .child(m3::IconButton::new("app-settings-close", Symbol::Close, "Close settings")
+                    .focus(props.close_focus).build(scheme, window, cx)
+                    .on_click(cx.listener(|root, _, window, cx| {
+                        root.close_app_settings();
+                        root.restore_focus_after_settings_close(window, cx);
+                        cx.notify();
+                    }))))
+            .child(div().id("app-settings-scroll-body").flex_1().min_h_0()
+                .overflow_y_scroll().track_scroll(props.scroll_handle)
+                .flex().flex_col().px(theme::ui_rem(16.0)).pb(theme::ui_rem(24.0))
+                .child(app_settings_output_section(&props, scheme, window, cx))
+                .child(app_settings_appearance_section(&props, scheme, window, cx))
+                .child(settings_group("Diagnostics", scheme)
+                    .child(div().flex().items_center().gap(theme::ui_rem(16.0))
+                        .child(settings_copy("Show FPS meter", "Shows UI frame rate and frame times. Runs continuously while on.", scheme))
+                        .child(m3::Switch::new("app-settings-fps-meter", "Show FPS meter", props.show_fps_meter)
+                            .focus(props.fps_meter_focus).build(scheme, window, cx)
+                            .on_click(cx.listener(|root, _, window, cx| {
+                                root.toggle_fps_meter(&super::ToggleFpsMeter, window, cx);
+                            })))))
+                .child(app_settings_updates_section(
+                    props.auto_update_check, props.update_status, props.update_install_ready,
+                    AppSettingsUpdateFocuses { auto_update: props.auto_update_focus,
+                        check_now: props.check_now_focus, download: props.download_focus,
+                        skip: props.skip_focus, install: props.install_focus },
+                    scheme, window, cx,
+                ))
+                .child(div().pt(theme::ui_rem(24.0)).m3_type(typography::BODY_SMALL)
+                    .text_color(color(scheme.on_surface_variant))
+                    .child(format!("Frame v{FRAME_APP_VERSION}")))))
+}
+
+fn settings_group(label: &'static str, scheme: &ColorScheme) -> gpui::Div {
     div()
         .flex()
         .flex_col()
-        .gap(theme::ui_rem(12.0))
-        .child(div().m3_type(typography::LABEL_LARGE).child("Accent color"))
-        .child(presets)
+        .gap(theme::ui_rem(16.0))
+        .py(theme::ui_rem(24.0))
+        .border_b_1()
+        .border_color(color(scheme.outline_variant))
+        .child(
+            div()
+                .m3_type(typography::LABEL_LARGE)
+                .text_color(color(scheme.primary))
+                .child(label),
+        )
 }
 
-trait AppSettingsAppearanceValue: Copy + Eq + 'static {
-    const LABEL: &'static str;
-    const TRIGGER_ID: &'static str;
-    const LIST_ID: &'static str;
-    const PANEL_ID: &'static str;
-    const SCROLLBAR_ID: &'static str;
-    const MOTION_ID: &'static str;
-    const POPOVER: AppearancePopover;
-
-    fn options() -> &'static [Self];
-    fn display(self) -> &'static str;
-    fn option_id(self) -> String;
-    fn apply(self, root: &mut FrameRoot, window: &mut Window);
+fn settings_copy(
+    title: impl Into<gpui::SharedString>,
+    detail: &'static str,
+    scheme: &ColorScheme,
+) -> gpui::Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(4.0))
+        .child(
+            div()
+                .m3_type(typography::BODY_LARGE)
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .m3_type(typography::BODY_MEDIUM)
+                .text_color(color(scheme.on_surface_variant))
+                .child(detail),
+        )
 }
 
-impl AppSettingsAppearanceValue for ColorTheme {
-    const LABEL: &'static str = "Theme";
-    const TRIGGER_ID: &'static str = "app-settings-theme";
-    const LIST_ID: &'static str = "app-settings-theme-options-list";
-    const PANEL_ID: &'static str = "app-settings-theme-options";
-    const SCROLLBAR_ID: &'static str = "app-settings-theme-scrollbar";
-    const MOTION_ID: &'static str = "app-settings-theme-motion";
-    const POPOVER: AppearancePopover = AppearancePopover::Theme;
-
-    fn options() -> &'static [Self] {
-        &Self::ALL
-    }
-
-    fn display(self) -> &'static str {
-        self.display()
-    }
-
-    fn option_id(self) -> String {
-        format!("app-settings-theme-option-{}", self.persisted())
-    }
-
-    fn apply(self, root: &mut FrameRoot, _window: &mut Window) {
-        root.set_color_theme(self);
-    }
-}
-
-impl AppSettingsAppearanceValue for ScalePreset {
-    const LABEL: &'static str = "UI scale";
-    const TRIGGER_ID: &'static str = "app-settings-ui-scale";
-    const LIST_ID: &'static str = "app-settings-ui-scale-options-list";
-    const PANEL_ID: &'static str = "app-settings-ui-scale-options";
-    const SCROLLBAR_ID: &'static str = "app-settings-ui-scale-scrollbar";
-    const MOTION_ID: &'static str = "app-settings-ui-scale-motion";
-    const POPOVER: AppearancePopover = AppearancePopover::UiScale;
-
-    fn options() -> &'static [Self] {
-        &Self::ALL
-    }
-
-    fn display(self) -> &'static str {
-        self.display()
-    }
-
-    fn option_id(self) -> String {
-        format!("app-settings-ui-scale-option-{}", self.percent())
-    }
-
-    fn apply(self, root: &mut FrameRoot, window: &mut Window) {
-        apply_app_settings_ui_scale(root, self, window);
-    }
-}
-
-#[derive(Clone, Copy)]
-struct AppSettingsAppearanceSelectProps<'a, T> {
-    selected: T,
-    popover_state: PopoverState,
-    scroll_handle: &'a ScrollHandle,
-    focuses: AppSettingsSelectFocuses<'a>,
-    palette: &'static theme::ThemePalette,
+fn settings_error(
+    id: &'static str,
+    message: &str,
+    scheme: &ColorScheme,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .role(gpui::Role::Alert)
+        .aria_label(message.to_string())
+        .m3_type(typography::BODY_SMALL)
+        .text_color(color(scheme.error))
+        .child(message.to_string())
 }
 
 #[expect(
     clippy::too_many_lines,
-    reason = "The shared appearance select keeps its trigger, animated popover, keyboard navigation, and options together."
+    reason = "Output rows keep their labels and controls together."
 )]
-fn app_settings_appearance_select<T: AppSettingsAppearanceValue>(
-    props: AppSettingsAppearanceSelectProps<'_, T>,
+fn app_settings_output_section(
+    props: &AppSettingsSheetProps<'_>,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let AppSettingsAppearanceSelectProps {
-        selected,
-        popover_state,
-        scroll_handle,
-        focuses,
-        palette,
-    } = props;
-    let options = T::options();
-    let selected_index = options
-        .iter()
-        .position(|option| *option == selected)
-        .unwrap_or_default();
-    let option_focuses = focuses.options.to_vec();
-    let key_option_focuses = option_focuses.clone();
-    let key_scroll_handle = scroll_handle.clone();
-    let trigger = frame_select_trigger_with_focus(
-        T::TRIGGER_ID,
-        T::LABEL,
-        selected.display(),
-        true,
-        popover_state.is_open(),
-        focuses.trigger,
-        palette,
-        window,
-        cx,
-    )
-    .on_click(cx.listener(move |root, event: &ClickEvent, _window, cx| {
-        cx.stop_propagation();
-        if event.is_keyboard() {
-            return;
-        }
-        root.toggle_app_settings_appearance_popover(T::POPOVER);
-        cx.notify();
-    }))
-    .on_key_down(
-        cx.listener(move |root, event: &gpui::KeyDownEvent, window, cx| {
-            let key = event.keystroke.key.as_str();
-            match key {
-                "down" | "up" | "home" | "end" => {
-                    cx.stop_propagation();
-                    root.open_app_settings_appearance_popover(T::POPOVER);
-                    let target = frame_select_target_index(
-                        key_option_focuses.len(),
-                        Some(selected_index),
-                        key,
-                        |_| true,
+    settings_group("Output", scheme)
+        .pt(theme::ui_rem(16.0))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(theme::ui_rem(16.0))
+                .child(m3::m3_icon(
+                    Symbol::FolderOpen,
+                    false,
+                    24.0,
+                    color(scheme.on_surface_variant),
+                ))
+                .child(settings_copy(
+                    props
+                        .default_output_directory
+                        .unwrap_or("No folder selected")
+                        .to_string(),
+                    "Default output folder",
+                    scheme,
+                ))
+                .child(
+                    m3::Button::new(
+                        "app-settings-output-directory",
+                        "Change",
+                        m3::ButtonVariant::Outlined,
                     )
-                    .unwrap_or(selected_index);
-                    focus_app_settings_select_option(
-                        target,
-                        &key_option_focuses,
-                        &key_scroll_handle,
-                        window,
-                        cx,
-                    );
-                    cx.notify();
-                }
-                "enter" | "space" if root.appearance_popover_state(T::POPOVER).is_open() => {
-                    cx.stop_propagation();
-                    root.close_app_settings_appearance_popover(T::POPOVER);
-                    cx.notify();
-                }
-                "enter" | "space" => {
-                    cx.stop_propagation();
-                    root.open_app_settings_appearance_popover(T::POPOVER);
-                    let focus = key_option_focuses.get(selected_index).cloned();
-                    key_scroll_handle.scroll_to_item(selected_index);
-                    if let Some(focus) = focus {
-                        cx.defer_in(window, move |_root, window, cx| {
-                            focus.focus(window, cx);
-                        });
-                    }
-                    cx.notify();
-                }
-                "escape" => {
-                    cx.stop_propagation();
-                    root.close_app_settings_appearance_popover(T::POPOVER);
-                    cx.notify();
-                }
-                _ => {}
-            }
-        }),
-    );
+                    .focus(props.output_directory_focus)
+                    .build(scheme, window, cx)
+                    .on_click(cx.listener(|_, _, window, cx| {
+                        FrameRoot::prompt_default_output_folder(window, cx);
+                    })),
+                ),
+        )
+        .when_some(props.output_directory_error, |this, error| {
+            this.child(settings_error(
+                "app-settings-output-directory-error",
+                error,
+                scheme,
+            ))
+        })
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(theme::ui_rem(16.0))
+                .child(m3::m3_icon(
+                    Symbol::Layers,
+                    false,
+                    24.0,
+                    color(scheme.on_surface_variant),
+                ))
+                .child(settings_copy(
+                    "Max concurrency",
+                    "Conversions that run at the same time",
+                    scheme,
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .rounded(theme::ui_rem(shape::CORNER_FULL))
+                        .bg(color(scheme.surface_container_highest))
+                        .text_color(color(scheme.on_surface))
+                        .child(
+                            m3::IconButton::new(
+                                "app-settings-concurrency-decrease",
+                                Symbol::Remove,
+                                "Decrease max concurrency",
+                            )
+                            .enabled(props.current_max_concurrency > 1)
+                            .focus(props.decrease_focus)
+                            .build(scheme, window, cx)
+                            .on_click(cx.listener(|root, _, _, cx| {
+                                root.step_max_concurrency(false);
+                                cx.notify();
+                            })),
+                        )
+                        .child(
+                            div()
+                                .min_w(theme::ui_rem(24.0))
+                                .text_center()
+                                .m3_type(typography::LABEL_LARGE)
+                                .child(props.current_max_concurrency.to_string()),
+                        )
+                        .child(
+                            m3::IconButton::new(
+                                "app-settings-concurrency-increase",
+                                Symbol::Add,
+                                "Increase max concurrency",
+                            )
+                            .enabled(props.current_max_concurrency < usize::MAX)
+                            .focus(props.increase_focus)
+                            .build(scheme, window, cx)
+                            .on_click(cx.listener(|root, _, _, cx| {
+                                root.step_max_concurrency(true);
+                                cx.notify();
+                            })),
+                        ),
+                ),
+        )
+        .when_some(props.error, |this, error| {
+            this.child(settings_error(
+                "app-settings-max-concurrency-error",
+                error,
+                scheme,
+            ))
+        })
+}
 
-    let mut field = div()
-        .relative()
+fn app_settings_appearance_section(
+    props: &AppSettingsSheetProps<'_>,
+    scheme: &ColorScheme,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    let themes = [ColorTheme::Light, ColorTheme::Dark];
+    let scales = [
+        ScalePreset::Percent90,
+        ScalePreset::Percent100,
+        ScalePreset::Percent110,
+        ScalePreset::Percent125,
+    ];
+    let mut section = settings_group("Appearance", scheme)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(theme::ui_rem(8.0))
+                .child(div().m3_type(typography::LABEL_LARGE).child("Theme"))
+                .child(
+                    m3::SegmentedButton::new(
+                        "app-settings-theme",
+                        "Theme",
+                        ["Light", "Dark", "System"],
+                    )
+                    .selected(if props.appearance.follow_system_theme {
+                        Some(2)
+                    } else {
+                        themes
+                            .iter()
+                            .position(|theme| *theme == props.appearance.color_theme)
+                    })
+                    .focus(props.theme_focuses)
+                    .on_select(cx.listener(move |root, index: &usize, window, cx| {
+                        if *index == 2 {
+                            root.set_system_theme(window);
+                        } else {
+                            root.set_color_theme(themes[*index]);
+                        }
+                        cx.notify();
+                    }))
+                    .build(scheme, window, cx),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(theme::ui_rem(8.0))
+                .child(div().m3_type(typography::LABEL_LARGE).child("UI scale"))
+                .child(
+                    m3::SegmentedButton::new(
+                        "app-settings-ui-scale",
+                        "UI scale",
+                        scales.map(ScalePreset::display),
+                    )
+                    .selected(
+                        scales
+                            .iter()
+                            .position(|scale| *scale == props.appearance.ui_scale),
+                    )
+                    .focus(props.ui_scale_focuses)
+                    .on_select(cx.listener(move |root, index: &usize, window, cx| {
+                        if root.set_ui_scale(scales[*index]) {
+                            window.set_rem_size(px(
+                                crate::appearance::BASE_REM_PX * scales[*index].factor()
+                            ));
+                        }
+                        cx.notify();
+                    }))
+                    .build(scheme, window, cx),
+                ),
+        )
+        .child(app_settings_accent_color(props, scheme, window, cx));
+    if let Some(error) = props.appearance_error {
+        section = section.child(settings_error(
+            "app-settings-appearance-error",
+            error,
+            scheme,
+        ));
+    }
+    section
+}
+
+fn app_settings_accent_color(
+    props: &AppSettingsSheetProps<'_>,
+    scheme: &ColorScheme,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    use crate::appearance::AccentColor;
+    let previews = crate::material::accent_preset_schemes(props.appearance.color_theme);
+    let label = AccentColor::PRESETS
+        .iter()
+        .find(|(_, accent)| *accent == props.appearance.accent_color)
+        .map_or("Custom", |(label, _)| *label);
+    div()
         .flex()
         .flex_col()
-        .gap_2()
-        .child(settings_field_label(T::LABEL, palette))
-        .child(trigger);
-
-    if popover_state.is_rendered() {
-        let progress =
-            app_settings_appearance_popover_progress::<T>(popover_state.is_open(), window, cx);
-        let content_height = frame_select_content_height(options.len());
-        let mut list = frame_select_options_list(T::LIST_ID, scroll_handle);
-
-        for (index, option) in options.iter().copied().enumerate() {
-            let focus = option_focuses.get(index);
-            list = list.child(app_settings_appearance_option(
-                option,
-                index,
-                selected,
-                focus,
-                &option_focuses,
-                scroll_handle,
-                focuses.trigger,
-                palette,
-                cx,
-            ));
-        }
-
-        let mut menu = frame_select_popover(
-            T::PANEL_ID,
-            54.0 + popover_slide_offset(progress),
-            progress,
-            list,
-            palette,
-        );
-        if let (Some(first), Some(last)) = (option_focuses.first(), option_focuses.last()) {
-            menu = apply_frame_select_popover_focus_trap(
-                menu,
-                Some(focuses.panel),
-                Some(first),
-                Some(last),
-                cx,
-            );
-        }
-        if content_height > FRAME_SELECT_MAX_HEIGHT {
-            menu = menu.child(frame_vertical_scrollbar(
-                T::SCROLLBAR_ID,
-                scroll_handle.clone(),
-                content_height,
-                palette,
-            ));
-        }
-        field = field.child(deferred(menu).with_priority(20));
-    }
-
-    field
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Each option needs its selection, focus, navigation, scrolling, and root action context."
-)]
-fn app_settings_appearance_option<T: AppSettingsAppearanceValue>(
-    option: T,
-    index: usize,
-    selected: T,
-    focus: Option<&FocusHandle>,
-    option_focuses: &[FocusHandle],
-    scroll_handle: &ScrollHandle,
-    trigger_focus: &FocusHandle,
-    palette: &'static theme::ThemePalette,
-    cx: &Context<FrameRoot>,
-) -> gpui::Stateful<gpui::Div> {
-    let option_id = option.option_id();
-    let option_focuses_for_key = option_focuses.to_vec();
-    let scroll_handle_for_key = scroll_handle.clone();
-    let trigger_focus_for_click = trigger_focus.clone();
-    let trigger_focus_for_key = trigger_focus.clone();
-    let element = if let Some(focus) = focus {
-        frame_select_option_with_focus(
-            option_id,
-            option.display(),
-            option == selected,
-            true,
-            focus,
-            palette,
+        .gap(theme::ui_rem(12.0))
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .m3_type(typography::LABEL_LARGE)
+                .child("Accent color")
+                .child(label),
         )
-    } else {
-        frame_select_option(
-            option_id,
-            option.display(),
-            option == selected,
-            true,
-            palette,
+        .child(
+            div()
+                .id("app-settings-accent-options")
+                .role(gpui::Role::RadioGroup)
+                .aria_label("Accent color")
+                .flex()
+                .justify_between()
+                .children(AccentColor::PRESETS.iter().enumerate().map(
+                    |(index, &(label, accent))| {
+                        m3::ColorSwatch::new(
+                            format!("app-settings-accent-{index}"),
+                            label,
+                            &previews[index],
+                        )
+                        .selected(props.appearance.accent_color == accent)
+                        .focus(&props.accent_preset_focuses[index])
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(move |root, _, _, cx| {
+                            root.set_accent_color(accent);
+                            cx.notify();
+                        }))
+                    },
+                )),
         )
-    };
-
-    element
-        .on_click(cx.listener(move |root, event: &ClickEvent, window, cx| {
-            cx.stop_propagation();
-            if event.is_keyboard() {
-                return;
-            }
-            option.apply(root, window);
-            root.close_app_settings_appearance_popover(T::POPOVER);
-            trigger_focus_for_click.focus(window, cx);
-            cx.notify();
-        }))
-        .on_key_down(
-            cx.listener(move |root, event: &gpui::KeyDownEvent, window, cx| {
-                let key = event.keystroke.key.as_str();
-                match key {
-                    "enter" | "space" => {
-                        cx.stop_propagation();
-                        option.apply(root, window);
-                        root.close_app_settings_appearance_popover(T::POPOVER);
-                        let focus = trigger_focus_for_key.clone();
-                        cx.defer_in(window, move |_root, window, cx| {
-                            focus.focus(window, cx);
-                        });
-                        cx.notify();
-                    }
-                    "up" | "down" | "home" | "end" => {
-                        cx.stop_propagation();
-                        if let Some(target) = frame_select_target_index(
-                            option_focuses_for_key.len(),
-                            Some(index),
-                            key,
-                            |_| true,
-                        ) {
-                            focus_app_settings_select_option(
-                                target,
-                                &option_focuses_for_key,
-                                &scroll_handle_for_key,
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                    "escape" => {
-                        cx.stop_propagation();
-                        root.close_app_settings_appearance_popover(T::POPOVER);
-                        trigger_focus_for_key.focus(window, cx);
-                        cx.notify();
-                    }
-                    _ => {}
-                }
-            }),
-        )
-}
-
-fn app_settings_appearance_popover_progress<T: AppSettingsAppearanceValue>(
-    is_open: bool,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> f32 {
-    let transition = window
-        .use_keyed_transition(
-            T::MOTION_ID,
-            cx,
-            INTERACTION_MOTION_DURATION,
-            |_window, _cx| 0.0_f32,
-        )
-        .with_easing(ease_in_out);
-    set_motion_target(&transition, motion_target(is_open), cx);
-    let progress = *transition.evaluate(window, cx);
-    if !is_open && motion_is_hidden(progress) {
-        cx.defer_in(window, move |root, _window, cx| {
-            if root.finish_app_settings_appearance_popover_close(T::POPOVER) {
-                cx.notify();
-            }
-        });
-    }
-    progress
-}
-
-fn focus_app_settings_select_option(
-    index: usize,
-    option_focuses: &[FocusHandle],
-    scroll_handle: &ScrollHandle,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) {
-    scroll_handle.scroll_to_item(index);
-    if let Some(focus) = option_focuses.get(index) {
-        focus.focus(window, cx);
-    }
-}
-
-fn apply_app_settings_ui_scale(root: &mut FrameRoot, scale: ScalePreset, window: &mut Window) {
-    if root.set_ui_scale(scale) {
-        window.set_rem_size(px(crate::appearance::BASE_REM_PX * scale.factor()));
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -930,45 +495,67 @@ struct AppSettingsUpdateFocuses<'a> {
     install: &'a FocusHandle,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "The updates section handles each update state and its available actions."
+)]
 fn app_settings_updates_section(
     auto_update_check: bool,
     update_status: &UpdateStatus,
     update_install_ready: bool,
     focuses: AppSettingsUpdateFocuses<'_>,
-    palette: &'static theme::ThemePalette,
+    scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
-    let busy = update_status.is_busy();
-    let mut section = settings_section("Updates", palette)
-        .child(frame_checkbox_row_with_focus(
-            "app-settings-auto-update-check",
-            "Check automatically",
-            "Frame checks for signed releases in the background.",
-            auto_update_check,
-            false,
-            focuses.auto_update,
-            palette,
-            cx,
-            |root, _event, _window, cx| {
-                if root.toggle_auto_update_check(cx) {
-                    cx.notify();
-                }
-            },
-        ))
-        .child(update_check_now_button(
-            busy,
-            focuses.check_now,
-            palette,
-            window,
-            cx,
-        ))
-        .child(update_status_label(
-            update_status,
-            update_install_ready,
-            palette,
-        ));
-
+    let mut section = settings_group("Updates", scheme)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap(theme::ui_rem(16.0))
+                .child(settings_copy(
+                    "Check automatically",
+                    "Check for signed releases in the background.",
+                    scheme,
+                ))
+                .child(
+                    m3::Switch::new(
+                        "app-settings-auto-update-check",
+                        "Check automatically",
+                        auto_update_check,
+                    )
+                    .focus(focuses.auto_update)
+                    .build(scheme, window, cx)
+                    .on_click(cx.listener(|root, _, _, cx| {
+                        if root.toggle_auto_update_check(cx) {
+                            cx.notify();
+                        }
+                    })),
+                ),
+        )
+        .child(
+            m3::Button::new(
+                "app-settings-update-check-now",
+                "Check now",
+                m3::ButtonVariant::Outlined,
+            )
+            .enabled(!update_status.is_busy())
+            .focus(focuses.check_now)
+            .build(scheme, window, cx)
+            .on_click(cx.listener(|root, _, _, cx| {
+                root.check_for_updates(true, cx);
+                cx.notify();
+            })),
+        )
+        .child(
+            div()
+                .id("app-settings-update-status")
+                .role(gpui::Role::Status)
+                .m3_type(typography::BODY_MEDIUM)
+                .text_color(color(scheme.on_surface_variant))
+                .child(update_status_text(update_status, update_install_ready)),
+        );
     if let UpdateStatus::Downloading {
         progress_percent,
         received_bytes,
@@ -976,48 +563,83 @@ fn app_settings_updates_section(
         ..
     } = update_status
     {
-        section = section.child(update_progress_bar(*progress_percent, palette));
-        section = section.child(update_download_detail(
-            *received_bytes,
-            *total_bytes,
-            *progress_percent,
-            palette,
-        ));
+        section = section
+            .child(
+                m3::LinearProgress::new(
+                    "app-settings-update-progress",
+                    "Update download progress",
+                    progress_percent.map_or(0.0, |percent| f32::from(percent) / 100.0),
+                )
+                .build(scheme),
+            )
+            .child(
+                div()
+                    .m3_type(typography::BODY_SMALL)
+                    .child(total_bytes.map_or_else(
+                        || format!("{} downloaded", format_total_size(*received_bytes)),
+                        |total| {
+                            format!(
+                                "{} of {}",
+                                format_total_size(*received_bytes),
+                                format_total_size(total)
+                            )
+                        },
+                    )),
+            );
     }
-
-    if let Some(row) = update_action_row(
-        update_status,
-        update_install_ready,
-        focuses,
-        palette,
-        window,
-        cx,
-    ) {
-        section = section.child(row);
+    match update_status {
+        UpdateStatus::Available(_) => {
+            section = section.child(
+                div()
+                    .flex()
+                    .gap(theme::ui_rem(8.0))
+                    .child(
+                        m3::Button::new(
+                            "app-settings-update-download",
+                            "Download",
+                            m3::ButtonVariant::Filled,
+                        )
+                        .focus(focuses.download)
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(|root, _, _, cx| {
+                            root.download_available_update(cx);
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        m3::Button::new(
+                            "app-settings-update-skip",
+                            "Skip",
+                            m3::ButtonVariant::Outlined,
+                        )
+                        .focus(focuses.skip)
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(|root, _, _, cx| {
+                            root.skip_available_update(cx);
+                            cx.notify();
+                        })),
+                    ),
+            );
+        }
+        UpdateStatus::ReadyToInstall(_) => {
+            section = section.child(
+                m3::Button::new(
+                    "app-settings-update-install",
+                    "Install and restart",
+                    m3::ButtonVariant::Filled,
+                )
+                .enabled(update_install_ready)
+                .focus(focuses.install)
+                .build(scheme, window, cx)
+                .on_click(cx.listener(|root, _, _, cx| {
+                    root.install_downloaded_update(cx);
+                    cx.notify();
+                })),
+            );
+        }
+        _ => {}
     }
-
     section
-}
-
-fn update_status_label(
-    status: &UpdateStatus,
-    update_install_ready: bool,
-    palette: &'static theme::ThemePalette,
-) -> gpui::Stateful<gpui::Div> {
-    let tone = match status {
-        UpdateStatus::Error(_) => palette.danger,
-        UpdateStatus::Disabled(_) => palette.warning,
-        _ => palette.text_muted,
-    };
-    let text = update_status_text(status, update_install_ready);
-
-    div()
-        .id("app-settings-update-status")
-        .role(gpui::Role::Status)
-        .aria_label(text.clone())
-        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
-        .text_color(color(tone))
-        .child(theme::ui_text_owned(text))
 }
 
 fn update_status_text(status: &UpdateStatus, update_install_ready: bool) -> String {
@@ -1282,120 +904,6 @@ fn update_download_detail(
         .text_color(color(palette.text_muted))
         .font_features(assets::frame_tabular_number_font_features())
         .child(detail)
-}
-
-fn update_action_row(
-    status: &UpdateStatus,
-    update_install_ready: bool,
-    focuses: AppSettingsUpdateFocuses<'_>,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> Option<gpui::Div> {
-    match status {
-        UpdateStatus::Available(_) => Some(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    frame_text_button_with_focus(
-                        "app-settings-update-download",
-                        "Download",
-                        ButtonVariant::Default,
-                        false,
-                        true,
-                        focuses.download,
-                        palette,
-                        window,
-                        cx,
-                    )
-                    .on_click(cx.listener(
-                        |root, _: &ClickEvent, _window, cx| {
-                            cx.stop_propagation();
-                            root.download_available_update(cx);
-                            cx.notify();
-                        },
-                    )),
-                )
-                .child(
-                    frame_text_button_with_focus(
-                        "app-settings-update-skip",
-                        "Skip",
-                        ButtonVariant::Secondary,
-                        false,
-                        true,
-                        focuses.skip,
-                        palette,
-                        window,
-                        cx,
-                    )
-                    .on_click(cx.listener(
-                        |root, _: &ClickEvent, _window, cx| {
-                            cx.stop_propagation();
-                            if root.skip_available_update(cx) {
-                                cx.notify();
-                            }
-                        },
-                    )),
-                ),
-        ),
-        UpdateStatus::ReadyToInstall(_) => Some(
-            div().flex().items_center().gap_2().child(
-                frame_text_button_with_focus(
-                    "app-settings-update-install",
-                    "Install and restart",
-                    ButtonVariant::Default,
-                    false,
-                    update_install_ready,
-                    focuses.install,
-                    palette,
-                    window,
-                    cx,
-                )
-                .on_click(cx.listener(|root, _: &ClickEvent, _window, cx| {
-                    cx.stop_propagation();
-                    root.install_downloaded_update(cx);
-                    cx.notify();
-                })),
-            ),
-        ),
-        UpdateStatus::UpToDate
-        | UpdateStatus::Disabled(_)
-        | UpdateStatus::Error(_)
-        | UpdateStatus::Idle
-        | UpdateStatus::Checking
-        | UpdateStatus::Downloading { .. }
-        | UpdateStatus::Installing => None,
-    }
-}
-
-fn update_check_now_button(
-    busy: bool,
-    focus: &FocusHandle,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> impl IntoElement {
-    frame_text_button_with_focus(
-        "app-settings-update-check-now",
-        "Check now",
-        ButtonVariant::Secondary,
-        false,
-        !busy,
-        focus,
-        palette,
-        window,
-        cx,
-    )
-    .w_full()
-    .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-        cx.stop_propagation();
-        if !busy {
-            root.check_for_updates(true, cx);
-            cx.notify();
-        }
-    }))
 }
 
 #[derive(Clone, Copy)]
@@ -1863,49 +1371,6 @@ fn update_dialog_summary(
     }
 }
 
-pub(super) fn app_settings_concurrency_control(
-    draft_max_concurrency: &str,
-    can_apply: bool,
-    error: Option<&str>,
-    value_focus: &FocusHandle,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Div {
-    let input = frame_text_input(
-        FrameTextInputSpec {
-            id: "app-settings-max-concurrency-value",
-            value: draft_max_concurrency,
-            placeholder: "2",
-            disabled: false,
-            focus: Some(value_focus),
-            kind: FrameTextInputKind::MaxConcurrency,
-        },
-        palette,
-        window,
-        cx,
-    )
-    .when_some(error.map(str::to_string), |this, error| {
-        this.aria_invalid(true).aria_description(error)
-    });
-
-    div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(div().flex_1().min_w_0().child(input))
-        .child(
-            app_settings_apply_button(can_apply, palette, window, cx).on_click(cx.listener(
-                move |root, _: &ClickEvent, _window, cx| {
-                    cx.stop_propagation();
-                    if can_apply && root.apply_max_concurrency_draft() {
-                        cx.notify();
-                    }
-                },
-            )),
-        )
-}
-
 pub(super) fn app_settings_close_button(
     id: &'static str,
     label: &'static str,
@@ -1944,24 +1409,6 @@ pub(super) fn app_settings_close_button(
     let button = apply_button_motion(button, motion, enabled);
 
     apply_accessible_button_with_focus(button, label, enabled, focus, palette)
-}
-
-pub(super) fn app_settings_apply_button(
-    enabled: bool,
-    palette: &'static theme::ThemePalette,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Stateful<gpui::Div> {
-    frame_text_button(
-        "app-settings-max-concurrency-apply",
-        "Apply",
-        ButtonVariant::Secondary,
-        false,
-        enabled,
-        palette,
-        window,
-        cx,
-    )
 }
 
 pub(super) fn drag_drop_overlay(

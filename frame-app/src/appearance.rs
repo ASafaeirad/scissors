@@ -214,6 +214,7 @@ impl AccentColor {
 pub struct AppearanceSettings {
     pub ui_scale: ScalePreset,
     pub color_theme: ColorTheme,
+    pub follow_system_theme: bool,
     pub accent_color: AccentColor,
 }
 
@@ -249,6 +250,7 @@ mod tests {
             AppearanceSettings {
                 ui_scale: ScalePreset::Percent100,
                 color_theme: ColorTheme::Dark,
+                follow_system_theme: false,
                 accent_color: AccentColor::PRESETS[1].1,
             }
         );
