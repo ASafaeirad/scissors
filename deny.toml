@@ -5,6 +5,10 @@ all-features = true
 version = 2
 yanked = "deny"
 ignore = [
+  { id = "RUSTSEC-2026-0370", reason = "Unmaintained transitive D-Bus dependency of GPUI/accessibility and desktop integration; no safe upgrade is available, replace with upstream D-Bus migration" },
+  { id = "RUSTSEC-2026-0371", reason = "Unmaintained transitive D-Bus dependency of GPUI/accessibility and desktop integration; no safe upgrade is available, replace with upstream D-Bus migration" },
+  { id = "RUSTSEC-2026-0372", reason = "Unmaintained transitive D-Bus dependency of GPUI/accessibility and desktop integration; no safe upgrade is available, replace with upstream D-Bus migration" },
+
   { crate = "spin@0.9.8", reason = "flume 0.11 in the pinned Zed scheduler requires this yanked release; replace with the next vendored GPUI/Zed scheduler update" },
   { id = "RUSTSEC-2024-0384", reason = "instant is an unmaintained transitive dependency of the pinned vendored GPUI snapshot; replace during the tracked GPUI upgrade" },
   { id = "RUSTSEC-2024-0436", reason = "paste is an unmaintained transitive dependency; no vulnerability is reported and upstream replacements are being tracked" },
