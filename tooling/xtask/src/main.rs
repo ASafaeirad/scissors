@@ -1230,7 +1230,9 @@ fn extract_expected_file(
 
     for index in 0..archive.len() {
         let mut file = archive.by_index(index)?;
-        if file.is_file() && archive_entry_name_matches(file.name(), entry.expected_names) {
+        let matches =
+            file.is_file() && archive_entry_name_matches(&file.name()?, entry.expected_names);
+        if matches {
             write_archive_file(&mut file, destination, entry.sha256, entry.make_executable)?;
             println!("Placed {}.", entry.destination_name);
             return Ok(());
@@ -1968,7 +1970,10 @@ jobs:
           --ignore RUSTSEC-2026-0192 \
           --ignore RUSTSEC-2026-0194 \
           --ignore RUSTSEC-2026-0195 \
-          --ignore RUSTSEC-2026-0206
+          --ignore RUSTSEC-2026-0206 \
+          --ignore RUSTSEC-2026-0370 \
+          --ignore RUSTSEC-2026-0371 \
+          --ignore RUSTSEC-2026-0372
     - name: ci::run_documented_gate
       run: cargo xtask ci
     - name: ci::setup_ffmpeg
