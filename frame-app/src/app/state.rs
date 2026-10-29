@@ -74,6 +74,7 @@ impl FrameRoot {
             std::env::var("FRAME_VISUAL_THEME").ok().as_deref(),
         ) {
             persisted_settings.appearance.color_theme = color_theme;
+            persisted_settings.appearance.follow_system_theme = false;
         }
         let conversion_processes = ConversionProcessController::default();
         let max_concurrency = if conversion_processes

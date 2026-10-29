@@ -39,16 +39,13 @@ mod workspace;
 pub use runtime::{frame_window_options, init_app, open_frame_window};
 
 use accessibility::{FrameFocusKey, FrameFocusRegistry};
-use chrome::{
-    AppSettingsSelectFocuses, AppSettingsSheetProps, app_settings_sheet, drag_drop_overlay,
-    update_dialog,
-};
+use chrome::{AppSettingsSheetProps, app_settings_sheet, drag_drop_overlay, update_dialog};
 use input::{FrameTextInputKind, FrameTextInputUiState};
 use logs_panel::logs_view;
 use motion::{
     INTERACTION_MOTION_DURATION, SURFACE_MOTION_DURATION, contextual_icon_motion, hover_motion,
-    mix_color, mix_scalar, motion_is_hidden, motion_target, popover_slide_offset,
-    retarget_hover_motion, selected_motion, set_motion_target, settings_sheet_right_inset,
+    mix_color, mix_scalar, motion_is_hidden, motion_target, retarget_hover_motion, selected_motion,
+    set_motion_target, settings_sheet_right_inset,
 };
 use preview_panel::{
     FlipAxis, PreviewCanvasRenderState, PreviewCropRenderState, PreviewMediaRenderState,
@@ -155,8 +152,8 @@ use gpui::{
     Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths,
     FileDropEvent, FocusHandle, GlobalElementId, InteractiveElement, IntoElement, KeyBinding,
     LayoutId, Lerp, Menu, MenuItem, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ObjectFit, PaintQuad, PinchEvent, Pixels, PlatformInput, Point, Position, Render, RenderImage,
-    Rgba, ScrollHandle, ScrollStrategy, ScrollWheelEvent, ShapedLine, SharedString,
+    ObjectFit, PaintQuad, PinchEvent, Pixels, Point, Position, Render, RenderImage, Rgba,
+    ScrollHandle, ScrollStrategy, ScrollWheelEvent, ShapedLine, SharedString,
     StatefulInteractiveElement, Style, Task, TextRenderingMode, TextRun, TitlebarOptions,
     TransformationMatrix, UTF16Selection, UniformListScrollHandle, Window,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
@@ -310,38 +307,12 @@ struct SettingsUiState {
     max_concurrency_error: Option<String>,
     output_directory_error: Option<String>,
     appearance_error: Option<String>,
-    theme_popover: PopoverState,
-    ui_scale_popover: PopoverState,
     app_settings_scroll_handle: ScrollHandle,
-    theme_scroll_handle: ScrollHandle,
-    ui_scale_scroll_handle: ScrollHandle,
+    appearance_observer_registered: bool,
+
     preset_name_draft: String,
     preset_notice: Option<PresetNotice>,
     next_custom_preset_sequence: u64,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) enum PopoverState {
-    #[default]
-    Hidden,
-    Closing,
-    Open,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum AppearancePopover {
-    Theme,
-    UiScale,
-}
-
-impl PopoverState {
-    pub(super) const fn is_open(self) -> bool {
-        matches!(self, Self::Open)
-    }
-
-    pub(super) const fn is_rendered(self) -> bool {
-        !matches!(self, Self::Hidden)
-    }
 }
 
 #[derive(Default)]
@@ -413,11 +384,9 @@ impl Default for SettingsUiState {
             max_concurrency_error: None,
             output_directory_error: None,
             appearance_error: None,
-            theme_popover: PopoverState::Hidden,
-            ui_scale_popover: PopoverState::Hidden,
             app_settings_scroll_handle: ScrollHandle::new(),
-            theme_scroll_handle: ScrollHandle::new(),
-            ui_scale_scroll_handle: ScrollHandle::new(),
+            appearance_observer_registered: false,
+
             preset_name_draft: String::new(),
             preset_notice: None,
             next_custom_preset_sequence: 0,

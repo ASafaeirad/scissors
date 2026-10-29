@@ -15,6 +15,14 @@ impl Render for FrameRoot {
         window.set_rem_size(px(
             crate::appearance::BASE_REM_PX * self.appearance.ui_scale.factor()
         ));
+        if !self.settings_ui.appearance_observer_registered {
+            cx.observe_window_appearance(window, |_, _, cx| cx.notify())
+                .detach();
+            self.settings_ui.appearance_observer_registered = true;
+        }
+        if self.appearance.follow_system_theme {
+            self.appearance.color_theme = super::settings_actions::system_color_theme(window);
+        }
         m3::update_color_schemes(self.appearance.accent_color, cx);
         let palette = theme::palette(self.appearance.color_theme);
         self.begin_accessibility_frame();
@@ -343,19 +351,6 @@ impl Render for FrameRoot {
                     root.handle_preview_shortcut(event, &shortcut_root_focus, window, cx);
                 }),
             )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|root, _event: &MouseDownEvent, _window, cx| {
-                    if root.settings_ui.theme_popover.is_open() {
-                        root.close_app_settings_appearance_popover(AppearancePopover::Theme);
-                        cx.notify();
-                    }
-                    if root.settings_ui.ui_scale_popover.is_open() {
-                        root.close_app_settings_appearance_popover(AppearancePopover::UiScale);
-                        cx.notify();
-                    }
-                }),
-            )
             .on_drop(cx.listener(|root, paths: &ExternalPaths, _window, cx| {
                 cx.stop_propagation();
                 root.close_drag_drop_overlay();
@@ -374,55 +369,30 @@ impl Render for FrameRoot {
 
         if self.settings_ui.is_present {
             let update_install_ready = self.can_install_downloaded_update();
-            let theme_popover_active = self.settings_ui.theme_popover.is_open();
-            let ui_scale_popover_active = self.settings_ui.ui_scale_popover.is_open();
-            let theme_trigger_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-theme".to_string()),
-                true,
+            let theme_option_focuses = ["light", "dark", "system"].map(|name| {
+                self.ensure_focus(
+                    FrameFocusKey::Control(format!("app-settings-theme-{name}")),
+                    true,
+                    cx,
+                )
+            });
+            let ui_scale_option_focuses = [90, 100, 110, 125].map(|percent| {
+                self.ensure_focus(
+                    FrameFocusKey::Control(format!("app-settings-ui-scale-{percent}")),
+                    true,
+                    cx,
+                )
+            });
+            let decrease_focus = self.ensure_focus(
+                FrameFocusKey::Control("app-settings-concurrency-decrease".into()),
+                self.max_concurrency > 1,
                 cx,
             );
-            let theme_panel_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-theme-options".to_string()),
-                false,
+            let increase_focus = self.ensure_focus(
+                FrameFocusKey::Control("app-settings-concurrency-increase".into()),
+                self.max_concurrency < usize::MAX,
                 cx,
             );
-            let theme_option_focuses = ColorTheme::ALL
-                .into_iter()
-                .map(|color_theme| {
-                    self.ensure_focus(
-                        FrameFocusKey::Control(format!(
-                            "app-settings-theme-option-{}",
-                            color_theme.persisted()
-                        )),
-                        theme_popover_active,
-                        cx,
-                    )
-                })
-                .collect::<Vec<_>>();
-            let ui_scale_trigger_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-ui-scale".to_string()),
-                true,
-                cx,
-            );
-            let ui_scale_panel_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-ui-scale-options".to_string()),
-                false,
-                cx,
-            );
-            let ui_scale_option_focuses = ScalePreset::ALL
-                .into_iter()
-                .map(|scale| {
-                    self.ensure_focus(
-                        FrameFocusKey::Control(format!(
-                            "app-settings-ui-scale-option-{}",
-                            scale.percent()
-                        )),
-                        ui_scale_popover_active,
-                        cx,
-                    )
-                })
-                .collect::<Vec<_>>();
-            let value_focus = self.ensure_text_input_focus(FrameTextInputKind::MaxConcurrency, cx);
             let accent_preset_focuses = crate::appearance::AccentColor::PRESETS
                 .iter()
                 .enumerate()
@@ -492,18 +462,13 @@ impl Render for FrameRoot {
                 true,
                 cx,
             );
-            if self.settings_ui.is_open
-                && !self.settings_ui.theme_popover.is_open()
-                && !self.settings_ui.ui_scale_popover.is_open()
-                && !panel_focus.contains_focused(window, cx)
-            {
+            if self.settings_ui.is_open && !panel_focus.contains_focused(window, cx) {
                 close_focus.focus(window, cx);
             }
             root = root.child(app_settings_sheet(
                 AppSettingsSheetProps {
                     is_open: self.settings_ui.is_open,
                     current_max_concurrency: self.max_concurrency,
-                    draft_max_concurrency: &self.settings_ui.max_concurrency_draft,
                     error: self.settings_ui.max_concurrency_error.as_deref(),
                     default_output_directory: self
                         .default_output_directory
@@ -512,28 +477,16 @@ impl Render for FrameRoot {
                     output_directory_error: self.settings_ui.output_directory_error.as_deref(),
                     appearance: self.appearance,
                     accent_preset_focuses: &accent_preset_focuses,
-                    palette,
                     appearance_error: self.settings_ui.appearance_error.as_deref(),
-                    theme_popover: self.settings_ui.theme_popover,
-                    ui_scale_popover: self.settings_ui.ui_scale_popover,
                     scroll_handle: &self.settings_ui.app_settings_scroll_handle,
-                    theme_scroll_handle: &self.settings_ui.theme_scroll_handle,
-                    ui_scale_scroll_handle: &self.settings_ui.ui_scale_scroll_handle,
-                    theme_focuses: AppSettingsSelectFocuses {
-                        trigger: &theme_trigger_focus,
-                        panel: &theme_panel_focus,
-                        options: &theme_option_focuses,
-                    },
-                    ui_scale_focuses: AppSettingsSelectFocuses {
-                        trigger: &ui_scale_trigger_focus,
-                        panel: &ui_scale_panel_focus,
-                        options: &ui_scale_option_focuses,
-                    },
+                    theme_focuses: &theme_option_focuses,
+                    ui_scale_focuses: &ui_scale_option_focuses,
+                    decrease_focus: &decrease_focus,
+                    increase_focus: &increase_focus,
                     auto_update_check: self.auto_update_check,
                     show_fps_meter: self.fps_meter.is_some(),
                     update_status: &self.update_ui.status,
                     update_install_ready,
-                    value_focus: &value_focus,
                     output_directory_focus: &output_directory_focus,
                     auto_update_focus: &auto_update_focus,
                     fps_meter_focus: &fps_meter_focus,

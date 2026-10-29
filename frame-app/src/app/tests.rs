@@ -601,6 +601,7 @@ mod frame_root_conversion {
                 appearance: AppearanceSettings {
                     ui_scale: ScalePreset::Percent175,
                     color_theme: crate::appearance::ColorTheme::Light,
+                    follow_system_theme: false,
                     accent_color: crate::appearance::AccentColor::default(),
                 },
                 ..AppSettings::default()
@@ -614,6 +615,7 @@ mod frame_root_conversion {
             AppearanceSettings {
                 ui_scale: ScalePreset::Percent175,
                 color_theme: crate::appearance::ColorTheme::Light,
+                follow_system_theme: false,
                 accent_color: crate::appearance::AccentColor::default(),
             }
         );
@@ -693,8 +695,8 @@ mod frame_root_conversion {
 
     #[test]
     fn app_settings_sheet_motion_keeps_final_edge_inset() {
-        assert_eq!(settings_sheet_right_inset(1.0), 8.0);
-        assert_eq!(settings_sheet_right_inset(0.0), -16.0);
+        assert_eq!(settings_sheet_right_inset(1.0), 0.0);
+        assert_eq!(settings_sheet_right_inset(0.0), -24.0);
     }
 
     #[test]
@@ -712,6 +714,7 @@ mod frame_root_conversion {
             AppearanceSettings {
                 ui_scale: ScalePreset::Percent125,
                 color_theme: crate::appearance::ColorTheme::Dark,
+                follow_system_theme: false,
                 accent_color: crate::appearance::AccentColor::default(),
             }
         );
@@ -773,6 +776,7 @@ mod frame_root_conversion {
             AppearanceSettings {
                 ui_scale: ScalePreset::Percent150,
                 color_theme: crate::appearance::ColorTheme::Light,
+                follow_system_theme: false,
                 accent_color: crate::appearance::AccentColor::default(),
             }
         );
@@ -857,69 +861,35 @@ mod frame_root_conversion {
     }
 
     #[test]
-    fn toggling_ui_scale_popover_opens_and_closes_it() {
-        let mut root = FrameRoot::new();
-
-        root.toggle_app_settings_appearance_popover(AppearancePopover::UiScale);
-
-        assert_eq!(root.settings_ui.ui_scale_popover, PopoverState::Open);
-
-        root.toggle_app_settings_appearance_popover(AppearancePopover::UiScale);
-
-        assert_eq!(root.settings_ui.ui_scale_popover, PopoverState::Closing);
+    fn concurrency_stepper_applies_immediately_and_persists() {
+        let persistence = AppPersistence::from_settings_path(test_settings_path());
+        let mut root = FrameRoot::new_with_persistence(persistence.clone());
+        let initial = root.max_concurrency;
+        root.step_max_concurrency(true);
+        assert_eq!(root.max_concurrency, initial + 1);
+        assert_eq!(persistence.load().unwrap().max_concurrency, initial + 1);
+        root.step_max_concurrency(false);
+        assert_eq!(root.max_concurrency, initial);
     }
 
     #[test]
-    fn opening_an_appearance_popover_closes_the_other_one() {
+    fn concurrency_stepper_clamps_at_one_and_respects_installation() {
         let mut root = FrameRoot::new();
-
-        root.open_app_settings_appearance_popover(AppearancePopover::Theme);
-        assert!(root.settings_ui.theme_popover.is_open());
-        assert!(!root.settings_ui.ui_scale_popover.is_rendered());
-
-        root.open_app_settings_appearance_popover(AppearancePopover::UiScale);
-        assert!(!root.settings_ui.theme_popover.is_rendered());
-        assert!(root.settings_ui.ui_scale_popover.is_open());
-
-        root.open_app_settings_appearance_popover(AppearancePopover::Theme);
-        assert!(root.settings_ui.theme_popover.is_open());
-        assert!(!root.settings_ui.ui_scale_popover.is_rendered());
+        root.settings_ui.max_concurrency_draft = "1".into();
+        root.apply_max_concurrency_draft();
+        root.step_max_concurrency(false);
+        assert_eq!(root.max_concurrency, 1);
+        root.update_ui.status = UpdateStatus::Installing;
+        root.step_max_concurrency(true);
+        assert_eq!(root.max_concurrency, 1);
     }
 
     #[test]
-    fn theme_popover_remains_rendered_until_close_motion_finishes() {
+    fn selecting_manual_theme_disables_system_following() {
         let mut root = FrameRoot::new();
-        root.open_app_settings_appearance_popover(AppearancePopover::Theme);
-
-        root.close_app_settings_appearance_popover(AppearancePopover::Theme);
-
-        assert_eq!(root.settings_ui.theme_popover, PopoverState::Closing);
-        assert!(root.finish_app_settings_appearance_popover_close(AppearancePopover::Theme));
-        assert_eq!(root.settings_ui.theme_popover, PopoverState::Hidden);
-    }
-
-    #[test]
-    fn appearance_popover_remains_rendered_until_close_motion_finishes() {
-        let mut root = FrameRoot::new();
-        root.toggle_app_settings_appearance_popover(AppearancePopover::UiScale);
-
-        root.close_app_settings_appearance_popover(AppearancePopover::UiScale);
-
-        assert_eq!(root.settings_ui.ui_scale_popover, PopoverState::Closing);
-        assert!(root.finish_app_settings_appearance_popover_close(AppearancePopover::UiScale));
-        assert_eq!(root.settings_ui.ui_scale_popover, PopoverState::Hidden);
-    }
-
-    #[test]
-    fn closing_app_settings_closes_the_active_appearance_popover() {
-        let mut root = FrameRoot::new();
-        root.open_app_settings();
-        root.toggle_app_settings_appearance_popover(AppearancePopover::UiScale);
-
-        root.close_app_settings();
-
-        assert!(!root.settings_ui.ui_scale_popover.is_open());
-        assert!(!root.settings_ui.is_open);
+        root.appearance.follow_system_theme = true;
+        assert!(root.set_color_theme(root.appearance.color_theme));
+        assert!(!root.appearance.follow_system_theme);
     }
 
     #[test]
@@ -3418,25 +3388,22 @@ mod visual_fixtures {
     }
 
     #[test]
-    fn ui_scale_fixture_opens_ui_select_at_maximum_scale() {
+    fn ui_scale_fixture_opens_settings_at_maximum_scale() {
         let mut root = FrameRoot::new();
 
         root.apply_visual_fixture(Some(VisualFixture::AppSettingsUiOpen));
 
         assert!(root.settings_ui.is_open);
         assert_eq!(root.appearance.ui_scale, ScalePreset::Percent200);
-        assert!(root.settings_ui.ui_scale_popover.is_open());
     }
 
     #[test]
-    fn theme_fixture_opens_theme_select() {
+    fn theme_fixture_opens_settings() {
         let mut root = FrameRoot::new();
 
         root.apply_visual_fixture(Some(VisualFixture::AppSettingsThemeOpen));
 
         assert!(root.settings_ui.is_open);
-        assert!(root.settings_ui.theme_popover.is_open());
-        assert!(!root.settings_ui.ui_scale_popover.is_rendered());
     }
 
     #[test]
