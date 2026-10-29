@@ -125,6 +125,33 @@ fn file_handle_to_path(handle: &FileHandle) -> PathBuf {
     handle.path().to_path_buf()
 }
 
+/// Choose where to save a project file.
+#[must_use]
+pub fn project_save_dialog(parent: &Window, file_name: String) -> AsyncFileDialog {
+    AsyncFileDialog::new()
+        .set_title("Save project")
+        .set_file_name(file_name)
+        .add_filter("Frame project", &["frame"])
+        .set_parent(parent)
+}
+
+/// Choose a project file to open.
+#[must_use]
+pub fn project_open_dialog(parent: &Window) -> AsyncFileDialog {
+    AsyncFileDialog::new()
+        .set_title("Open project")
+        .add_filter("Frame project", &["frame"])
+        .set_parent(parent)
+}
+
+pub async fn pick_project_save_path(dialog: AsyncFileDialog) -> Option<PathBuf> {
+    dialog.save_file().await.as_ref().map(file_handle_to_path)
+}
+
+pub async fn pick_project_file(dialog: AsyncFileDialog) -> Option<PathBuf> {
+    dialog.pick_file().await.as_ref().map(file_handle_to_path)
+}
+
 /// Choose audio clips to place alongside the selected visual source.
 #[must_use]
 pub fn timeline_audio_dialog(parent: &Window) -> AsyncFileDialog {

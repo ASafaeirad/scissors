@@ -272,6 +272,7 @@ impl Render for FrameRoot {
                         },
                         ..self.workspace_ui
                     },
+                    &self.project_header_props(),
                     window,
                     cx,
                 ))
@@ -298,6 +299,7 @@ impl Render for FrameRoot {
                         },
                         ..self.workspace_ui
                     },
+                    &self.project_header_props(),
                     &crate::app::m3::scheme(self.appearance.color_theme, cx),
                     window,
                     cx,
@@ -332,6 +334,9 @@ impl Render for FrameRoot {
             .on_action(cx.listener(Self::decrease_ui_scale))
             .on_action(cx.listener(Self::reset_ui_scale))
             .on_action(cx.listener(Self::toggle_fps_meter))
+            .on_action(cx.listener(Self::save_project_action))
+            .on_action(cx.listener(Self::save_project_as_action))
+            .on_action(cx.listener(Self::open_project_action))
             .on_key_down(
                 cx.listener(move |root, event: &gpui::KeyDownEvent, window, cx| {
                     handle_tab_navigation(event, window, cx);
@@ -547,6 +552,10 @@ impl Render for FrameRoot {
 
         if self.export_ui.present {
             root = root.child(self.render_export_dialog(window, cx));
+        }
+
+        if self.project.confirm_discard {
+            root = root.child(self.render_discard_project_dialog(window, cx));
         }
 
         if self.drag_drop_ui.is_present {

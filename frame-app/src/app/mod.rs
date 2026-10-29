@@ -22,6 +22,7 @@ mod preview_actions;
 mod preview_panel;
 mod primitives;
 mod project;
+mod project_file;
 mod project_timeline;
 mod render;
 mod runtime;
@@ -94,7 +95,8 @@ use crate::{
     format_total_size,
     native_dialogs::{
         output_folder_dialog, overlay_image_dialog, pick_output_folder, pick_overlay_image_file,
-        pick_source_files, pick_source_folder, source_file_dialog, source_folder_dialog,
+        pick_project_file, pick_project_save_path, pick_source_files, pick_source_folder,
+        project_open_dialog, project_save_dialog, source_file_dialog, source_folder_dialog,
     },
     notifications::{AppNotifier, conversion_finished_notification_for_task_ids},
     preview::{
@@ -193,6 +195,9 @@ actions!(
         DecreaseUiScale,
         ResetUiScale,
         ToggleFpsMeter,
+        SaveProject,
+        SaveProjectAs,
+        OpenProject,
     ]
 );
 

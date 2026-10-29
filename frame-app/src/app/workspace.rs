@@ -1,4 +1,5 @@
 use super::media_assets::MediaAssetsProps;
+use super::project_file::ProjectHeaderProps;
 use super::{
     ActiveView, ClickEvent, Context, FileItem, FileQueue, FrameRoot, InteractiveElement,
     ParentElement, PreviewPanelProps, SettingsRenderState, SettingsTab, StatefulInteractiveElement,
@@ -273,6 +274,7 @@ pub(super) fn workspace_view(
     settings: &SettingsRenderState<'_>,
     preview_props: PreviewPanelProps<'_>,
     state: WorkspaceState,
+    header: &ProjectHeaderProps,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
@@ -304,6 +306,7 @@ pub(super) fn workspace_view(
                     .child(project_header(
                         file_queue,
                         state.export_enabled,
+                        header,
                         scheme,
                         window,
                         cx,
@@ -437,6 +440,7 @@ pub(super) fn workspace_view(
                 .child(project_header(
                     file_queue,
                     state.export_enabled,
+                    header,
                     scheme,
                     window,
                     cx,
@@ -692,6 +696,7 @@ pub(super) fn logs_workspace_view(
     logs: gpui::Div,
     queue: &FileQueue,
     state: WorkspaceState,
+    header: &ProjectHeaderProps,
     scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
@@ -714,6 +719,7 @@ pub(super) fn logs_workspace_view(
                 .child(project_header(
                     queue,
                     state.export_enabled,
+                    header,
                     scheme,
                     window,
                     cx,
@@ -767,6 +773,7 @@ fn navigation_rail(
 fn project_header(
     queue: &FileQueue,
     export_enabled: bool,
+    header: &ProjectHeaderProps,
     scheme: &ColorScheme,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
@@ -788,14 +795,38 @@ fn project_header(
                 .child(
                     div()
                         .m3_type(typography::TITLE_MEDIUM)
-                        .child("Untitled project"),
+                        .truncate()
+                        .child(header.title.clone()),
                 )
-                .child(
-                    div()
-                        .m3_type(typography::BODY_SMALL)
-                        .text_color(color(scheme.on_surface_variant))
-                        .child(format!("{} media", queue.files().len())),
-                ),
+                .child(header.error.clone().map_or_else(
+                    || {
+                        div()
+                            .m3_type(typography::BODY_SMALL)
+                            .text_color(color(scheme.on_surface_variant))
+                            .child(format!("{} media", queue.files().len()))
+                    },
+                    |error| {
+                        div()
+                            .m3_type(typography::BODY_SMALL)
+                            .text_color(color(scheme.error))
+                            .truncate()
+                            .child(error)
+                    },
+                )),
+        )
+        .child(
+            m3::IconButton::new("workspace-open-project", Symbol::FolderOpen, "Open project")
+                .build(scheme, window, cx)
+                .on_click(cx.listener(|root, _, window, cx| {
+                    root.request_open_project(window, cx);
+                })),
+        )
+        .child(
+            m3::IconButton::new("workspace-save-project", Symbol::Save, "Save project")
+                .build(scheme, window, cx)
+                .on_click(cx.listener(|root, _, window, cx| {
+                    root.save_project(false, window, cx);
+                })),
         )
         .child(
             m3::Button::new("workspace-export", "Export", m3::ButtonVariant::Filled)

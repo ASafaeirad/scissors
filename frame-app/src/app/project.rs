@@ -9,6 +9,14 @@ pub(super) struct Project {
     pub(super) clips: Vec<ClipPlacement>,
     pub(super) output: ConversionConfig,
     pub(super) output_name: String,
+    /// The file this project was last saved to or opened from.
+    pub(super) path: Option<PathBuf>,
+    /// The project as last saved or opened, to detect unsaved changes.
+    pub(super) saved: Option<super::project_file::ProjectFile>,
+    /// The last save or open failure, shown in the project header.
+    pub(super) error: Option<String>,
+    /// Asking whether to discard unsaved changes before opening another project.
+    pub(super) confirm_discard: bool,
 }
 
 #[derive(Clone, Debug)]
