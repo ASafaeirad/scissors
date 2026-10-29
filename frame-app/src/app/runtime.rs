@@ -52,10 +52,17 @@ pub fn init_app(cx: &mut App, name: impl Into<SharedString>) {
         KeyBinding::new("secondary--", DecreaseUiScale, None),
         KeyBinding::new("secondary-0", ResetUiScale, None),
         KeyBinding::new("f12", ToggleFpsMeter, None),
+        KeyBinding::new("secondary-s", SaveProject, None),
+        KeyBinding::new("secondary-shift-s", SaveProjectAs, None),
+        KeyBinding::new("secondary-o", OpenProject, None),
     ]);
     cx.set_menus(vec![Menu {
         name: name.into(),
         items: vec![
+            MenuItem::action("Open project…", OpenProject),
+            MenuItem::action("Save project", SaveProject),
+            MenuItem::action("Save project as…", SaveProjectAs),
+            MenuItem::separator(),
             MenuItem::action("Show/hide FPS meter", ToggleFpsMeter),
             MenuItem::action("Quit", Quit),
         ],

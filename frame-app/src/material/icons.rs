@@ -107,6 +107,7 @@ symbols! {
     RestartAlt => "restart_alt",
     Rotate90DegreesCcw => "rotate_90_degrees_ccw",
     Rotate90DegreesCw => "rotate_90_degrees_cw",
+    Save => "save",
     Search => "search",
     Settings => "settings",
     Stop => "stop",
