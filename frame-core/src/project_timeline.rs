@@ -311,14 +311,26 @@ pub fn add_graph(args: &mut Vec<String>, clips: &[TimelineSource], window: &Rend
                 filters.extend([
                     "aresample=48000".to_string(),
                     "aformat=sample_fmts=fltp:channel_layouts=stereo".to_string(),
-                    format!(
-                        "adelay={}:all=1",
-                        std::time::Duration::from_secs_f64(span.from).as_millis()
-                    ),
-                    "apad".to_string(),
-                    format!("atrim=duration={duration:.6}"),
                 ]);
-                chains.push(format!("[{index}:{track}]{}[{label}]", filters.join(",")));
+                let fit = format!("apad,atrim=duration={duration:.6}");
+                if span.from > 0.0 {
+                    // Lead with real silence. `adelay` emits its padding without timestamps
+                    // when the input is seeked, so later clips would play from the start.
+                    chains.push(format!(
+                        "[{index}:{track}]{}[{label}_clip]",
+                        filters.join(",")
+                    ));
+                    chains.push(format!(
+                        "anullsrc=r=48000:cl=stereo,atrim=duration={:.6}[{label}_lead]",
+                        span.from
+                    ));
+                    chains.push(format!(
+                        "[{label}_lead][{label}_clip]concat=n=2:v=0:a=1,{fit}[{label}]"
+                    ));
+                } else {
+                    filters.push(fit);
+                    chains.push(format!("[{index}:{track}]{}[{label}]", filters.join(",")));
+                }
                 audio_labels.push(format!("[{label}]"));
             }
         }
