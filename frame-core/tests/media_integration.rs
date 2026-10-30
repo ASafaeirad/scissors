@@ -438,6 +438,90 @@ fn project_timeline_exports_sequence_and_previews_the_same_frames_and_audio() ->
     Ok(())
 }
 
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn project_preview_keeps_a_seeked_later_clip_silent_until_its_offset() -> TestResult {
+    use frame_core::types::TimelineSource;
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("project_seeked_audio")?;
+    let quiet = sandbox.path("quiet.mp4");
+    let tone = sandbox.path("tone.mp4");
+    for (path, audio) in [
+        (&quiet, "anullsrc=r=48000:cl=mono:d=4"),
+        (&tone, "sine=frequency=440:sample_rate=48000:duration=4"),
+    ] {
+        run_tool(
+            &tools.ffmpeg,
+            &args(&[
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=160x90:r=30:d=4",
+                "-f",
+                "lavfi",
+                "-i",
+                audio,
+                "-shortest",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-y",
+                &path_arg(path),
+            ]),
+        )?;
+    }
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.selected_audio_tracks.clear();
+    let mut clip_config = config.clone();
+    clip_config.selected_audio_tracks = vec![1];
+    let clip = |path: &Path, offset_millis, start: Option<&str>, end: &str| {
+        let mut config = clip_config.clone();
+        config.start_time = start.map(str::to_string);
+        config.end_time = Some(end.to_string());
+        TimelineSource {
+            path: path_arg(path),
+            kind: "video".to_string(),
+            offset_millis,
+            duration_millis: 4000,
+            muted: false,
+            speed: 1.0,
+            hidden: false,
+            config: Box::new(config),
+        }
+    };
+    // Two halves of a split clip. Played from 0.5s, both inputs are seeked.
+    config.timeline_sources = vec![
+        clip(&quiet, 0, None, "2"),
+        clip(&tone, 2000, Some("2"), "4"),
+    ];
+    let plan = frame_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&quiet),
+        &config,
+        &frame_core::preview::PreviewAudioFfmpegOptions {
+            start_seconds: 0.5,
+            end_seconds: Some(4.0),
+            sample_rate: 48000,
+            channels: 1,
+            realtime: false,
+            precise_seek: true,
+            selected_track: u32::MAX,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let samples = pcm_samples(&run_tool_output(&tools.ffmpeg, &plan.args)?);
+    assert_eq!(samples.len(), 168_000);
+    // The second half stays silent until it starts 1.5s into playback.
+    assert!(sample_energy(&samples, 0, 67_200) < 0.001);
+    assert!(sample_energy(&samples, 76_800, 163_200) > 0.05);
+    Ok(())
+}
+
 fn pcm_samples(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(4)
