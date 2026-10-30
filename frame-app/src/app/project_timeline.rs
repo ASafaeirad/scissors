@@ -92,7 +92,12 @@ impl FrameRoot {
         true
     }
 
-    fn seek_project_timeline(&mut self, position: Point<Pixels>, cx: &Context<Self>) -> bool {
+    fn seek_project_timeline(
+        &mut self,
+        position: Point<Pixels>,
+        track: Option<usize>,
+        cx: &Context<Self>,
+    ) -> bool {
         let Some(bounds) = self.preview_ui.timeline_track_bounds else {
             return false;
         };
@@ -106,7 +111,29 @@ impl FrameRoot {
                     ),
             position.y,
         );
-        self.commit_preview_timeline_seek_at_position_with_context(position, cx)
+        if !self.commit_preview_timeline_seek_at_position_with_context(position, cx) {
+            return false;
+        }
+        // Ruler clicks select the highest video clip covering the playhead, skipping
+        // empty tracks and gaps. Lane clicks select only within the clicked lane.
+        let time = self.preview_ui.playback.current_time();
+        let selected = self
+            .project_timeline_clips()
+            .into_iter()
+            .filter(|(placement, source)| {
+                let (start, length) = clip_extent(source);
+                let eligible = track.map_or_else(
+                    || self.project.tracks[placement.track].kind == TrackKind::Video,
+                    |track| placement.track == track,
+                );
+                eligible && time >= start && time < start + length
+            })
+            .max_by_key(|(placement, _)| placement.track)
+            .map(|(placement, _)| placement.id);
+        if let Some(id) = selected {
+            self.select_project_clip(&id);
+        }
+        true
     }
 
     fn drop_library_source(&mut self, source_id: &str, position: Point<Pixels>) -> bool {
@@ -1015,7 +1042,7 @@ fn ruler(state: &ProjectTimelineState, cx: &Context<FrameRoot>) -> gpui::Statefu
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|root, event: &MouseDownEvent, _, cx| {
-                if root.seek_project_timeline(event.position, cx) {
+                if root.seek_project_timeline(event.position, None, cx) {
                     cx.notify();
                 }
             }),
@@ -1023,7 +1050,7 @@ fn ruler(state: &ProjectTimelineState, cx: &Context<FrameRoot>) -> gpui::Statefu
         .on_drag(PlayheadDrag, |_, _, _, cx| cx.new(|_| MediaDragPreview))
         .on_drag_move(
             cx.listener(|root, event: &DragMoveEvent<PlayheadDrag>, _, cx| {
-                if root.seek_project_timeline(event.event.position, cx) {
+                if root.seek_project_timeline(event.event.position, None, cx) {
                     cx.notify();
                 }
             }),
@@ -1243,9 +1270,9 @@ fn lane(
         .rounded_r(theme::ui_rem(shape::CORNER_SMALL))
         .bg(color(scheme.surface_container))
         .cursor_pointer()
-        .on_click(cx.listener(|root, event: &gpui::ClickEvent, _, cx| {
+        .on_click(cx.listener(move |root, event: &gpui::ClickEvent, _, cx| {
             if let gpui::ClickEvent::Mouse(event) = event
-                && root.seek_project_timeline(event.up.position, cx)
+                && root.seek_project_timeline(event.up.position, Some(index), cx)
             {
                 cx.notify();
             }
@@ -2090,6 +2117,64 @@ mod tests {
                 original
             );
         });
+    }
+
+    #[test]
+    fn ruler_selects_first_available_video_at_playhead_and_lane_clicks_override_it() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|_, cx| {
+            let root = cx.new(|_| {
+                let mut root = crate::app::project::tests::project();
+                assert!(root.add_library_clip_on_track("source", 0, 0));
+                assert!(root.add_project_track(TrackKind::Video));
+                assert!(root.add_library_clip_on_track("source", 0, 2));
+                assert!(root.add_library_clip_on_track("source", 10_000, 2));
+                assert!(root.add_library_clip_on_track("source", 20_000, 0));
+                // An empty track above both populated tracks must also be skipped.
+                assert!(root.add_project_track(TrackKind::Video));
+                let lower = root.project.clips[0].id.clone();
+                assert!(root.select_project_clip(&lower));
+                root.preview_ui.playback =
+                    preview_playback_state(PreviewMediaKind::Video, 30.0, None, None);
+                root.preview_ui.project_timeline_view = Some(TimelineView::fit(30.0));
+                root
+            });
+            TimelineTestView {
+                root,
+                focus: cx.focus_handle(),
+            }
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let bounds = root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
+        let lower = lane_center(cx, "project-lane-V1");
+        let upper = lane_center(cx, "project-lane-V2");
+        // Selecting a different lane is explicit; the next ruler click selects the
+        // top video clip again. At the shared boundary, select the incoming clip.
+        for (time, y, selected) in [
+            (2.0, bounds.center().y, 1),
+            (2.0, lower, 0),
+            (2.0, bounds.center().y, 1),
+            (10.0, bounds.center().y, 2),
+            (3.0, lower, 0),
+            (3.0, upper, 1),
+            (20.0, bounds.center().y, 3),
+            (25.0, bounds.center().y, 3),
+            (3.0, bounds.center().y, 1),
+        ] {
+            cx.simulate_click(
+                point(bounds.left() + bounds.size.width * (time / 30.0), y),
+                Modifiers::default(),
+            );
+            root.read_with(cx, |root, _| {
+                assert_eq!(
+                    root.file_queue.selected_file_id(),
+                    Some(root.project.clips[selected].id.as_str()),
+                    "selection at {time}s"
+                );
+                assert!((root.preview_ui.playback.current_time() - f64::from(time)).abs() < 0.01);
+            });
+        }
     }
 
     #[test]
