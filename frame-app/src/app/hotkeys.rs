@@ -10,10 +10,16 @@ impl FrameRoot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let timeline_shortcut = matches!(event.keystroke.key.as_str(), "space" | "x")
+        let key = event.keystroke.key.as_str();
+        let modifiers = event.keystroke.modifiers;
+        // Ctrl+Z undoes, and Ctrl+Shift+Z or Ctrl+Y redoes (Cmd on macOS).
+        let history_shortcut = self.project.enabled
+            && modifiers.secondary()
+            && !modifiers.alt
+            && matches!(key, "z" | "y");
+        let timeline_shortcut = matches!(key, "space" | "x" | "z" | "y" | "delete" | "backspace")
             && self.registered_control_contains_focus(PREVIEW_SEEK_FOCUS_ID, window, cx);
-        if event.is_held
-            || event.keystroke.modifiers.modified()
+        if (event.is_held || modifiers.modified()) && !history_shortcut
             || window.focused(cx).is_some() && !root_focus.is_focused(window) && !timeline_shortcut
             || self.active_view != ActiveView::Workspace
             || self.settings_ui.is_present
@@ -23,7 +29,15 @@ impl FrameRoot {
             return;
         }
 
-        let handled = match event.keystroke.key.as_str() {
+        let handled = match key {
+            "z" | "y" if history_shortcut => {
+                if key == "y" || modifiers.shift {
+                    self.redo_timeline_edit()
+                } else {
+                    self.undo_timeline_edit()
+                }
+            }
+            "delete" | "backspace" if self.project.enabled => self.remove_selected_project_clip(),
             "space" => self.toggle_preview_playback_with_context(cx),
             "s" if self.preview_timeline_enabled() => {
                 self.focus_registered_control(PREVIEW_SEEK_FOCUS_ID, window, cx)

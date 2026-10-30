@@ -306,6 +306,9 @@ pub struct TimelineSource {
     /// Playback rate, where 1.0 is normal speed.
     #[serde(default = "normal_playback_speed")]
     pub speed: f64,
+    /// Hidden visual clips leave the picture but keep their audio.
+    #[serde(default)]
+    pub hidden: bool,
     pub config: Box<ConversionConfig>,
 }
 

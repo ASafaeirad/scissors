@@ -22,7 +22,9 @@ mod preview_panel;
 mod primitives;
 mod project;
 mod project_file;
+mod project_history;
 mod project_timeline;
+mod project_tracks;
 mod render;
 mod runtime;
 mod settings_actions;
@@ -383,6 +385,10 @@ impl Default for SettingsUiState {
     }
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Preview UI state tracks independent modes and one-shot flags."
+)]
 struct PreviewUiState {
     canvas_file_id: Option<String>,
     canvas: PreviewCanvasState,
@@ -402,6 +408,9 @@ struct PreviewUiState {
     timeline_track_bounds: Option<Bounds<Pixels>>,
     project_timeline_view: Option<project_timeline::TimelineView>,
     first_clip_zoomed: bool,
+    /// Clip moves and trims snap to clip edges and the playhead.
+    timeline_snap: bool,
+    timeline_menu: Option<project_timeline::TimelineMenu>,
     playback_file_id: Option<String>,
     playback: PreviewPlaybackState,
     active_preview_dimensions: Option<PreviewRuntimeDimensions>,
@@ -441,6 +450,8 @@ impl Default for PreviewUiState {
             timeline_track_bounds: None,
             project_timeline_view: None,
             first_clip_zoomed: false,
+            timeline_snap: true,
+            timeline_menu: None,
             playback_file_id: None,
             playback: PreviewPlaybackState::new(false),
             active_preview_dimensions: None,

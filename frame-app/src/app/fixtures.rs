@@ -144,9 +144,16 @@ impl FrameRoot {
             },
         );
         self.add_library_clip("library-audio");
+        // V2 over V1 and a second audio track, as in a typical edit.
+        self.add_project_track(super::project_tracks::TrackKind::Video);
+        self.add_project_track(super::project_tracks::TrackKind::Audio);
+        self.add_library_clip_on_track("library-audio", 1_000, 3);
         let id = self.project.clips[1].id.clone();
         self.set_project_clip_speed(&id, 2.0);
+        self.move_project_clip_to_track(&id, 2);
         self.select_project_clip(&id);
+        // The setup is not something to undo.
+        self.project.history.clear();
         // Show the fitted layout, not the first-clip zoom that the setup above triggered.
         self.preview_ui.project_timeline_view = None;
     }

@@ -5,6 +5,7 @@
 //! thumbnails are probed again on open, so a moved or deleted source shows up as an error clip.
 use super::m3::M3Text;
 use super::project::{ClipPlacement, Project};
+use super::project_tracks::{Track, TrackKind, Tracks};
 use super::*;
 use crate::app_persistence::write_bytes_atomically;
 use crate::material::typography;
@@ -26,7 +27,26 @@ pub(super) struct ProjectFile {
     output: ConversionConfig,
     sources: Vec<SavedSource>,
     clips: Vec<SavedClip>,
+    /// Absent in files saved before tracks existed.
+    tracks: Vec<SavedTrack>,
     selected_clip: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+struct SavedTrack {
+    kind: SavedTrackKind,
+    hidden: bool,
+    muted: bool,
+    locked: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum SavedTrackKind {
+    #[default]
+    Video,
+    Audio,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -43,6 +63,8 @@ struct SavedClip {
     source: Option<usize>,
     path: PathBuf,
     kind: SavedKind,
+    /// Index into `tracks`. Clips without a valid track go on the first track of their kind.
+    track: Option<usize>,
     offset_millis: u64,
     muted: bool,
     speed: f64,
@@ -99,6 +121,7 @@ pub(super) struct RestoredProject {
     /// Timeline clip instances, in clip order.
     pub(super) instances: Vec<FileItem>,
     pub(super) clips: Vec<ClipPlacement>,
+    pub(super) tracks: Tracks,
     pub(super) output: ConversionConfig,
     pub(super) output_name: String,
     pub(super) selected: Option<String>,
@@ -118,6 +141,7 @@ impl ProjectFile {
                         .position(|source| source.id == clip.source_id),
                     path: PathBuf::from(&file.path),
                     kind: clip.kind.into(),
+                    track: Some(clip.track),
                     offset_millis: clip.offset_millis,
                     muted: clip.muted,
                     speed: clip.speed,
@@ -145,6 +169,19 @@ impl ProjectFile {
                 })
                 .collect(),
             clips,
+            tracks: project
+                .tracks
+                .iter()
+                .map(|track| SavedTrack {
+                    kind: match track.kind {
+                        TrackKind::Video => SavedTrackKind::Video,
+                        TrackKind::Audio => SavedTrackKind::Audio,
+                    },
+                    hidden: track.hidden,
+                    muted: track.muted,
+                    locked: track.locked,
+                })
+                .collect(),
             selected_clip,
         }
     }
@@ -163,9 +200,34 @@ impl ProjectFile {
             library.add_file(file);
         }
 
+        let tracks = Tracks::from_saved(
+            self.tracks
+                .iter()
+                .map(|track| Track {
+                    kind: match track.kind {
+                        SavedTrackKind::Video => TrackKind::Video,
+                        SavedTrackKind::Audio => TrackKind::Audio,
+                    },
+                    hidden: track.hidden,
+                    muted: track.muted,
+                    locked: track.locked,
+                })
+                .collect(),
+        );
         let mut instances = Vec::with_capacity(self.clips.len());
         let mut clips = Vec::with_capacity(self.clips.len());
         for clip in self.clips {
+            let kind = SourceKind::from(clip.kind);
+            let track_kind = TrackKind::of(kind);
+            let track = clip
+                .track
+                .filter(|&index| {
+                    tracks
+                        .get(index)
+                        .is_some_and(|track| track.kind == track_kind)
+                })
+                .or_else(|| tracks.iter().position(|track| track.kind == track_kind))
+                .unwrap_or_default();
             let mut file = FileItem::from_os_path(next_id(), &clip.path);
             file.output_name = clip.output_name;
             file.config = clip.config;
@@ -177,7 +239,8 @@ impl ProjectFile {
                     .and_then(|index| source_ids.get(index).cloned())
                     .unwrap_or_default(),
                 offset_millis: clip.offset_millis,
-                kind: clip.kind.into(),
+                kind,
+                track,
                 muted: clip.muted,
                 speed: clip.speed,
             });
@@ -193,6 +256,7 @@ impl ProjectFile {
             library,
             instances,
             clips,
+            tracks,
             output: self.output,
             output_name: self.output_name,
             selected,
@@ -206,7 +270,10 @@ impl ProjectFile {
         if self.version > PROJECT_FILE_VERSION {
             return Err(ProjectFileError::UnsupportedVersion);
         }
-        if self.sources.len() > MAX_PROJECT_ITEMS || self.clips.len() > MAX_PROJECT_ITEMS {
+        if self.sources.len() > MAX_PROJECT_ITEMS
+            || self.clips.len() > MAX_PROJECT_ITEMS
+            || self.tracks.len() > MAX_PROJECT_ITEMS
+        {
             return Err(ProjectFileError::TooLarge);
         }
         let paths = self
@@ -417,6 +484,8 @@ impl FrameRoot {
         self.file_queue = instances;
         self.project.library = restored.library;
         self.project.clips = restored.clips;
+        self.project.tracks = restored.tracks;
+        self.project.history.clear();
         self.project.output = restored.output;
         self.project.output_name = restored.output_name;
         self.project.enabled = true;
@@ -674,6 +743,47 @@ mod tests {
         assert_eq!(restored.library.files().len(), 1);
         assert_eq!(restored.clips.len(), 2);
         assert!(restored.clips.iter().all(|clip| clip.source_id.is_empty()));
+    }
+
+    #[test]
+    fn tracks_and_clip_tracks_survive_a_round_trip() {
+        let mut root = edited_project();
+        assert!(root.add_project_track(TrackKind::Video));
+        let second = root.project.clips[1].id.clone();
+        assert!(root.move_project_clip_to_track(&second, 2));
+        root.project.tracks[2].hidden = true;
+        root.project.tracks[1].locked = true;
+        let restored = root.project_snapshot().restore({
+            let mut next = 0;
+            move || {
+                next += 1;
+                format!("restored-{next}")
+            }
+        });
+        assert_eq!(restored.tracks, root.project.tracks);
+        assert_eq!(restored.clips[0].track, 0);
+        assert_eq!(restored.clips[1].track, 2);
+    }
+
+    #[test]
+    fn files_without_tracks_put_clips_on_the_first_track_of_their_kind() {
+        let file: ProjectFile = serde_json::from_str(
+            r#"{"version": 1, "clips": [
+                {"path": "/a.mp4", "kind": "video", "speed": 1},
+                {"path": "/b.wav", "kind": "audio", "speed": 1}
+            ]}"#,
+        )
+        .unwrap();
+        let restored = file.restore({
+            let mut next = 0;
+            move || {
+                next += 1;
+                format!("restored-{next}")
+            }
+        });
+        assert_eq!(restored.tracks, Tracks::default());
+        assert_eq!(restored.clips[0].track, 0);
+        assert_eq!(restored.clips[1].track, 1);
     }
 
     #[test]

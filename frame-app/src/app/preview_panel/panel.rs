@@ -228,7 +228,7 @@ pub(in crate::app) fn preview_panel(
                 .timeline
                 .clips
                 .iter()
-                .any(|clip| clip.kind != SourceKind::Audio)
+                .any(|(clip, _)| clip.kind != SourceKind::Audio)
         }) {
             state.availability = preview_control_availability(PreviewControlInput {
                 metadata_status: state.metadata_status,
