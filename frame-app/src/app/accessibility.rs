@@ -275,33 +275,6 @@ pub(in crate::app) fn apply_accessible_toggle_button(
     apply_accessible_button(element, label, enabled, palette).aria_toggled(Toggled::from(selected))
 }
 
-pub(in crate::app) fn apply_accessible_checkbox(
-    element: gpui::Stateful<gpui::Div>,
-    label: impl Into<SharedString>,
-    enabled: bool,
-    checked: bool,
-    indeterminate: bool,
-    palette: &'static theme::ThemePalette,
-) -> gpui::Stateful<gpui::Div> {
-    let toggled = if indeterminate {
-        Toggled::Mixed
-    } else {
-        Toggled::from(checked)
-    };
-    let element = element
-        .role(Role::CheckBox)
-        .aria_label(label)
-        .aria_toggled(toggled);
-    if enabled {
-        element
-            .focusable()
-            .tab_stop(true)
-            .focus_visible(move |style| focus_visible_ring(style, palette))
-    } else {
-        element.tab_stop(false).aria_disabled(true)
-    }
-}
-
 #[expect(
     clippy::too_many_arguments,
     reason = "Slider accessibility requires the full ARIA range plus explicit theme and render context."

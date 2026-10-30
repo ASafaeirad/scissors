@@ -9,16 +9,10 @@ impl FrameRoot {
     #[must_use]
     pub fn new_with_platform_persistence() -> Self {
         let notifier = AppNotifier::system();
-        let mut root = match AppPersistence::platform() {
+        match AppPersistence::platform() {
             Ok(persistence) => Self::new_with_persistence_and_notifier(persistence, notifier),
             Err(_) => Self::new_inner(None, AppSettings::default(), notifier),
-        };
-        if visual_fixture_from_env_value(std::env::var("FRAME_GPUI_VISUAL_FIXTURE").ok().as_deref())
-            .is_none()
-        {
-            root.project.enabled = true;
         }
-        root
     }
 
     pub fn load_runtime_capabilities(&mut self, cx: &mut Context<Self>) {
@@ -77,17 +71,12 @@ impl FrameRoot {
             persisted_settings.appearance.follow_system_theme = false;
         }
         let conversion_processes = ConversionProcessController::default();
-        let max_concurrency = if conversion_processes
-            .update_max_concurrency(persisted_settings.max_concurrency)
-            .is_ok()
-        {
-            persisted_settings.max_concurrency
-        } else {
-            DEFAULT_MAX_CONCURRENCY
-        };
+        // Ignore parallelism saved by older versions. The app exports one project at a time.
+        conversion_processes
+            .update_max_concurrency(1)
+            .expect("one export is a valid limit");
         let presets = merged_presets(persisted_settings.custom_presets);
         let settings_ui = SettingsUiState {
-            max_concurrency_draft: max_concurrency.to_string(),
             next_custom_preset_sequence: next_custom_preset_sequence(&presets),
             ..SettingsUiState::default()
         };
@@ -101,8 +90,10 @@ impl FrameRoot {
             fps_meter: None,
             focus_registry: FrameFocusRegistry::default(),
             file_queue: FileQueue::new(),
-            project: project::Project::default(),
-            file_list_scroll_handle: UniformListScrollHandle::new(),
+            project: project::Project {
+                enabled: true,
+                ..project::Project::default()
+            },
             conversion_events: ConversionEventState::new(),
             logs_scroll_handle: UniformListScrollHandle::new(),
             last_log_scroll_target: None,
@@ -114,7 +105,6 @@ impl FrameRoot {
             settings_ui,
             tooltip_ui: TooltipUiState::default(),
             drag_drop_ui: DragDropUiState::default(),
-            max_concurrency,
             default_output_directory: persisted_settings.default_output_directory,
             text_input_ui: FrameTextInputUiState::default(),
             source_metadata: SourceMetadataStore::default(),
@@ -203,7 +193,7 @@ impl FrameRoot {
 
         persistence.save(&AppSettings::from_runtime(
             self.appearance,
-            self.max_concurrency,
+            1,
             self.default_output_directory.clone(),
             &self.presets,
             self.auto_update_check,

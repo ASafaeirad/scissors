@@ -157,20 +157,13 @@ impl FrameRoot {
     }
 
     fn start_export(&mut self, cx: &mut Context<Self>) {
-        let ready = if self.project.enabled {
-            !self.project.clips.is_empty()
-                && !self.project.output_name.trim().is_empty()
-                && custom_dimensions_error(&self.project.output).is_none()
-        } else {
-            self.file_queue.selected_file().is_some_and(|file| {
-                !file.output_name.trim().is_empty()
-                    && custom_dimensions_error(&file.config).is_none()
-            })
-        };
+        let ready = !self.project.clips.is_empty()
+            && !self.project.output_name.trim().is_empty()
+            && custom_dimensions_error(&self.project.output).is_none();
         if !ready {
             return;
         }
-        self.start_selected_conversions(cx);
+        self.start_project_export(cx);
         self.export_ui
             .task_ids
             .clone_from(&self.active_conversion_task_ids);
@@ -418,18 +411,6 @@ impl FrameRoot {
             encoders,
             audio_codecs,
             duration,
-            queued: if self.project.enabled {
-                usize::from(!self.project.clips.is_empty())
-            } else {
-                self.file_queue
-                    .files()
-                    .iter()
-                    .filter(|file| {
-                        file.is_selected_for_conversion
-                            && file.status.is_actionable_for_conversion()
-                    })
-                    .count()
-            },
             has_output_directory: self.default_output_directory.is_some(),
             output_directory: self
                 .default_output_directory
@@ -713,8 +694,6 @@ struct ExportView {
     audio_codecs: Vec<AudioCodecOption>,
     /// Exported length in seconds, after trims and cuts.
     duration: f64,
-    /// Files the Export button will start.
-    queued: usize,
     has_output_directory: bool,
     output_directory: Option<String>,
     can_start: bool,
@@ -2338,9 +2317,6 @@ fn export_footer(
         let mut parts = Vec::new();
         if let Some(size) = view.size_estimate() {
             parts.push(format!("About {size}"));
-        }
-        if view.queued > 1 {
-            parts.push(format!("exports {} files", view.queued));
         }
         let note = parts.join(" · ");
         let mut chars = note.chars();

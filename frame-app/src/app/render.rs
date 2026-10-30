@@ -240,7 +240,6 @@ impl Render for FrameRoot {
                             && (!self.project.enabled || !self.is_processing),
                     },
                     &self.file_queue,
-                    &self.file_list_scroll_handle,
                     &settings,
                     PreviewPanelProps {
                         project: self.project_render_state(cx),
@@ -383,16 +382,6 @@ impl Render for FrameRoot {
                     cx,
                 )
             });
-            let decrease_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-concurrency-decrease".into()),
-                self.max_concurrency > 1,
-                cx,
-            );
-            let increase_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-concurrency-increase".into()),
-                self.max_concurrency < usize::MAX,
-                cx,
-            );
             let accent_preset_focuses = crate::appearance::AccentColor::PRESETS
                 .iter()
                 .enumerate()
@@ -468,8 +457,6 @@ impl Render for FrameRoot {
             root = root.child(app_settings_sheet(
                 AppSettingsSheetProps {
                     is_open: self.settings_ui.is_open,
-                    current_max_concurrency: self.max_concurrency,
-                    error: self.settings_ui.max_concurrency_error.as_deref(),
                     default_output_directory: self
                         .default_output_directory
                         .as_deref()
@@ -481,8 +468,6 @@ impl Render for FrameRoot {
                     scroll_handle: &self.settings_ui.app_settings_scroll_handle,
                     theme_focuses: &theme_option_focuses,
                     ui_scale_focuses: &ui_scale_option_focuses,
-                    decrease_focus: &decrease_focus,
-                    increase_focus: &increase_focus,
                     auto_update_check: self.auto_update_check,
                     show_fps_meter: self.fps_meter.is_some(),
                     update_status: &self.update_ui.status,

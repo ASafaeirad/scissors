@@ -22,7 +22,6 @@ impl FrameTextInputMetrics {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::app) enum FrameTextInputKind {
-    MaxConcurrency,
     AudioBitrate,
     VideoCustomWidth,
     VideoCustomHeight,
@@ -42,8 +41,7 @@ pub(in crate::app) enum FrameTextInputKind {
 }
 
 impl FrameTextInputKind {
-    pub(in crate::app) const ALL: [Self; 17] = [
-        Self::MaxConcurrency,
+    pub(in crate::app) const ALL: [Self; 16] = [
         Self::AudioBitrate,
         Self::VideoCustomWidth,
         Self::VideoCustomHeight,
@@ -64,7 +62,6 @@ impl FrameTextInputKind {
 
     pub(in crate::app) const fn accessibility_label(self) -> &'static str {
         match self {
-            Self::MaxConcurrency => "Maximum concurrent conversions",
             Self::AudioBitrate => "Audio bitrate",
             Self::VideoCustomWidth => "Video width",
             Self::VideoCustomHeight => "Video height",
@@ -179,7 +176,6 @@ mod metrics_tests {
 
 #[derive(Default)]
 pub(in crate::app) struct FrameTextInputStore {
-    max_concurrency: FrameTextInputRuntime,
     audio_bitrate: FrameTextInputRuntime,
     video_width: FrameTextInputRuntime,
     video_height: FrameTextInputRuntime,
@@ -201,7 +197,6 @@ pub(in crate::app) struct FrameTextInputStore {
 impl FrameTextInputStore {
     pub(in crate::app) const fn runtime(&self, kind: FrameTextInputKind) -> &FrameTextInputRuntime {
         match kind {
-            FrameTextInputKind::MaxConcurrency => &self.max_concurrency,
             FrameTextInputKind::AudioBitrate => &self.audio_bitrate,
             FrameTextInputKind::VideoCustomWidth => &self.video_width,
             FrameTextInputKind::VideoCustomHeight => &self.video_height,
@@ -226,7 +221,6 @@ impl FrameTextInputStore {
         kind: FrameTextInputKind,
     ) -> &mut FrameTextInputRuntime {
         match kind {
-            FrameTextInputKind::MaxConcurrency => &mut self.max_concurrency,
             FrameTextInputKind::AudioBitrate => &mut self.audio_bitrate,
             FrameTextInputKind::VideoCustomWidth => &mut self.video_width,
             FrameTextInputKind::VideoCustomHeight => &mut self.video_height,
@@ -249,7 +243,6 @@ impl FrameTextInputStore {
 
 #[derive(Default)]
 pub(in crate::app) struct FrameTextInputFocusStore {
-    max_concurrency: Option<FocusHandle>,
     audio_bitrate: Option<FocusHandle>,
     video_width: Option<FocusHandle>,
     video_height: Option<FocusHandle>,
@@ -271,7 +264,6 @@ pub(in crate::app) struct FrameTextInputFocusStore {
 impl FrameTextInputFocusStore {
     pub(in crate::app) const fn focus(&self, kind: FrameTextInputKind) -> Option<&FocusHandle> {
         match kind {
-            FrameTextInputKind::MaxConcurrency => self.max_concurrency.as_ref(),
             FrameTextInputKind::AudioBitrate => self.audio_bitrate.as_ref(),
             FrameTextInputKind::VideoCustomWidth => self.video_width.as_ref(),
             FrameTextInputKind::VideoCustomHeight => self.video_height.as_ref(),
@@ -296,7 +288,6 @@ impl FrameTextInputFocusStore {
         kind: FrameTextInputKind,
     ) -> &mut Option<FocusHandle> {
         match kind {
-            FrameTextInputKind::MaxConcurrency => &mut self.max_concurrency,
             FrameTextInputKind::AudioBitrate => &mut self.audio_bitrate,
             FrameTextInputKind::VideoCustomWidth => &mut self.video_width,
             FrameTextInputKind::VideoCustomHeight => &mut self.video_height,
@@ -314,10 +305,6 @@ impl FrameTextInputFocusStore {
             FrameTextInputKind::MetadataServiceProvider => &mut self.metadata_service_provider,
             FrameTextInputKind::PresetName => &mut self.preset_name,
         }
-    }
-
-    pub(in crate::app) fn clear(&mut self, kind: FrameTextInputKind) {
-        *self.focus_mut(kind) = None;
     }
 }
 

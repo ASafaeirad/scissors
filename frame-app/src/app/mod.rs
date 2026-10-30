@@ -5,7 +5,6 @@ mod conversion;
 mod crop_detect;
 mod decode_cache;
 mod export_dialog;
-mod file_list_panel;
 mod files;
 mod filmstrip;
 mod fixtures;
@@ -62,14 +61,14 @@ use workspace::{welcome_view, workspace_view};
 #[cfg(target_os = "linux")]
 use crate::LINUX_WINDOW_FRAME_INSET;
 use crate::{
-    ActiveView, CONTENT_PADDING, FILE_ROW_HEIGHT, FrameAppState, PANEL_HEADER_HEIGHT,
-    PREVIEW_PLAYHEAD_KNOB_SIZE, PREVIEW_TIMELINE_CLIP_HANDLE_WIDTH, PREVIEW_TIMELINE_CLIP_INSET,
+    ActiveView, CONTENT_PADDING, FrameAppState, PANEL_HEADER_HEIGHT, PREVIEW_PLAYHEAD_KNOB_SIZE,
+    PREVIEW_TIMELINE_CLIP_HANDLE_WIDTH, PREVIEW_TIMELINE_CLIP_INSET,
     PREVIEW_TIMELINE_CONTROL_HEIGHT, PREVIEW_TIMELINE_LABEL_WIDTH, PREVIEW_TIMELINE_LANE_HEIGHT,
     PREVIEW_TIMELINE_ROW_GAP, PREVIEW_TIMELINE_RULER_HEIGHT, PREVIEW_TOOLBAR_BUTTON_SIZE,
     PREVIEW_TOOLBAR_ICON_SIZE, PREVIEW_TOOLBAR_OFFSET, SETTINGS_CONTROL_HEIGHT,
     SETTINGS_PANEL_PADDING, SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE,
     TITLEBAR_ACTION_ICON_SIZE, TITLEBAR_BUTTON_HEIGHT, TITLEBAR_ICON_BUTTON_SIZE,
-    TITLEBAR_ICON_SIZE, VisualFixture, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, WORKSPACE_GAP,
+    TITLEBAR_ICON_SIZE, VisualFixture, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
     active_view_from_env_value,
     app_info::{FRAME_APP_ID, FRAME_APP_VERSION},
     app_persistence::{AppPersistence, AppSettings},
@@ -78,17 +77,13 @@ use crate::{
     capabilities::{detect_available_encoders, detect_available_filters},
     conversion_events::{ActiveLogFile, ConversionEventState, LogLine, all_conversions_settled},
     conversion_runner::{
-        ConversionProcessController, conversion_task_from_file, disambiguate_output_paths,
-        run_conversion_batch_with_control,
+        ConversionProcessController, conversion_task_from_file, run_conversion_batch_with_control,
     },
     file_filters::{
-        AUDIO_FILE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, discover_supported_source_paths,
-        filter_supported_source_paths, is_supported_overlay_image_path,
+        discover_supported_source_paths, filter_supported_source_paths,
+        is_supported_overlay_image_path,
     },
-    file_queue::{
-        BatchSelectionState, FileItem, FileQueue, FileStateTone, FileStatus, RowActionAvailability,
-        RowPrimaryAction, RowSecondaryAction, format_file_size,
-    },
+    file_queue::{FileItem, FileQueue, FileStatus},
     format_total_size,
     native_dialogs::{
         output_folder_dialog, overlay_image_dialog, pick_output_folder, pick_overlay_image_file,
@@ -145,6 +140,7 @@ use crate::{
 };
 use frame_core::capabilities::{AvailableEncoders, AvailableFilters};
 use frame_core::events::ConversionEvent;
+#[cfg(test)]
 use frame_core::types::DEFAULT_MAX_CONCURRENCY;
 use frame_updater::{DownloadProgress, UpdateChannel, UpdateCheck, UpdateInfo, UpdatePackage};
 use gpui::{
@@ -198,8 +194,6 @@ actions!(
     ]
 );
 
-const FILE_LIST_ACTIONS_WIDTH: f32 = 64.0;
-const FILE_LIST_ACTION_BUTTON_SIZE: f32 = 24.0;
 const FILE_LIST_ACTION_ICON_SIZE: f32 = 16.0;
 const LOG_LINE_NUMBER_WIDTH: f32 = 32.0;
 const LOG_LINE_HEIGHT: f32 = 24.0;
@@ -256,7 +250,6 @@ pub struct FrameRoot {
     focus_registry: FrameFocusRegistry,
     file_queue: FileQueue,
     project: project::Project,
-    file_list_scroll_handle: UniformListScrollHandle,
     conversion_events: ConversionEventState,
     logs_scroll_handle: UniformListScrollHandle,
     last_log_scroll_target: Option<LogScrollTarget>,
@@ -268,7 +261,6 @@ pub struct FrameRoot {
     settings_ui: SettingsUiState,
     tooltip_ui: TooltipUiState,
     drag_drop_ui: DragDropUiState,
-    max_concurrency: usize,
     default_output_directory: Option<std::path::PathBuf>,
     text_input_ui: FrameTextInputUiState,
     source_metadata: SourceMetadataStore,
@@ -303,8 +295,6 @@ struct SettingsUiState {
     is_open: bool,
     is_present: bool,
     active_tab: SettingsTab,
-    max_concurrency_draft: String,
-    max_concurrency_error: Option<String>,
     output_directory_error: Option<String>,
     appearance_error: Option<String>,
     app_settings_scroll_handle: ScrollHandle,
@@ -380,8 +370,6 @@ impl Default for SettingsUiState {
             is_open: false,
             is_present: false,
             active_tab: SettingsTab::VideoFilters,
-            max_concurrency_draft: DEFAULT_MAX_CONCURRENCY.to_string(),
-            max_concurrency_error: None,
             output_directory_error: None,
             appearance_error: None,
             app_settings_scroll_handle: ScrollHandle::new(),
