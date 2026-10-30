@@ -258,10 +258,7 @@ mod frame_root_conversion {
 
         assert!(!root.prepare_file_for_reconversion("first"));
         assert!(!root.remove_file_from_queue("first"));
-        assert!(root.text_input_disabled(FrameTextInputKind::MaxConcurrency));
         assert!(root.text_input_disabled(FrameTextInputKind::ExportName));
-        assert!(root.toggle_file_batch_selection("first").is_none());
-        assert!(root.toggle_all_file_batch_selection().is_none());
         assert!(!root.select_workspace_file("second"));
         assert!(!root.update_selected_config(|config| {
             config.video_bitrate = "1".to_string();
@@ -279,110 +276,12 @@ mod frame_root_conversion {
     }
 
     #[test]
-    fn queue_selected_conversion_tasks_requires_default_output_directory() {
-        let mut root = FrameRoot::new();
-        root.file_queue
-            .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
-
-        assert!(root.queue_selected_conversion_tasks().is_empty());
-        assert_eq!(
-            root.file_queue.file_by_id("first").map(|file| file.status),
-            Some(FileStatus::Idle)
-        );
-    }
-
-    #[test]
-    fn queue_selected_conversion_tasks_marks_pending_file_as_queued() {
-        let mut root = root_with_output_directory();
-        root.file_queue
-            .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
-        root.file_queue
-            .add_file(FileItem::from_path("second", "/tmp/two.mp4", 1));
-        root.file_queue.toggle_batch("second", false);
-
-        let tasks = root.queue_selected_conversion_tasks();
-
-        assert_eq!(
-            tasks
-                .iter()
-                .map(|task| task.id.as_str())
-                .collect::<Vec<_>>(),
-            ["first"]
-        );
-        assert_eq!(
-            root.file_queue.file_by_id("first").map(|file| file.status),
-            Some(FileStatus::Queued)
-        );
-        assert_eq!(tasks[0].output_name.as_deref(), Some("one_converted"));
-        assert_eq!(tasks[0].output_directory, "/tmp/frame-output");
-    }
-
-    #[test]
-    fn queue_selected_conversion_tasks_assigns_and_exposes_unique_output_names() {
-        let mut root = FrameRoot::new();
-        root.default_output_directory = Some(test_settings_path().with_file_name("exports"));
-        root.file_queue
-            .add_file(FileItem::from_path("mov", "/A/clip.mov", 1));
-        root.file_queue
-            .add_file(FileItem::from_path("mkv", "/B/clip.mkv", 1));
-
-        let tasks = root.queue_selected_conversion_tasks();
-
-        assert_eq!(
-            (
-                tasks[0].output_name.as_deref(),
-                tasks[1].output_name.as_deref(),
-                root.file_queue
-                    .file_by_id("mov")
-                    .map(|file| file.output_name.as_str()),
-                root.file_queue
-                    .file_by_id("mkv")
-                    .map(|file| file.output_name.as_str())
-            ),
-            (
-                Some("clip_converted"),
-                Some("clip_converted_2"),
-                Some("clip_converted"),
-                Some("clip_converted_2")
-            )
-        );
-    }
-
-    #[test]
-    fn queue_selected_conversion_tasks_normalizes_each_file_from_own_metadata() {
-        let mut root = root_with_output_directory();
-        root.file_queue
-            .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
-        root.file_queue
-            .add_file(FileItem::from_path("image", "/tmp/two.png", 1));
-        root.source_metadata.mark_ready(
-            "image",
-            SourceMetadata {
-                media_kind: Some(SourceKind::Image),
-                ..SourceMetadata::default()
-            },
-        );
-
-        let tasks = root.queue_selected_conversion_tasks();
-
-        let image_task = tasks
-            .iter()
-            .find(|task| task.id == "image")
-            .expect("image task should be queued");
-        assert_eq!(image_task.config.container, "png");
-        assert_eq!(image_task.config.video_codec, "png");
-    }
-
-    #[test]
-    fn queue_selected_conversion_tasks_infers_image_config_from_extension_without_metadata() {
-        let mut root = root_with_output_directory();
-        root.file_queue
-            .add_file(FileItem::from_path("image", "/tmp/two.PNG", 1));
-
-        let tasks = root.queue_selected_conversion_tasks();
-
-        assert_eq!(tasks[0].config.container, "png");
-        assert_eq!(tasks[0].config.video_codec, "png");
+    fn prepare_project_export_requires_default_output_directory() {
+        let mut root = super::super::project::tests::project();
+        root.add_library_clip("source");
+        let before = root.file_queue.files().to_vec();
+        assert!(root.prepare_project_export().is_empty());
+        assert_eq!(root.file_queue.files(), before);
     }
 
     #[test]
@@ -390,7 +289,7 @@ mod frame_root_conversion {
         let mut root = root_with_output_directory();
         root.file_queue
             .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
-        root.queue_selected_conversion_tasks();
+        root.file_queue.queue_selected_pending_conversions();
         root.is_processing = true;
 
         root.apply_conversion_event(ConversionEvent::completed("first", "/tmp/one.mp4"));
@@ -419,7 +318,7 @@ mod frame_root_conversion {
             .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
         root.file_queue
             .add_file(FileItem::from_path("second", "/tmp/two.mp4", 1));
-        root.queue_selected_conversion_tasks();
+        root.file_queue.queue_selected_pending_conversions();
         root.active_conversion_task_ids = vec!["first".to_string(), "second".to_string()];
         root.is_processing = true;
 
@@ -453,7 +352,7 @@ mod frame_root_conversion {
         root.default_output_directory = Some(PathBuf::from("/tmp/frame-output"));
         root.file_queue
             .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
-        root.queue_selected_conversion_tasks();
+        root.file_queue.queue_selected_pending_conversions();
         root.active_conversion_task_ids = vec!["first".to_string()];
         root.is_processing = true;
 
@@ -481,28 +380,6 @@ mod frame_root_conversion {
 
         assert!(root.file_queue.file_by_id("first").is_none());
         assert!(root.conversion_events.logs_for("first").is_empty());
-    }
-
-    #[test]
-    fn pause_conversion_task_keeps_status_when_process_is_missing() {
-        let mut root = FrameRoot::new();
-        root.file_queue
-            .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
-        root.file_queue
-            .update_status("first", FileStatus::Converting, 30);
-
-        assert!(!root.pause_conversion_task("first"));
-
-        assert_eq!(
-            root.file_queue.file_by_id("first").map(|file| file.status),
-            Some(FileStatus::Converting)
-        );
-        assert!(
-            root.conversion_events
-                .logs_for("first")
-                .iter()
-                .any(|line| line.contains("Failed to pause"))
-        );
     }
 
     #[test]
@@ -549,20 +426,19 @@ mod frame_root_conversion {
     }
 
     #[test]
-    fn max_concurrency_defaults_to_shared_backend_limit() {
+    fn exports_are_limited_to_one_project() {
         let root = FrameRoot::new();
 
-        assert_eq!(root.max_concurrency, DEFAULT_MAX_CONCURRENCY);
         assert_eq!(
             root.conversion_processes
                 .current_max_concurrency()
                 .expect("max concurrency should be readable"),
-            DEFAULT_MAX_CONCURRENCY
+            1
         );
     }
 
     #[test]
-    fn new_with_persistence_hydrates_max_concurrency_and_custom_presets() {
+    fn legacy_parallelism_is_ignored_while_custom_presets_are_restored() {
         let persistence = AppPersistence::from_settings_path(test_settings_path());
         persistence
             .save(&AppSettings {
@@ -578,12 +454,11 @@ mod frame_root_conversion {
 
         let root = FrameRoot::new_with_persistence(persistence);
 
-        assert_eq!(root.max_concurrency, 6);
         assert_eq!(
             root.conversion_processes
                 .current_max_concurrency()
                 .expect("max concurrency should be readable"),
-            6
+            1
         );
         assert!(
             root.presets
@@ -660,22 +535,6 @@ mod frame_root_conversion {
                 .output_directory_error
                 .as_deref()
                 .is_some_and(|error| error.starts_with("Failed to save settings:"))
-        );
-    }
-
-    #[test]
-    fn apply_max_concurrency_draft_updates_live_controller_limit() {
-        let mut root = FrameRoot::new();
-        root.settings_ui.max_concurrency_draft = "4".to_string();
-
-        assert!(root.apply_max_concurrency_draft());
-
-        assert_eq!(root.max_concurrency, 4);
-        assert_eq!(
-            root.conversion_processes
-                .current_max_concurrency()
-                .expect("max concurrency should be readable"),
-            4
         );
     }
 
@@ -861,30 +720,6 @@ mod frame_root_conversion {
     }
 
     #[test]
-    fn concurrency_stepper_applies_immediately_and_persists() {
-        let persistence = AppPersistence::from_settings_path(test_settings_path());
-        let mut root = FrameRoot::new_with_persistence(persistence.clone());
-        let initial = root.max_concurrency;
-        root.step_max_concurrency(true);
-        assert_eq!(root.max_concurrency, initial + 1);
-        assert_eq!(persistence.load().unwrap().max_concurrency, initial + 1);
-        root.step_max_concurrency(false);
-        assert_eq!(root.max_concurrency, initial);
-    }
-
-    #[test]
-    fn concurrency_stepper_clamps_at_one_and_respects_installation() {
-        let mut root = FrameRoot::new();
-        root.settings_ui.max_concurrency_draft = "1".into();
-        root.apply_max_concurrency_draft();
-        root.step_max_concurrency(false);
-        assert_eq!(root.max_concurrency, 1);
-        root.update_ui.status = UpdateStatus::Installing;
-        root.step_max_concurrency(true);
-        assert_eq!(root.max_concurrency, 1);
-    }
-
-    #[test]
     fn selecting_manual_theme_disables_system_following() {
         let mut root = FrameRoot::new();
         root.appearance.follow_system_theme = true;
@@ -920,96 +755,6 @@ mod frame_root_conversion {
         assert!(!root.set_ui_scale(ScalePreset::Percent150));
         assert!(!root.set_color_theme(crate::appearance::ColorTheme::Light));
         assert_eq!(root.appearance, AppearanceSettings::default());
-    }
-
-    #[test]
-    fn apply_max_concurrency_draft_persists_updated_limit() {
-        let persistence = AppPersistence::from_settings_path(test_settings_path());
-        let mut root = FrameRoot::new_with_persistence(persistence.clone());
-        root.settings_ui.max_concurrency_draft = "5".to_string();
-
-        assert!(root.apply_max_concurrency_draft());
-
-        assert_eq!(
-            persistence
-                .load()
-                .expect("settings should be readable")
-                .max_concurrency,
-            5
-        );
-    }
-
-    #[test]
-    fn apply_max_concurrency_draft_rejects_zero() {
-        let mut root = FrameRoot::new();
-        root.settings_ui.max_concurrency_draft = "0".to_string();
-
-        assert!(!root.apply_max_concurrency_draft());
-
-        assert_eq!(root.max_concurrency, DEFAULT_MAX_CONCURRENCY);
-        assert!(root.settings_ui.max_concurrency_error.is_some());
-    }
-
-    #[test]
-    fn max_concurrency_input_inserts_digits_at_selection() {
-        let mut root = FrameRoot::new();
-        root.settings_ui.max_concurrency_draft = "12".to_string();
-        root.text_input_runtime_mut(FrameTextInputKind::MaxConcurrency)
-            .selected_range = 1..1;
-
-        assert!(root.replace_text_input_range(
-            FrameTextInputKind::MaxConcurrency,
-            None,
-            "9",
-            None,
-            false,
-        ));
-
-        assert_eq!(root.settings_ui.max_concurrency_draft, "192");
-        assert_eq!(
-            root.text_input_runtime(FrameTextInputKind::MaxConcurrency)
-                .selected_range,
-            2..2
-        );
-    }
-
-    #[test]
-    fn max_concurrency_input_deletes_selected_range() {
-        let mut root = FrameRoot::new();
-        root.settings_ui.max_concurrency_draft = "12".to_string();
-        root.text_input_runtime_mut(FrameTextInputKind::MaxConcurrency)
-            .selected_range = 1..2;
-
-        assert!(root.replace_text_input_range(
-            FrameTextInputKind::MaxConcurrency,
-            None,
-            "",
-            None,
-            false,
-        ));
-
-        assert_eq!(root.settings_ui.max_concurrency_draft, "1");
-        assert_eq!(
-            root.text_input_runtime(FrameTextInputKind::MaxConcurrency)
-                .selected_range,
-            1..1
-        );
-    }
-
-    #[test]
-    fn max_concurrency_apply_updates_live_controller_limit() {
-        let mut root = FrameRoot::new();
-        root.settings_ui.max_concurrency_draft = "4".to_string();
-
-        assert!(root.apply_max_concurrency_draft());
-
-        assert_eq!(root.max_concurrency, 4);
-        assert_eq!(
-            root.conversion_processes
-                .current_max_concurrency()
-                .expect("max concurrency should be readable"),
-            4
-        );
     }
 
     #[test]
@@ -1067,6 +812,7 @@ mod frame_root_conversion {
 
     fn root_with_timecode_preview(duration: f64) -> FrameRoot {
         let mut root = FrameRoot::new();
+        root.project.enabled = false;
         root.file_queue
             .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
         root.preview_ui.playback_file_id = Some("first".to_string());
@@ -1581,6 +1327,7 @@ mod frame_root_config {
     }
 
     fn seed_ready_video(root: &mut FrameRoot, id: &str, path: &str) {
+        root.project.enabled = false;
         root.file_queue.add_file(FileItem::from_path(id, path, 1));
         root.source_metadata.mark_ready(
             id.to_string(),
@@ -1723,6 +1470,7 @@ mod frame_root_config {
     #[test]
     fn normalize_selected_config_clears_trim_for_selected_image_only() {
         let mut root = FrameRoot::new();
+        root.project.enabled = false;
         root.file_queue
             .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
         root.file_queue
@@ -1760,6 +1508,7 @@ mod frame_root_config {
     #[test]
     fn apply_preview_timeline_drag_updates_playback_start_without_committing_config() {
         let mut root = FrameRoot::new();
+        root.project.enabled = false;
         root.file_queue
             .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
         root.source_metadata.mark_ready(
@@ -1809,6 +1558,7 @@ mod frame_root_config {
     #[test]
     fn apply_preview_timeline_handle_drag_pauses_active_playback() {
         let mut root = FrameRoot::new();
+        root.project.enabled = false;
         root.file_queue
             .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
         root.source_metadata.mark_ready(
@@ -1986,6 +1736,7 @@ mod frame_root_config {
     #[test]
     fn apply_preview_timeline_drag_preserves_gap_when_end_moves_before_start() {
         let mut root = FrameRoot::new();
+        root.project.enabled = false;
         root.file_queue
             .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
         root.source_metadata.mark_ready(
@@ -2051,6 +1802,7 @@ mod frame_root_config {
     #[test]
     fn commit_preview_timeline_seek_at_position_updates_local_playhead() {
         let mut root = FrameRoot::new();
+        root.project.enabled = false;
         root.file_queue
             .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
         root.source_metadata.mark_ready(
@@ -2309,6 +2061,7 @@ mod frame_root_config {
     #[test]
     fn preview_runtime_request_is_silent_without_explicit_audio_selection() {
         let mut root = FrameRoot::new();
+        root.project.enabled = false;
         root.file_queue
             .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
         root.source_metadata.mark_ready(
@@ -2337,6 +2090,7 @@ mod frame_root_config {
     #[test]
     fn preview_runtime_request_uses_first_valid_explicit_audio_selection() {
         let mut root = FrameRoot::new();
+        root.project.enabled = false;
         root.file_queue
             .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
         root.source_metadata.mark_ready(
@@ -2373,6 +2127,7 @@ mod frame_root_config {
     )]
     fn preview_runtime_key_tracks_visual_config_but_ignores_encoder_quality() {
         let mut root = FrameRoot::new();
+        root.project.enabled = false;
         root.file_queue
             .add_file(FileItem::from_path("video", "/tmp/one.mp4", 1));
         root.source_metadata.mark_ready(
@@ -3382,8 +3137,8 @@ mod visual_fixtures {
 
         assert!(root.settings_ui.is_open);
         assert_eq!(
-            root.settings_ui.max_concurrency_draft,
-            root.max_concurrency.to_string()
+            root.conversion_processes.current_max_concurrency().unwrap(),
+            1
         );
     }
 
@@ -3522,15 +3277,6 @@ mod visual_fixtures {
                 .map(|metadata| metadata.source_kind()),
             Some(SourceKind::Image)
         );
-    }
-
-    #[test]
-    fn workspace_large_queue_fixture_seeds_many_files_for_virtualization_checks() {
-        let mut root = FrameRoot::new();
-
-        root.apply_visual_fixture(Some(VisualFixture::WorkspaceLargeQueue));
-
-        assert_eq!(root.file_queue.files().len(), 500);
     }
 
     #[test]
@@ -4044,23 +3790,6 @@ mod preview_shell {
 
 mod visual_contract {
     use super::*;
-
-    #[test]
-    fn max_concurrency_runtime_settings_has_no_stepper_actions() {
-        let mut root = FrameRoot::new();
-        root.settings_ui.max_concurrency_draft = "1".to_string();
-        root.text_input_runtime_mut(FrameTextInputKind::MaxConcurrency)
-            .selected_range = 1..1;
-
-        assert!(!root.replace_text_input_range(
-            FrameTextInputKind::MaxConcurrency,
-            None,
-            "-",
-            None,
-            false,
-        ));
-        assert_eq!(root.settings_ui.max_concurrency_draft, "1");
-    }
 
     #[test]
     fn audio_slider_helpers_map_values_to_original_range() {

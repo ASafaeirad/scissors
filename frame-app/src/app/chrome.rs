@@ -14,7 +14,7 @@ use super::{
     ease_in_out, format_total_size, motion_is_hidden, motion_target, px, relative,
     set_motion_target, settings_sheet_right_inset, theme,
 };
-use crate::material::{ColorScheme, Symbol, shape, typography};
+use crate::material::{ColorScheme, Symbol, typography};
 use gpui::{HighlightStyle, StyledText};
 
 const MAX_RELEASE_NOTES_CHARS: usize = 8_000;
@@ -58,8 +58,6 @@ pub(super) fn titlebar_drag_surface(cx: &Context<FrameRoot>) -> gpui::Div {
 )]
 pub(super) struct AppSettingsSheetProps<'a> {
     pub(super) is_open: bool,
-    pub(super) current_max_concurrency: usize,
-    pub(super) error: Option<&'a str>,
     pub(super) default_output_directory: Option<&'a str>,
     pub(super) output_directory_error: Option<&'a str>,
     pub(super) appearance: AppearanceSettings,
@@ -68,8 +66,6 @@ pub(super) struct AppSettingsSheetProps<'a> {
     pub(super) scroll_handle: &'a ScrollHandle,
     pub(super) theme_focuses: &'a [FocusHandle],
     pub(super) ui_scale_focuses: &'a [FocusHandle],
-    pub(super) decrease_focus: &'a FocusHandle,
-    pub(super) increase_focus: &'a FocusHandle,
     pub(super) auto_update_check: bool,
     pub(super) show_fps_meter: bool,
     pub(super) update_status: &'a UpdateStatus,
@@ -230,10 +226,6 @@ fn settings_error(
         .child(message.to_string())
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "Output rows keep their labels and controls together."
-)]
 fn app_settings_output_section(
     props: &AppSettingsSheetProps<'_>,
     scheme: &ColorScheme,
@@ -277,74 +269,6 @@ fn app_settings_output_section(
         .when_some(props.output_directory_error, |this, error| {
             this.child(settings_error(
                 "app-settings-output-directory-error",
-                error,
-                scheme,
-            ))
-        })
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(theme::ui_rem(16.0))
-                .child(m3::m3_icon(
-                    Symbol::Layers,
-                    false,
-                    24.0,
-                    color(scheme.on_surface_variant),
-                ))
-                .child(settings_copy(
-                    "Max concurrency",
-                    "Conversions that run at the same time",
-                    scheme,
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .rounded(theme::ui_rem(shape::CORNER_FULL))
-                        .bg(color(scheme.surface_container_highest))
-                        .text_color(color(scheme.on_surface))
-                        .child(
-                            m3::IconButton::new(
-                                "app-settings-concurrency-decrease",
-                                Symbol::Remove,
-                                "Decrease max concurrency",
-                            )
-                            .enabled(props.current_max_concurrency > 1)
-                            .focus(props.decrease_focus)
-                            .build(scheme, window, cx)
-                            .on_click(cx.listener(|root, _, _, cx| {
-                                root.step_max_concurrency(false);
-                                cx.notify();
-                            })),
-                        )
-                        .child(
-                            div()
-                                .min_w(theme::ui_rem(24.0))
-                                .text_center()
-                                .m3_type(typography::LABEL_LARGE)
-                                .child(props.current_max_concurrency.to_string()),
-                        )
-                        .child(
-                            m3::IconButton::new(
-                                "app-settings-concurrency-increase",
-                                Symbol::Add,
-                                "Increase max concurrency",
-                            )
-                            .enabled(props.current_max_concurrency < usize::MAX)
-                            .focus(props.increase_focus)
-                            .build(scheme, window, cx)
-                            .on_click(cx.listener(|root, _, _, cx| {
-                                root.step_max_concurrency(true);
-                                cx.notify();
-                            })),
-                        ),
-                ),
-        )
-        .when_some(props.error, |this, error| {
-            this.child(settings_error(
-                "app-settings-max-concurrency-error",
                 error,
                 scheme,
             ))

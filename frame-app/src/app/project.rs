@@ -1,9 +1,10 @@
-//! Project media are reusable sources; queue items are independent clip instances.
+//! One project contains reusable media sources and independently edited timeline clips.
 use super::*;
 use crate::conversion_runner::core_config_from_gpui;
 
 #[derive(Default)]
 pub(super) struct Project {
+    /// Normal startup always enables the project. Standalone source fixtures disable it.
     pub(super) enabled: bool,
     pub(super) library: FileQueue,
     pub(super) clips: Vec<ClipPlacement>,
@@ -31,7 +32,6 @@ pub(super) struct ClipPlacement {
 
 pub(super) struct ProjectRenderState {
     pub(super) library: FileQueue,
-    pub(super) exports: FileQueue,
     pub(super) ready_sources: std::collections::HashSet<String>,
     pub(super) timeline: super::project_timeline::ProjectTimelineState,
 }
@@ -41,15 +41,8 @@ impl FrameRoot {
         if !self.project.enabled {
             return None;
         }
-        let mut exports = FileQueue::new();
-        for id in &self.export_ui.task_ids {
-            if let Some(file) = self.file_queue.file_by_id(id) {
-                exports.add_file(file.clone());
-            }
-        }
         Some(ProjectRenderState {
             library: self.project.library.clone(),
-            exports,
             ready_sources: self
                 .project
                 .library
@@ -253,6 +246,67 @@ impl FrameRoot {
         true
     }
 
+    pub(super) fn split_project_clip_at_playhead(&mut self) -> bool {
+        if self.is_processing || self.update_installation_in_progress() || self.export_ui.open {
+            return false;
+        }
+        let Some(id) = self.file_queue.selected_file_id() else {
+            return false;
+        };
+        let Some(index) = self.project.clips.iter().position(|clip| clip.id == id) else {
+            return false;
+        };
+        let mut right = self.project.clips[index].clone();
+        let Some(mut file) = self.file_queue.file_by_id(id).cloned() else {
+            return false;
+        };
+        let Some(metadata) = self.source_metadata.metadata_for(id).cloned() else {
+            return false;
+        };
+        let config = core_config_from_gpui(&file.config);
+        let trim_start = file
+            .config
+            .start_time
+            .as_deref()
+            .map_or(0.0, parse_time_to_seconds);
+        let duration = if right.kind == SourceKind::Image {
+            5.0
+        } else {
+            preview_duration_seconds(Some(&metadata))
+        };
+        let playhead = self.preview_ui.playback.current_time();
+        let offset = Duration::from_millis(right.offset_millis).as_secs_f64();
+        let length = frame_core::cuts::output_duration_seconds(&config)
+            .unwrap_or(duration - trim_start)
+            / right.speed;
+        // Keep a usable clip on each side and ignore the clip boundaries.
+        if !playhead.is_finite() || playhead - offset < 0.05 || offset + length - playhead < 0.05 {
+            return false;
+        }
+        let mut source_time = (playhead - offset) * right.speed;
+        for cut in frame_core::cuts::output_cut_ranges(&config) {
+            if cut.start > source_time {
+                break;
+            }
+            source_time += cut.duration();
+        }
+        let split_time = format_time(trim_start + source_time);
+        let left_id = right.id.clone();
+        file.id = self.next_file_id();
+        file.config.start_time = Some(split_time.clone());
+        right.id.clone_from(&file.id);
+        right.offset_millis = crate::numeric::rounded_f64_to_u64(playhead * 1000.0);
+        self.file_queue
+            .file_by_id_mut(&left_id)
+            .unwrap()
+            .config
+            .end_time = Some(split_time);
+        self.source_metadata.mark_ready(right.id.clone(), metadata);
+        self.file_queue.add_file(file);
+        self.project.clips.insert(index + 1, right);
+        true
+    }
+
     pub(super) fn project_sources(&self) -> Vec<frame_core::types::TimelineSource> {
         self.project
             .clips
@@ -407,6 +461,57 @@ pub(in crate::app) mod tests {
     }
 
     #[test]
+    fn splitting_preserves_trim_speed_settings_and_project_duration() {
+        let mut root = project();
+        root.add_library_clip("source");
+        let id = root.project.clips[0].id.clone();
+        root.move_project_clip(&id, 3_000);
+        root.set_project_clip_speed(&id, 2.0);
+        root.update_selected_config(|config| {
+            config.start_time = Some(format_time(2.0));
+            config.audio_volume = 25;
+            config.cut_segments = vec![crate::settings::CutSegment {
+                start_time: format_time(4.0),
+                end_time: format_time(6.0),
+            }];
+            true
+        });
+        root.preview_ui.playback = preview_playback_state(PreviewMediaKind::Video, 6.0, None, None);
+        let _ = root.preview_ui.playback.seek_once_to_percent(0.75);
+        let duration = root.project_duration();
+        assert!(root.split_project_clip_at_playhead());
+        assert_eq!(root.project.clips.len(), 2);
+        let sources = root.project_sources();
+        assert_eq!(sources[0].config.end_time.as_deref(), Some("00:00:07.000"));
+        assert_eq!(
+            sources[1].config.start_time.as_deref(),
+            Some("00:00:07.000")
+        );
+        assert_eq!(sources[1].offset_millis, 4_500);
+        assert!((sources[1].config.audio_volume - 25.0).abs() < f64::EPSILON);
+        assert!((sources[1].speed - 2.0).abs() < f64::EPSILON);
+        assert_eq!(root.project.clips[1].source_id, "source");
+        assert!((root.project_duration() - duration).abs() < 0.001);
+        assert!(!root.split_project_clip_at_playhead());
+    }
+
+    #[test]
+    fn splitting_ignores_boundaries_gaps_and_processing() {
+        let mut root = project();
+        root.add_library_clip_at("source", 2_000);
+        root.preview_ui.playback =
+            preview_playback_state(PreviewMediaKind::Video, 12.0, None, None);
+        for time in [0.0, 1.0, 2.0, 12.0] {
+            let _ = root.preview_ui.playback.seek_once_to_percent(time / 12.0);
+            assert!(!root.split_project_clip_at_playhead());
+        }
+        let _ = root.preview_ui.playback.seek_once_to_percent(0.5);
+        root.is_processing = true;
+        assert!(!root.split_project_clip_at_playhead());
+        assert_eq!(root.project.clips.len(), 1);
+    }
+
+    #[test]
     fn library_selection_does_not_switch_or_create_timeline_instances() {
         let mut root = project();
         assert!(root.select_library_source("source"));
@@ -527,7 +632,7 @@ pub(in crate::app) mod tests {
             true
         });
         assert_eq!(&root.file_queue.files()[..2], &before);
-        let tasks = root.queue_selected_conversion_tasks();
+        let tasks = root.prepare_project_export();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].config.timeline_sources.len(), 2);
         assert_eq!(tasks[0].config.container, "mkv");
@@ -535,6 +640,64 @@ pub(in crate::app) mod tests {
         assert_eq!(
             root.file_queue.selected_file_id(),
             Some(before[1].id.as_str())
+        );
+    }
+
+    #[test]
+    fn app_starts_with_one_empty_project() {
+        let root = FrameRoot::new();
+        assert!(root.project.enabled);
+        assert!(root.project.clips.is_empty());
+        assert!(root.project.library.files().is_empty());
+    }
+
+    #[test]
+    fn pending_files_cannot_be_exported_as_a_batch() {
+        let mut root = FrameRoot::new();
+        root.default_output_directory = Some(PathBuf::from("/tmp"));
+        root.file_queue
+            .add_file(FileItem::from_path("one", "/tmp/one.mp4", 0));
+        root.file_queue
+            .add_file(FileItem::from_path("two", "/tmp/two.mp4", 0));
+        assert!(root.prepare_project_export().is_empty());
+        assert!(
+            root.file_queue
+                .files()
+                .iter()
+                .all(|file| file.status == FileStatus::Idle)
+        );
+    }
+
+    #[test]
+    fn exporting_blocks_another_export_and_project_replacement() {
+        let mut root = project();
+        root.default_output_directory = Some(PathBuf::from("/tmp"));
+        root.add_library_clip("source");
+        let tasks = root.prepare_project_export();
+        assert_eq!(tasks.len(), 1);
+        root.is_processing = true;
+        assert!(root.prepare_project_export().is_empty());
+        assert!(
+            root.replace_project(
+                PathBuf::from("/tmp/other.frame"),
+                super::super::project_file::ProjectFile::default(),
+            )
+            .is_none()
+        );
+        assert_eq!(root.project.clips.len(), 1);
+        root.apply_conversion_event(ConversionEvent::completed(
+            "project-export",
+            "/tmp/result.mp4",
+        ));
+        assert!(!root.is_processing);
+        assert_eq!(root.prepare_project_export().len(), 1);
+        assert_eq!(
+            root.file_queue
+                .files()
+                .iter()
+                .filter(|file| file.id == "project-export")
+                .count(),
+            1
         );
     }
 

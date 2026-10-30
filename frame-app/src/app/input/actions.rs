@@ -95,16 +95,14 @@ impl FrameRoot {
         }
     }
 
-    pub(in crate::app) fn text_input_disabled(&self, kind: FrameTextInputKind) -> bool {
+    pub(in crate::app) fn text_input_disabled(&self, _kind: FrameTextInputKind) -> bool {
         self.update_installation_in_progress()
-            || (!matches!(kind, FrameTextInputKind::MaxConcurrency)
-                && (self.file_queue.selected_file_locked()
-                    || (self.project.enabled && self.is_processing)))
+            || self.file_queue.selected_file_locked()
+            || (self.project.enabled && self.is_processing)
     }
 
     pub(in crate::app) fn text_input_value(&self, kind: FrameTextInputKind) -> String {
         match kind {
-            FrameTextInputKind::MaxConcurrency => self.settings_ui.max_concurrency_draft.clone(),
             FrameTextInputKind::ExportName => {
                 if self.editing_project_output() {
                     self.project.output_name.clone()
@@ -165,24 +163,12 @@ impl FrameRoot {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "Text input routing centralizes per-field normalization so field behavior stays auditable in one place."
-    )]
     pub(in crate::app) fn write_text_input_value(
         &mut self,
         kind: FrameTextInputKind,
         candidate: &str,
     ) -> Option<String> {
         match kind {
-            FrameTextInputKind::MaxConcurrency => {
-                let next = sanitize_number_input(candidate);
-                if self.settings_ui.max_concurrency_draft != next {
-                    self.settings_ui.max_concurrency_draft.clone_from(&next);
-                    self.settings_ui.max_concurrency_error = None;
-                }
-                Some(next)
-            }
             FrameTextInputKind::ExportName => {
                 if self.file_queue.selected_file_locked() {
                     return None;

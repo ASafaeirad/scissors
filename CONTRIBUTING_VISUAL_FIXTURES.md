@@ -88,9 +88,9 @@ the final GPUI rendering.
 | `settings-metadata` | Metadata tab with source tags and output metadata drafts | Source metadata presentation, editable metadata fields, long value wrapping, and tag/value alignment. |
 | `settings-presets` | Export dialog with an edited built-in preset, a custom preset, and a name draft | Grouped preset library, saving current options, custom preset deletion, and preset form spacing. |
 | `update-available` | Update dialog with release notes and a platform asset | Update dialog layout, release notes markdown rendering, scroll behavior, close animation, footer actions, and platform-specific asset copy. |
-| `workspace-empty` | Empty workspace | Welcome/import screen, empty queue layout, primary and secondary import actions, and first-run visual balance. |
-| `workspace-audio` | Workspace with a selected audio source | Queue row for audio media, audio metadata display, preview controls hidden for audio-only sources, and audio conversion defaults. |
-| `workspace-image` | Workspace with a selected image source | Queue row for image media, image metadata display, image preview state, and image conversion defaults. |
+| `workspace-empty` | Empty workspace | Welcome/import screen, empty project timeline, primary and secondary import actions, and first-run visual balance. |
+| `workspace-audio` | Workspace with a selected audio source | Library card for audio media, audio metadata display, preview controls hidden for audio-only sources, and audio conversion defaults. |
+| `workspace-image` | Workspace with a selected image source | Library card for image media, image metadata display, image preview state, and image conversion defaults. |
 
 ## Maintenance Checklist
 

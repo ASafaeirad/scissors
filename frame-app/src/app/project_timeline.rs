@@ -215,6 +215,20 @@ pub(super) fn project_timeline(
     let enabled = state.enabled;
     m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
         .id("project-timeline")
+        .track_focus(focus)
+        .tab_stop(false)
+        .role(gpui::Role::Group)
+        .aria_label("Project timeline")
+        .on_key_down(cx.listener(|root, event: &gpui::KeyDownEvent, _, cx| {
+            if root.adjust_preview_timeline_from_keyboard_with_context(
+                TimelineDragTarget::Scrub,
+                &event.keystroke.key,
+                cx,
+            ) {
+                cx.stop_propagation();
+                cx.notify();
+            }
+        }))
         .flex_none()
         .min_w_0()
         .w_full()
@@ -257,7 +271,7 @@ pub(super) fn project_timeline(
                 .flex()
                 .flex_col()
                 .gap(theme::ui_rem(8.0))
-                .child(project_ruler(state, focus, cx))
+                .child(project_ruler(state, cx))
                 .children(track_rows(state, window, cx))
                 .child(project_playhead(scheme, state.view.fraction(state.current))),
         )
@@ -265,7 +279,6 @@ pub(super) fn project_timeline(
 
 fn project_ruler(
     state: &ProjectTimelineState,
-    focus: &FocusHandle,
     cx: &Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
     let scheme = &state.scheme;
@@ -274,7 +287,7 @@ fn project_ruler(
     let view = state.view;
     div()
         .id("project-ruler")
-        .track_focus(focus)
+        .focusable()
         .tab_stop(true)
         .role(gpui::Role::Slider)
         .aria_label("Project playhead")
@@ -962,9 +975,57 @@ mod tests {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             self.root.update(cx, |root, cx| {
                 let state = root.project_render_state(cx).unwrap();
-                project_timeline(&state.timeline, &self.focus, window, cx)
+                let seek = root.ensure_focus(
+                    super::super::FrameFocusKey::Control(
+                        super::super::hotkeys::PREVIEW_SEEK_FOCUS_ID.to_string(),
+                    ),
+                    true,
+                    cx,
+                );
+                let focus = self.focus.clone();
+                div()
+                    .track_focus(&focus)
+                    .child(project_timeline(&state.timeline, &seek, window, cx))
+                    .on_key_down(cx.listener(move |root, event, window, cx| {
+                        root.handle_preview_shortcut(event, &focus, window, cx);
+                    }))
             })
         }
+    }
+
+    #[test]
+    fn x_splits_after_clicking_a_clip_body() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|window, cx| {
+            window.activate_window();
+            let root = cx.new(|_| {
+                let mut root = crate::app::project::tests::project();
+                root.active_view = ActiveView::Workspace;
+                root.add_library_clip("source");
+                root.preview_ui.playback =
+                    preview_playback_state(PreviewMediaKind::Video, 10.0, None, None);
+                root
+            });
+            TimelineTestView {
+                root,
+                focus: cx.focus_handle(),
+            }
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let bounds = root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
+        cx.simulate_click(
+            point(
+                bounds.left() + bounds.size.width * 0.25,
+                bounds.bottom() + px(28.0),
+            ),
+            Modifiers::default(),
+        );
+        cx.simulate_keystrokes("x");
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.project.clips.len(), 2);
+            assert_eq!(root.project.clips[1].offset_millis, 2_750);
+        });
     }
 
     #[test]

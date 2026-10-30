@@ -28,6 +28,7 @@ impl FrameRoot {
             "s" if self.preview_timeline_enabled() => {
                 self.focus_registered_control(PREVIEW_SEEK_FOCUS_ID, window, cx)
             }
+            "x" if self.project.enabled => self.split_project_clip_at_playhead(),
             "x" => self.toggle_preview_cut_at_playhead(),
             _ => false,
         };
@@ -73,6 +74,7 @@ mod tests {
                     .id("shortcut-test")
                     .size_full()
                     .track_focus(&focus)
+                    .on_action(cx.listener(FrameRoot::open_settings_action))
                     .child(
                         div()
                             .id(PREVIEW_SEEK_FOCUS_ID)
@@ -142,6 +144,16 @@ mod tests {
             });
         });
         draw(cx);
+    }
+
+    #[test]
+    fn ctrl_comma_opens_settings_from_a_focused_control() {
+        let mut app = TestAppContext::single();
+        app.update(|cx| crate::app::runtime::init_app(cx, "Frame"));
+        let (root, cx) = preview_window(&mut app);
+        focus(&root, "other-control", cx);
+        cx.simulate_keystrokes("ctrl-,");
+        assert!(root.read_with(cx, |root, _| root.settings_ui.is_open));
     }
 
     #[test]
