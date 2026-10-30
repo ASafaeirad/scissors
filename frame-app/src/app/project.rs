@@ -306,41 +306,17 @@ impl FrameRoot {
         let Some(index) = self.project.clips.iter().position(|clip| clip.id == id) else {
             return false;
         };
+        let Some((playhead, split_time)) = self.project_clip_playhead_time(index) else {
+            return false;
+        };
         let mut right = self.project.clips[index].clone();
-        let Some(mut file) = self.file_queue.file_by_id(id).cloned() else {
+        let Some(mut file) = self.file_queue.file_by_id(&right.id).cloned() else {
             return false;
         };
-        let Some(metadata) = self.source_metadata.metadata_for(id).cloned() else {
+        let Some(metadata) = self.source_metadata.metadata_for(&right.id).cloned() else {
             return false;
         };
-        let config = core_config_from_gpui(&file.config);
-        let trim_start = file
-            .config
-            .start_time
-            .as_deref()
-            .map_or(0.0, parse_time_to_seconds);
-        let duration = if right.kind == SourceKind::Image {
-            5.0
-        } else {
-            preview_duration_seconds(Some(&metadata))
-        };
-        let playhead = self.preview_ui.playback.current_time();
-        let offset = Duration::from_millis(right.offset_millis).as_secs_f64();
-        let length = frame_core::cuts::output_duration_seconds(&config)
-            .unwrap_or(duration - trim_start)
-            / right.speed;
-        // Keep a usable clip on each side and ignore the clip boundaries.
-        if !playhead.is_finite() || playhead - offset < 0.05 || offset + length - playhead < 0.05 {
-            return false;
-        }
-        let mut source_time = (playhead - offset) * right.speed;
-        for cut in frame_core::cuts::output_cut_ranges(&config) {
-            if cut.start > source_time {
-                break;
-            }
-            source_time += cut.duration();
-        }
-        let split_time = format_time(trim_start + source_time);
+        let split_time = format_time(split_time);
         self.record_timeline_edit();
         let left_id = right.id.clone();
         file.id = self.next_file_id();
@@ -356,6 +332,91 @@ impl FrameRoot {
         self.file_queue.add_file(file);
         self.project.clips.insert(index + 1, right);
         true
+    }
+
+    /// Cuts the clip under the playhead on the selected clip's track, removing the part
+    /// before the playhead (`leading`) or after it. The rest of the clip stays in place.
+    pub(super) fn cut_project_track_at_playhead(&mut self, leading: bool) -> bool {
+        if self.is_processing || self.update_installation_in_progress() || self.export_ui.open {
+            return false;
+        }
+        let Some(track) = self.file_queue.selected_file_id().and_then(|id| {
+            self.project
+                .clips
+                .iter()
+                .find(|clip| clip.id == id)
+                .map(|clip| clip.track)
+        }) else {
+            return false;
+        };
+        if self
+            .project
+            .tracks
+            .get(track)
+            .is_none_or(|track| track.locked)
+        {
+            return false;
+        }
+        let Some((index, (playhead, source_time))) = self
+            .project
+            .clips
+            .iter()
+            .enumerate()
+            .filter(|(_, clip)| clip.track == track)
+            .find_map(|(index, _)| Some((index, self.project_clip_playhead_time(index)?)))
+        else {
+            return false;
+        };
+        let id = self.project.clips[index].id.clone();
+        if self.file_queue.file_by_id(&id).is_none() {
+            return false;
+        }
+        self.record_timeline_edit();
+        let config = &mut self.file_queue.file_by_id_mut(&id).unwrap().config;
+        if leading {
+            config.start_time = Some(format_time(source_time));
+            self.project.clips[index].offset_millis =
+                crate::numeric::rounded_f64_to_u64(playhead * 1000.0);
+        } else {
+            config.end_time = Some(format_time(source_time));
+        }
+        self.file_queue.select_existing_file(&id);
+        true
+    }
+
+    /// The playhead and the source time under it, when the playhead is far enough inside
+    /// the clip at `index` to leave a usable clip on each side.
+    fn project_clip_playhead_time(&self, index: usize) -> Option<(f64, f64)> {
+        let clip = self.project.clips.get(index)?;
+        let file = self.file_queue.file_by_id(&clip.id)?;
+        let metadata = self.source_metadata.metadata_for(&clip.id)?;
+        let config = core_config_from_gpui(&file.config);
+        let trim_start = file
+            .config
+            .start_time
+            .as_deref()
+            .map_or(0.0, parse_time_to_seconds);
+        let duration = if clip.kind == SourceKind::Image {
+            5.0
+        } else {
+            preview_duration_seconds(Some(metadata))
+        };
+        let playhead = self.preview_ui.playback.current_time();
+        let offset = Duration::from_millis(clip.offset_millis).as_secs_f64();
+        let length = frame_core::cuts::output_duration_seconds(&config)
+            .unwrap_or(duration - trim_start)
+            / clip.speed;
+        if !playhead.is_finite() || playhead - offset < 0.05 || offset + length - playhead < 0.05 {
+            return None;
+        }
+        let mut source_time = (playhead - offset) * clip.speed;
+        for cut in frame_core::cuts::output_cut_ranges(&config) {
+            if cut.start > source_time {
+                break;
+            }
+            source_time += cut.duration();
+        }
+        Some((playhead, trim_start + source_time))
     }
 
     /// Sources in composition order: audio and lower video tracks first, so higher video
@@ -587,6 +648,59 @@ pub(in crate::app) mod tests {
         root.is_processing = true;
         assert!(!root.split_project_clip_at_playhead());
         assert_eq!(root.project.clips.len(), 1);
+    }
+
+    #[test]
+    fn cutting_to_beginning_and_end_trims_the_clip_under_the_playhead_on_the_track() {
+        let mut root = project();
+        root.add_library_clip("source");
+        root.add_library_clip("source");
+        let first = root.project.clips[0].id.clone();
+        let second = root.project.clips[1].id.clone();
+        root.set_project_clip_speed(&second, 2.0);
+        // Select the first clip: the cut still applies to whichever clip on its track is
+        // under the playhead.
+        root.select_project_clip(&first);
+        root.preview_ui.playback =
+            preview_playback_state(PreviewMediaKind::Video, 20.0, None, None);
+        let _ = root.preview_ui.playback.seek_once_to_percent(0.6);
+        assert!(root.cut_project_track_at_playhead(true));
+        assert_eq!(root.file_queue.selected_file_id(), Some(second.as_str()));
+        assert_eq!(root.project.clips[1].offset_millis, 12_000);
+        let config = &root.file_queue.file_by_id(&second).unwrap().config;
+        assert_eq!(config.start_time.as_deref(), Some("00:00:04.000"));
+
+        let _ = root.preview_ui.playback.seek_once_to_percent(0.25);
+        assert!(root.cut_project_track_at_playhead(false));
+        assert_eq!(root.file_queue.selected_file_id(), Some(first.as_str()));
+        assert_eq!(root.project.clips[0].offset_millis, 0);
+        let config = &root.file_queue.file_by_id(&first).unwrap().config;
+        assert_eq!(config.end_time.as_deref(), Some("00:00:05.000"));
+        assert_eq!(config.start_time, None);
+        assert!(root.undo_timeline_edit());
+        assert!(root.undo_timeline_edit());
+        assert!((root.project_duration() - 15.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cutting_a_track_ignores_boundaries_locked_tracks_and_processing() {
+        let mut root = project();
+        root.add_library_clip_at("source", 2_000);
+        root.preview_ui.playback =
+            preview_playback_state(PreviewMediaKind::Video, 12.0, None, None);
+        for time in [0.0, 1.0, 2.0, 12.0] {
+            let _ = root.preview_ui.playback.seek_once_to_percent(time / 12.0);
+            assert!(!root.cut_project_track_at_playhead(true));
+            assert!(!root.cut_project_track_at_playhead(false));
+        }
+        let _ = root.preview_ui.playback.seek_once_to_percent(0.5);
+        root.project.tracks[0].locked = true;
+        assert!(!root.cut_project_track_at_playhead(true));
+        root.project.tracks[0].locked = false;
+        root.is_processing = true;
+        assert!(!root.cut_project_track_at_playhead(false));
+        root.is_processing = false;
+        assert!(root.cut_project_track_at_playhead(false));
     }
 
     #[test]

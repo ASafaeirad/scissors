@@ -17,8 +17,11 @@ impl FrameRoot {
             && modifiers.secondary()
             && !modifiers.alt
             && matches!(key, "z" | "y");
-        let timeline_shortcut = matches!(key, "space" | "x" | "z" | "y" | "delete" | "backspace")
-            && self.registered_control_contains_focus(PREVIEW_SEEK_FOCUS_ID, window, cx);
+        let timeline_shortcut =
+            matches!(
+                key,
+                "space" | "x" | "q" | "e" | "z" | "y" | "delete" | "backspace"
+            ) && self.registered_control_contains_focus(PREVIEW_SEEK_FOCUS_ID, window, cx);
         if (event.is_held || modifiers.modified()) && !history_shortcut
             || window.focused(cx).is_some() && !root_focus.is_focused(window) && !timeline_shortcut
             || self.active_view != ActiveView::Workspace
@@ -44,6 +47,8 @@ impl FrameRoot {
             }
             "x" if self.project.enabled => self.split_project_clip_at_playhead(),
             "x" => self.toggle_preview_cut_at_playhead(),
+            "q" if self.project.enabled => self.cut_project_track_at_playhead(true),
+            "e" if self.project.enabled => self.cut_project_track_at_playhead(false),
             _ => false,
         };
         if handled {

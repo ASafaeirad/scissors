@@ -506,6 +506,20 @@ impl ProjectTimelineState {
                 self.current - start >= 0.05 && start + length - self.current >= 0.05
             })
     }
+
+    /// Whether the playhead is far enough inside a clip on the selected clip's track to cut
+    /// that clip to its beginning or end.
+    fn can_cut_track(&self) -> bool {
+        self.selected_editable()
+            && self.selected_clip().is_some_and(|(selected, _)| {
+                self.clips.iter().any(|(placement, source)| {
+                    let (start, length) = clip_extent(source);
+                    placement.track == selected.track
+                        && self.current - start >= 0.05
+                        && start + length - self.current >= 0.05
+                })
+            })
+    }
 }
 
 /// The track header column, beside the ruler and every lane.
@@ -730,6 +744,32 @@ fn toolbar(
                     cx.notify();
                 }
             })),
+        )
+        .child(
+            m3::IconButton::new(
+                "timeline-cut-to-beginning",
+                Symbol::FirstPage,
+                "Cut to beginning",
+            )
+            .size(m3::IconButtonSize::ExtraSmall)
+            .enabled(state.can_cut_track())
+            .build(scheme, window, cx)
+            .on_click(cx.listener(|root, _, _, cx| {
+                if root.cut_project_track_at_playhead(true) {
+                    cx.notify();
+                }
+            })),
+        )
+        .child(
+            m3::IconButton::new("timeline-cut-to-end", Symbol::LastPage, "Cut to end")
+                .size(m3::IconButtonSize::ExtraSmall)
+                .enabled(state.can_cut_track())
+                .build(scheme, window, cx)
+                .on_click(cx.listener(|root, _, _, cx| {
+                    if root.cut_project_track_at_playhead(false) {
+                        cx.notify();
+                    }
+                })),
         )
         .child(
             m3::IconButton::new("timeline-delete", Symbol::Delete, "Delete clip")
@@ -1746,6 +1786,49 @@ mod tests {
         root.read_with(cx, |root, _| {
             assert_eq!(root.project.clips.len(), 2);
             assert_eq!(root.project.clips[1].offset_millis, 2_750);
+        });
+    }
+
+    #[test]
+    fn q_and_e_cut_the_clip_to_its_beginning_and_end_after_clicking_it() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|window, cx| {
+            window.activate_window();
+            let root = cx.new(|_| {
+                let mut root = crate::app::project::tests::project();
+                root.active_view = ActiveView::Workspace;
+                root.add_library_clip("source");
+                root.preview_ui.playback =
+                    preview_playback_state(PreviewMediaKind::Video, 10.0, None, None);
+                root
+            });
+            TimelineTestView {
+                root,
+                focus: cx.focus_handle(),
+            }
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let bounds = root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
+        let click = |cx: &mut gpui::VisualTestContext, fraction: f32| {
+            cx.simulate_click(
+                point(
+                    bounds.left() + bounds.size.width * fraction,
+                    bounds.bottom() + px(28.0),
+                ),
+                Modifiers::default(),
+            );
+        };
+        click(cx, 0.25);
+        cx.simulate_keystrokes("q");
+        click(cx, 0.75);
+        cx.simulate_keystrokes("e");
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.project.clips.len(), 1);
+            assert_eq!(root.project.clips[0].offset_millis, 2_750);
+            let config = &root.file_queue.files()[0].config;
+            assert_eq!(config.start_time.as_deref(), Some("00:00:02.750"));
+            assert_eq!(config.end_time.as_deref(), Some("00:00:08.250"));
         });
     }
 
