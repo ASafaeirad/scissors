@@ -345,6 +345,7 @@ impl Render for FrameRoot {
             .on_action(cx.listener(Self::save_project_action))
             .on_action(cx.listener(Self::save_project_as_action))
             .on_action(cx.listener(Self::open_project_action))
+            .on_action(cx.listener(Self::open_settings_action))
             .on_key_down(
                 cx.listener(move |root, event: &gpui::KeyDownEvent, window, cx| {
                     handle_tab_navigation(event, window, cx);

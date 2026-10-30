@@ -195,6 +195,7 @@ actions!(
         SaveProject,
         SaveProjectAs,
         OpenProject,
+        OpenSettings,
     ]
 );
 

@@ -3663,7 +3663,6 @@ mod tests {
         assert_eq!(release.matches("      id-token: write").count(), 1);
         assert_eq!(release.matches("      attestations: write").count(), 1);
         assert!(!release.contains("      actions: write"));
-
     }
 
     #[test]
