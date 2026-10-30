@@ -74,21 +74,37 @@ impl FrameRoot {
         true
     }
 
-    fn seek_project_timeline(&mut self, position: Point<Pixels>, cx: &Context<Self>) -> bool {
-        let Some(bounds) = self.preview_ui.timeline_track_bounds else {
-            return false;
-        };
+    /// Maps a pointer over the ruler or a lane to a playback percent, through the zoomed view.
+    fn project_timeline_percent(&self, position: Point<Pixels>) -> Option<f64> {
+        let bounds = self.preview_ui.timeline_track_bounds?;
         let fraction = timeline_slider_percent_from_bounds(position, bounds);
         let time = self.project_timeline_view().time(fraction);
+        Some((time / self.preview_ui.playback.duration().max(f64::EPSILON)).clamp(0.0, 1.0))
+    }
+
+    fn seek_project_timeline(&mut self, position: Point<Pixels>, cx: &Context<Self>) -> bool {
+        let (Some(bounds), Some(percent)) = (
+            self.preview_ui.timeline_track_bounds,
+            self.project_timeline_percent(position),
+        ) else {
+            return false;
+        };
         let position = point(
-            bounds.left()
-                + bounds.size.width
-                    * crate::numeric::unit_f64_to_f32(
-                        time / self.preview_ui.playback.duration().max(f64::EPSILON),
-                    ),
+            bounds.left() + bounds.size.width * crate::numeric::unit_f64_to_f32(percent),
             position.y,
         );
         self.commit_preview_timeline_seek_at_position_with_context(position, cx)
+    }
+
+    fn scrub_project_timeline(&mut self, position: Point<Pixels>, cx: &Context<Self>) -> bool {
+        self.project_timeline_percent(position)
+            .is_some_and(|percent| {
+                self.apply_preview_timeline_drag_with_context(
+                    TimelineDragTarget::Scrub,
+                    percent,
+                    cx,
+                )
+            })
     }
 
     fn drop_library_source(&mut self, source_id: &str, position: Point<Pixels>) -> bool {
@@ -149,6 +165,10 @@ impl Render for LibraryDragPreview {
     }
 }
 
+/// Scrubs the playhead while the pointer is held on the ruler.
+#[derive(Clone, Copy)]
+struct RulerScrubDrag;
+
 #[derive(Clone)]
 struct ClipDrag {
     id: String,
@@ -184,31 +204,15 @@ pub(super) struct ProjectTimelineState {
     pub(super) enabled: bool,
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "The panel composes its viewport input, accessible ruler, and track rows."
-)]
 pub(super) fn project_timeline(
     state: &ProjectTimelineState,
     focus: &FocusHandle,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let ProjectTimelineState {
-        scheme,
-        clips,
-        sources,
-        files,
-        selected,
-        current,
-        enabled,
-        ..
-    } = state;
+    let scheme = &state.scheme;
     let surface_container_high = scheme.surface_container_high;
-    let current = *current;
-    let enabled = *enabled;
-    let duration = state.duration.max(1.0);
-    let view = state.view;
+    let enabled = state.enabled;
     m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
         .id("project-timeline")
         .flex_none()
@@ -247,54 +251,107 @@ pub(super) fn project_timeline(
         }))
         .child(project_timeline_toolbar(state, window, cx))
         .child(
+            // The playhead overlays the ruler and every lane, so it lives in a shared body.
             div()
-                .id("project-ruler")
-                .track_focus(focus)
-                .tab_stop(true)
-                .role(gpui::Role::Slider)
-                .aria_label("Project playhead")
-                .aria_numeric_value(current)
-                .aria_min_numeric_value(0.0)
-                .aria_max_numeric_value(duration)
-                .aria_value(current.to_string())
-                .on_key_down(cx.listener(|root, event: &gpui::KeyDownEvent, _, cx| {
-                    if root.adjust_preview_timeline_from_keyboard_with_context(
-                        TimelineDragTarget::Scrub,
-                        &event.keystroke.key,
-                        cx,
-                    ) {
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
-                }))
-                .h(theme::ui_rem(24.0))
-                .ml(theme::ui_rem(212.0))
                 .relative()
-                .cursor_pointer()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |root, event: &MouseDownEvent, _, cx| {
-                        if root.seek_project_timeline(event.position, cx) {
-                            cx.notify();
-                        }
-                    }),
-                )
-                .child(
-                    super::preview_panel::timeline::PreviewTimelineTrackBoundsProbe {
-                        owner: cx.entity(),
-                    },
-                )
-                .children((0_u8..=4).map(|step| {
-                    div()
-                        .absolute()
-                        .when(step < 4, |tick| tick.left(relative(f32::from(step) / 4.0)))
-                        .when(step == 4, gpui::Styled::right_0)
-                        .m3_type(typography::LABEL_SMALL)
-                        .text_color(color(scheme.on_surface_variant))
-                        .child(format!("{:.1}s", view.time(f64::from(step) / 4.0)))
-                })),
+                .flex()
+                .flex_col()
+                .gap(theme::ui_rem(8.0))
+                .child(project_ruler(state, focus, cx))
+                .children(track_rows(state, window, cx))
+                .child(project_playhead(scheme, state.view.fraction(state.current))),
         )
-        .children([false, true].into_iter().flat_map(|audio| {
+}
+
+fn project_ruler(
+    state: &ProjectTimelineState,
+    focus: &FocusHandle,
+    cx: &Context<FrameRoot>,
+) -> gpui::Stateful<gpui::Div> {
+    let scheme = &state.scheme;
+    let current = state.current;
+    let duration = state.duration.max(1.0);
+    let view = state.view;
+    div()
+        .id("project-ruler")
+        .track_focus(focus)
+        .tab_stop(true)
+        .role(gpui::Role::Slider)
+        .aria_label("Project playhead")
+        .aria_numeric_value(current)
+        .aria_min_numeric_value(0.0)
+        .aria_max_numeric_value(duration)
+        .aria_value(current.to_string())
+        .on_key_down(cx.listener(|root, event: &gpui::KeyDownEvent, _, cx| {
+            if root.adjust_preview_timeline_from_keyboard_with_context(
+                TimelineDragTarget::Scrub,
+                &event.keystroke.key,
+                cx,
+            ) {
+                cx.stop_propagation();
+                cx.notify();
+            }
+        }))
+        .h(theme::ui_rem(24.0))
+        .ml(theme::ui_rem(212.0))
+        .relative()
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |root, event: &MouseDownEvent, _, cx| {
+                if root.seek_project_timeline(event.position, cx) {
+                    cx.notify();
+                }
+            }),
+        )
+        .when(state.enabled, |ruler| {
+            ruler.on_drag(RulerScrubDrag, |_, _, _, cx| cx.new(|_| MediaDragPreview))
+        })
+        .on_drag_move(
+            cx.listener(|root, event: &DragMoveEvent<RulerScrubDrag>, _, cx| {
+                if root.scrub_project_timeline(event.event.position, cx) {
+                    cx.notify();
+                }
+            }),
+        )
+        .capture_any_mouse_up(cx.listener(|root, _: &MouseUpEvent, _, cx| {
+            if root.end_preview_timeline_drag_with_context(cx) {
+                cx.notify();
+            }
+        }))
+        .child(
+            super::preview_panel::timeline::PreviewTimelineTrackBoundsProbe { owner: cx.entity() },
+        )
+        .children((0_u8..=4).map(|step| {
+            div()
+                .absolute()
+                .when(step < 4, |tick| tick.left(relative(f32::from(step) / 4.0)))
+                .when(step == 4, gpui::Styled::right_0)
+                .m3_type(typography::LABEL_SMALL)
+                .text_color(color(scheme.on_surface_variant))
+                .child(format!("{:.1}s", view.time(f64::from(step) / 4.0)))
+        }))
+}
+
+fn track_rows(
+    state: &ProjectTimelineState,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> Vec<gpui::Div> {
+    let ProjectTimelineState {
+        scheme,
+        clips,
+        sources,
+        files,
+        selected,
+        enabled,
+        view,
+        ..
+    } = state;
+    let (view, enabled) = (*view, *enabled);
+    [false, true]
+        .into_iter()
+        .flat_map(|audio| {
             let rows: Vec<_> = clips
                 .iter()
                 .zip(sources)
@@ -307,7 +364,6 @@ pub(super) fn project_timeline(
                         file,
                         selected.as_deref() == Some(&placement.id),
                         view,
-                        current,
                         enabled,
                         scheme,
                         window,
@@ -316,17 +372,50 @@ pub(super) fn project_timeline(
                 })
                 .collect();
             if rows.is_empty() {
-                vec![empty_track_row(audio, view, current, scheme, cx)]
+                vec![empty_track_row(audio, scheme, cx)]
             } else {
                 rows
             }
-        }))
+        })
+        .collect()
 }
+
+/// One playhead spans the ruler and every lane. It has no hitbox, so clicks reach the lanes.
+fn project_playhead(scheme: &material::ColorScheme, fraction: f32) -> gpui::Div {
+    div()
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(theme::ui_rem(212.0))
+        .right_0()
+        .when((0.0..=1.0).contains(&fraction), |overlay| {
+            overlay.child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(relative(fraction))
+                    .ml(px(-1.0))
+                    .w(px(2.0))
+                    .bg(color(scheme.on_surface))
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left(theme::ui_rem(-(PLAYHEAD_KNOB_SIZE / 2.0)))
+                            .ml(px(1.0))
+                            .size(theme::ui_rem(PLAYHEAD_KNOB_SIZE))
+                            .rounded_full()
+                            .bg(color(scheme.on_surface)),
+                    ),
+            )
+        })
+}
+
+const PLAYHEAD_KNOB_SIZE: f32 = 12.0;
 
 fn empty_track_row(
     audio: bool,
-    view: TimelineView,
-    current: f64,
     scheme: &material::ColorScheme,
     cx: &Context<FrameRoot>,
 ) -> gpui::Div {
@@ -374,16 +463,7 @@ fn empty_track_row(
                     {
                         cx.notify();
                     }
-                }))
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .w(theme::ui_rem(2.0))
-                        .left(relative(view.fraction(current)))
-                        .bg(color(scheme.on_surface)),
-                ),
+                })),
         )
 }
 
@@ -459,7 +539,7 @@ fn project_timeline_toolbar(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "A track row has its source, instance, selection, ruler, and render context."
+    reason = "A track row has its source, instance, selection, view, and render context."
 )]
 #[expect(
     clippy::too_many_lines,
@@ -471,7 +551,6 @@ fn track_row(
     file: &FileItem,
     selected: bool,
     view: TimelineView,
-    current: f64,
     enabled: bool,
     scheme: &material::ColorScheme,
     window: &mut Window,
@@ -839,15 +918,6 @@ fn track_row(
                                     )
                                 })
                         })),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .w(theme::ui_rem(2.0))
-                        .left(relative(view.fraction(current)))
-                        .bg(color(scheme.on_surface)),
                 ),
         )
 }
@@ -1129,6 +1199,55 @@ mod tests {
                     .collect::<Vec<_>>(),
                 original
             );
+        });
+    }
+
+    #[test]
+    fn dragging_along_the_ruler_scrubs_the_playhead() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|_, cx| {
+            let root = cx.new(|_| {
+                let mut root = FrameRoot::new();
+                root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                root.preview_ui.playback =
+                    preview_playback_state(PreviewMediaKind::Video, 8.0, None, None);
+                root
+            });
+            TimelineTestView {
+                root,
+                focus: cx.focus_handle(),
+            }
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let bounds = root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
+        let at = |fraction: f32| {
+            point(
+                bounds.left() + bounds.size.width * fraction,
+                bounds.center().y,
+            )
+        };
+        let duration = root.read_with(cx, |root, _| root.project_duration());
+        let assert_playhead = |cx: &mut gpui::VisualTestContext, fraction: f64| {
+            let time = root.read_with(cx, |root, _| root.preview_ui.playback.current_time());
+            assert!(
+                fraction.mul_add(-duration, time).abs() < 0.01,
+                "playhead was {time}"
+            );
+        };
+
+        cx.simulate_mouse_down(at(0.2), MouseButton::Left, Modifiers::default());
+        assert_playhead(cx, 0.2);
+        // GPUI starts the drag on the first move past its threshold and reports later moves.
+        cx.simulate_mouse_move(at(0.3), MouseButton::Left, Modifiers::default());
+        for fraction in [0.4, 0.6] {
+            cx.simulate_mouse_move(at(fraction), MouseButton::Left, Modifiers::default());
+            assert_playhead(cx, f64::from(fraction));
+        }
+        cx.simulate_mouse_up(at(0.6), MouseButton::Left, Modifiers::default());
+        assert_playhead(cx, 0.6);
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.preview_ui.playback.dragging(), None);
         });
     }
 
