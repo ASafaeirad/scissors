@@ -6,8 +6,7 @@ pub(super) fn sanitize_number_input(value: &str) -> String {
 
 pub(super) fn sanitize_replacement_text(kind: FrameTextInputKind, value: &str) -> String {
     match kind {
-        FrameTextInputKind::MaxConcurrency
-        | FrameTextInputKind::AudioBitrate
+        FrameTextInputKind::AudioBitrate
         | FrameTextInputKind::VideoCustomWidth
         | FrameTextInputKind::VideoCustomHeight
         | FrameTextInputKind::GifLoop => sanitize_number_input(value),

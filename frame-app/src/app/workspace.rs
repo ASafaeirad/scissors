@@ -3,10 +3,9 @@ use super::project_file::ProjectHeaderProps;
 use super::{
     ActiveView, ClickEvent, Context, FileItem, FileQueue, FrameRoot, InteractiveElement,
     ParentElement, PreviewPanelProps, SettingsRenderState, SettingsTab, StatefulInteractiveElement,
-    Styled, UniformListScrollHandle, Window, color, div, theme,
+    Styled, Window, color, div, theme,
 };
 use super::{
-    file_list_panel::file_list_panel,
     m3::{self, M3Text},
     preview_panel::preview_panel,
     settings_panel::settings_panel,
@@ -250,11 +249,10 @@ pub(super) struct WorkspaceState {
     pub(super) audio_details: bool,
 }
 
-const TOOLS: [(Symbol, &str); 5] = [
+const TOOLS: [(Symbol, &str); 4] = [
     (Symbol::VideoLibrary, "Library"),
     (Symbol::Movie, "Video"),
     (Symbol::VolumeUp, "Audio"),
-    (Symbol::Layers, "Queue"),
     (Symbol::Info, "Logs"),
 ];
 /// Index of the Video tool in [`TOOLS`].
@@ -270,7 +268,6 @@ const FILTERS: [&str; 4] = ["All", "Video", "Audio", "Images"];
 pub(super) fn workspace_view(
     assets: MediaAssetsProps<'_>,
     file_queue: &FileQueue,
-    file_list_scroll_handle: &UniformListScrollHandle,
     settings: &SettingsRenderState<'_>,
     preview_props: PreviewPanelProps<'_>,
     state: WorkspaceState,
@@ -289,34 +286,6 @@ pub(super) fn workspace_view(
     let project = preview_props.project.as_ref();
     let project_enabled = project.is_some();
     let rail = navigation_rail(state.tool, scheme, window, cx);
-    if state.tool == 3 {
-        let queue = project.map_or(file_queue, |project| &project.exports);
-        return div()
-            .size_full()
-            .flex()
-            .min_h_0()
-            .bg(color(scheme.surface))
-            .child(rail)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(project_header(
-                        file_queue,
-                        state.export_enabled,
-                        header,
-                        scheme,
-                        window,
-                        cx,
-                    ))
-                    .child(
-                        file_list_panel(queue, file_list_scroll_handle, settings.palette, cx)
-                            .flex_1(),
-                    ),
-            );
-    }
     let side = if state.tool == 0 {
         library_panel(
             if project_enabled {
@@ -708,7 +677,7 @@ pub(super) fn logs_workspace_view(
         .bg(color(scheme.surface))
         .text_color(color(scheme.on_surface))
         .m3_type(typography::BODY_MEDIUM)
-        .child(navigation_rail(4, scheme, window, cx))
+        .child(navigation_rail(3, scheme, window, cx))
         .child(
             div()
                 .flex_1()
@@ -753,7 +722,7 @@ fn navigation_rail(
         cx.notify();
     }))
     .on_select(cx.listener(|root, index: &usize, _, cx| {
-        if *index == 4 {
+        if *index == 3 {
             root.active_view = ActiveView::Logs;
             cx.notify();
             return;

@@ -1,10 +1,8 @@
 use super::*;
 
 impl FrameRoot {
-    pub(super) fn queue_selected_conversion_tasks(
-        &mut self,
-    ) -> Vec<frame_core::types::ConversionTask> {
-        if self.update_installation_in_progress() {
+    pub(super) fn prepare_project_export(&mut self) -> Vec<frame_core::types::ConversionTask> {
+        if self.is_processing || self.update_installation_in_progress() {
             return Vec::new();
         }
         let Some(output_directory) = self
@@ -14,71 +12,38 @@ impl FrameRoot {
         else {
             return Vec::new();
         };
-        if self.project.enabled {
-            let Some(config) = self.project_config() else {
-                return Vec::new();
-            };
-            if config.timeline_sources.is_empty() {
-                return Vec::new();
-            }
-            if self.is_processing {
-                return Vec::new();
-            }
-            let source = config
-                .timeline_sources
-                .iter()
-                .find(|source| source.kind != "audio")
-                .or_else(|| config.timeline_sources.first())
-                .unwrap();
-            let mut job = FileItem::from_path("project-export", source.path.clone(), 0);
-            job.name = "Current project".to_string();
-            job.output_name.clone_from(&self.project.output_name);
-            job.config = self.project.output.clone();
-            job.status = FileStatus::Queued;
-            let mut task = conversion_task_from_file(&job, &output_directory);
-            task.config = config;
-            if let Some(existing) = self.file_queue.file_by_id_mut("project-export") {
-                *existing = job;
-            } else {
-                self.file_queue.add_file(job);
-            }
-            return vec![task];
+        let Some(config) = self.project_config() else {
+            return Vec::new();
+        };
+        if config.timeline_sources.is_empty() {
+            return Vec::new();
         }
-        self.normalize_selected_actionable_conversion_configs();
-
-        let mut tasks = self
-            .file_queue
-            .queue_selected_pending_conversions()
+        let source = config
+            .timeline_sources
             .iter()
-            .map(|file| conversion_task_from_file(file, &output_directory))
-            .collect::<Vec<_>>();
-        disambiguate_output_paths(&mut tasks);
-
-        for task in &tasks {
-            let Some(output_name) = task.output_name.as_ref() else {
-                continue;
-            };
-            let Some(file) = self
-                .file_queue
-                .files_mut()
-                .iter_mut()
-                .find(|file| file.id == task.id)
-            else {
-                continue;
-            };
-            if file.output_name != *output_name {
-                file.output_name.clone_from(output_name);
-            }
+            .find(|source| source.kind != "audio")
+            .or_else(|| config.timeline_sources.first())
+            .unwrap();
+        let mut job = FileItem::from_path("project-export", source.path.clone(), 0);
+        job.name = "Current project".to_string();
+        job.output_name.clone_from(&self.project.output_name);
+        job.config = self.project.output.clone();
+        job.status = FileStatus::Queued;
+        let mut task = conversion_task_from_file(&job, &output_directory);
+        task.config = config;
+        if let Some(existing) = self.file_queue.file_by_id_mut("project-export") {
+            *existing = job;
+        } else {
+            self.file_queue.add_file(job);
         }
-
-        tasks
+        vec![task]
     }
-    pub(super) fn start_selected_conversions(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn start_project_export(&mut self, cx: &mut Context<Self>) {
         if self.is_processing || self.update_installation_in_progress() {
             return;
         }
 
-        let tasks = self.queue_selected_conversion_tasks();
+        let tasks = self.prepare_project_export();
         if tasks.is_empty() {
             self.active_conversion_task_ids.clear();
             return;
@@ -86,10 +51,10 @@ impl FrameRoot {
 
         self.active_conversion_task_ids = tasks.iter().map(|task| task.id.clone()).collect();
         self.is_processing = true;
-        self.spawn_conversion_batch(tasks, cx);
+        self.spawn_project_export(tasks, cx);
         cx.notify();
     }
-    pub(super) fn spawn_conversion_batch(
+    pub(super) fn spawn_project_export(
         &self,
         tasks: Vec<frame_core::types::ConversionTask>,
         cx: &Context<Self>,
@@ -146,40 +111,6 @@ impl FrameRoot {
             }
         })
         .detach();
-    }
-    pub(super) fn pause_conversion_task(&mut self, id: &str) -> bool {
-        if !self
-            .file_queue
-            .file_by_id(id)
-            .is_some_and(|file| file.status == FileStatus::Converting)
-        {
-            return false;
-        }
-
-        match self.conversion_processes.pause_task(id) {
-            Ok(()) => self.file_queue.pause_file(id),
-            Err(error) => {
-                self.log_conversion_control_error(id, "pause", &error);
-                false
-            }
-        }
-    }
-    pub(super) fn resume_conversion_task(&mut self, id: &str) -> bool {
-        if !self
-            .file_queue
-            .file_by_id(id)
-            .is_some_and(|file| file.status == FileStatus::Paused)
-        {
-            return false;
-        }
-
-        match self.conversion_processes.resume_task(id) {
-            Ok(()) => self.file_queue.resume_file(id),
-            Err(error) => {
-                self.log_conversion_control_error(id, "resume", &error);
-                false
-            }
-        }
     }
     pub(super) fn cancel_conversion_task(&mut self, id: &str) -> bool {
         if !self
@@ -270,64 +201,4 @@ impl FrameRoot {
             self.notifier.notify_conversion_finished(summary);
         }
     }
-
-    fn normalize_selected_actionable_conversion_configs(&mut self) {
-        let metadata_by_file = self
-            .file_queue
-            .files()
-            .iter()
-            .filter(|file| {
-                file.is_selected_for_conversion && file.status.is_actionable_for_conversion()
-            })
-            .map(|file| {
-                (
-                    file.id.clone(),
-                    conversion_metadata_for_file(
-                        file,
-                        self.source_metadata.metadata_for(&file.id).cloned(),
-                    ),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        for file in self.file_queue.files_mut() {
-            if !file.is_selected_for_conversion || !file.status.is_actionable_for_conversion() {
-                continue;
-            }
-
-            let metadata = metadata_by_file
-                .iter()
-                .find(|(id, _)| id == &file.id)
-                .and_then(|(_, metadata)| metadata.as_ref());
-            normalize_output_config(&mut file.config, metadata);
-        }
-    }
-}
-
-fn conversion_metadata_for_file(
-    file: &FileItem,
-    metadata: Option<SourceMetadata>,
-) -> Option<SourceMetadata> {
-    metadata.or_else(|| {
-        source_kind_from_file_extension(file).map(|media_kind| SourceMetadata {
-            media_kind: Some(media_kind),
-            ..SourceMetadata::default()
-        })
-    })
-}
-
-fn source_kind_from_file_extension(file: &FileItem) -> Option<SourceKind> {
-    if extension_matches(&file.original_format, IMAGE_FILE_EXTENSIONS) {
-        Some(SourceKind::Image)
-    } else if extension_matches(&file.original_format, AUDIO_FILE_EXTENSIONS) {
-        Some(SourceKind::Audio)
-    } else {
-        None
-    }
-}
-
-fn extension_matches(extension: &str, candidates: &[&str]) -> bool {
-    candidates
-        .iter()
-        .any(|candidate| extension.eq_ignore_ascii_case(candidate))
 }

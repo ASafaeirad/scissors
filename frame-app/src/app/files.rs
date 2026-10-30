@@ -82,20 +82,6 @@ impl FrameRoot {
             && self.file_queue.select_existing_file(id)
     }
 
-    pub(super) fn toggle_file_batch_selection(&mut self, id: &str) -> Option<bool> {
-        if self.update_installation_in_progress() {
-            return None;
-        }
-        self.file_queue.toggle_batch_selection(id)
-    }
-
-    pub(super) fn toggle_all_file_batch_selection(&mut self) -> Option<bool> {
-        if self.update_installation_in_progress() {
-            return None;
-        }
-        Some(self.file_queue.toggle_all_batch_selection())
-    }
-
     pub(super) const fn open_drag_drop_overlay(&mut self) -> bool {
         let changed = !self.drag_drop_ui.is_open || !self.drag_drop_ui.is_present;
         self.drag_drop_ui.is_open = true;

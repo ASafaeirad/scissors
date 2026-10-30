@@ -109,8 +109,8 @@ details, tier suggestions, and a launch checklist.
   views, settings panels, and shared UI primitives.
 - **Shared Conversion Core:** `frame-core` owns FFmpeg arguments, media rules,
   probing types, filter construction, and validation logic.
-- **Concurrent Processing:** Rust task controller for queueing and limiting
-  simultaneous FFmpeg processes.
+- **Single-project workflow:** Edit one timeline with multiple media clips, save or
+  open a project, and export it with progress and cancellation controls.
 - **Real-time Telemetry:** FFmpeg progress and log events are parsed and shown
   in the app while conversions run.
 - **Runtime Binaries:** Local development uses platform-specific FFmpeg and

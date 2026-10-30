@@ -1,33 +1,21 @@
 use super::{
-    AppearanceSettings, ColorTheme, Context, DecreaseUiScale, FrameRoot, FrameTextInputKind,
-    IncreaseUiScale, PresetNotice, PresetNoticeTone, ResetUiScale, ScalePreset, Window,
-    apply_preset, create_custom_preset, output_folder_dialog, pick_output_folder,
+    AppearanceSettings, ColorTheme, Context, DecreaseUiScale, FrameRoot, IncreaseUiScale,
+    PresetNotice, PresetNoticeTone, ResetUiScale, ScalePreset, Window, apply_preset,
+    create_custom_preset, output_folder_dialog, pick_output_folder,
 };
 
 impl FrameRoot {
     pub(super) fn open_app_settings(&mut self) {
         self.settings_ui.is_open = true;
         self.settings_ui.is_present = true;
-        self.settings_ui.max_concurrency_draft = self.max_concurrency.to_string();
-        self.settings_ui.max_concurrency_error = None;
         self.settings_ui.output_directory_error = None;
         self.settings_ui.appearance_error = None;
     }
 
     pub(super) fn close_app_settings(&mut self) {
         self.settings_ui.is_open = false;
-        self.settings_ui.max_concurrency_error = None;
         self.settings_ui.output_directory_error = None;
         self.settings_ui.appearance_error = None;
-        self.text_input_ui
-            .focuses
-            .clear(FrameTextInputKind::MaxConcurrency);
-        if matches!(
-            self.text_input_ui.active,
-            Some(FrameTextInputKind::MaxConcurrency)
-        ) {
-            self.stop_text_input_cursor();
-        }
     }
 
     pub(super) const fn finish_app_settings_close(&mut self) -> bool {
@@ -36,49 +24,6 @@ impl FrameRoot {
         }
         self.settings_ui.is_present = false;
         true
-    }
-
-    pub(super) fn step_max_concurrency(&mut self, increase: bool) {
-        let value = if increase {
-            self.max_concurrency.saturating_add(1)
-        } else {
-            self.max_concurrency.saturating_sub(1).max(1)
-        };
-        self.settings_ui.max_concurrency_draft = value.to_string();
-        self.apply_max_concurrency_draft();
-    }
-
-    pub(super) fn apply_max_concurrency_draft(&mut self) -> bool {
-        if self.update_installation_in_progress() {
-            return false;
-        }
-        let Some(value) = self.parsed_max_concurrency_draft() else {
-            self.settings_ui.max_concurrency_error =
-                Some("Enter a whole number greater than zero.".to_string());
-            return false;
-        };
-
-        match self.conversion_processes.update_max_concurrency(value) {
-            Ok(()) => {
-                self.max_concurrency = value;
-                self.settings_ui.max_concurrency_draft = value.to_string();
-                self.settings_ui.max_concurrency_error = None;
-                if let Err(error) = self.persist_app_settings() {
-                    self.settings_ui.max_concurrency_error =
-                        Some(format!("Failed to save settings: {error}"));
-                }
-                true
-            }
-            Err(error) => {
-                self.settings_ui.max_concurrency_error = Some(error.to_string());
-                false
-            }
-        }
-    }
-    pub(super) fn parsed_max_concurrency_draft(&self) -> Option<usize> {
-        let trimmed = self.settings_ui.max_concurrency_draft.trim();
-        let value = trimmed.parse::<usize>().ok()?;
-        (value > 0).then_some(value)
     }
 
     pub(super) fn set_ui_scale(&mut self, scale: ScalePreset) -> bool {

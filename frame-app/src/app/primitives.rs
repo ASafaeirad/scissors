@@ -441,18 +441,6 @@ pub(super) fn horizontal_separator_shadows(palette: &theme::ThemePalette) -> Vec
     }]
 }
 
-pub(super) fn drop_target_shadows(palette: &theme::ThemePalette) -> Vec<BoxShadow> {
-    let mut shadows = card_surface_shadows(palette);
-    shadows.push(BoxShadow {
-        color: color(palette.text_muted.with_alpha(0.55)).into(),
-        offset: point(px(0.0), px(0.0)),
-        blur_radius: px(0.0),
-        spread_radius: px(frame_highlight_px()),
-        inset: true,
-    });
-    shadows
-}
-
 pub(super) const fn color(token: theme::RgbaToken) -> Rgba {
     Rgba {
         r: token.red,
