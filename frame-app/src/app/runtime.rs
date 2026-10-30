@@ -55,6 +55,9 @@ pub fn init_app(cx: &mut App, name: impl Into<SharedString>) {
         KeyBinding::new("secondary-s", SaveProject, None),
         KeyBinding::new("secondary-shift-s", SaveProjectAs, None),
         KeyBinding::new("secondary-o", OpenProject, None),
+        KeyBinding::new("ctrl-,", OpenSettings, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-,", OpenSettings, None),
     ]);
     cx.set_menus(vec![Menu {
         name: name.into(),

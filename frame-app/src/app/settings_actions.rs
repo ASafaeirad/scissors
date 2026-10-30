@@ -5,6 +5,19 @@ use super::{
 };
 
 impl FrameRoot {
+    pub(super) fn open_settings_action(
+        &mut self,
+        _: &super::OpenSettings,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.settings_ui.is_open && !self.update_installation_in_progress() {
+            self.open_app_settings();
+            cx.notify();
+        }
+        cx.stop_propagation();
+    }
+
     pub(super) fn open_app_settings(&mut self) {
         self.settings_ui.is_open = true;
         self.settings_ui.is_present = true;
