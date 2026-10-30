@@ -8,6 +8,8 @@ pub(super) struct Project {
     pub(super) enabled: bool,
     pub(super) library: FileQueue,
     pub(super) clips: Vec<ClipPlacement>,
+    pub(super) tracks: super::project_tracks::Tracks,
+    pub(super) history: super::project_history::TimelineHistory,
     pub(super) output: ConversionConfig,
     pub(super) output_name: String,
     /// The file this project was last saved to or opened from.
@@ -26,6 +28,8 @@ pub(super) struct ClipPlacement {
     pub(super) source_id: String,
     pub(super) offset_millis: u64,
     pub(super) kind: SourceKind,
+    /// Index into `Project::tracks`.
+    pub(super) track: usize,
     pub(super) muted: bool,
     pub(super) speed: f64,
 }
@@ -53,14 +57,23 @@ impl FrameRoot {
                 .collect(),
             timeline: super::project_timeline::ProjectTimelineState {
                 scheme: super::m3::scheme(self.appearance.color_theme, cx),
-                clips: self.project.clips.clone(),
-                sources: self.project_sources(),
+                clips: self.project_timeline_clips(),
+                tracks: self.project.tracks.clone(),
                 files: self.file_queue.files().to_vec(),
                 selected: self.file_queue.selected_file_id().map(str::to_string),
                 duration: self.project_duration(),
                 view: self.project_timeline_view(),
                 current: self.preview_ui.playback.current_time(),
                 enabled: !self.is_processing,
+                snap: self.preview_ui.timeline_snap,
+                can_undo: self.project.history.can_undo(),
+                can_redo: self.project.history.can_redo(),
+                playing: self.preview_ui.playback.is_playing(),
+                menu: self.preview_ui.timeline_menu.clone(),
+                ruler_width: self
+                    .preview_ui
+                    .timeline_track_bounds
+                    .map(|bounds| bounds.size.width.as_f32()),
             },
         })
     }
@@ -141,14 +154,29 @@ impl FrameRoot {
     }
 
     pub(super) fn add_library_clip(&mut self, source_id: &str) -> bool {
-        self.insert_library_clip(source_id, None)
+        self.insert_library_clip(source_id, None, None)
     }
 
     pub(super) fn add_library_clip_at(&mut self, source_id: &str, offset_millis: u64) -> bool {
-        self.insert_library_clip(source_id, Some(offset_millis))
+        self.insert_library_clip(source_id, Some(offset_millis), None)
     }
 
-    fn insert_library_clip(&mut self, source_id: &str, offset_millis: Option<u64>) -> bool {
+    /// Adds a clip on `track`, or on the default track when `track` holds the other kind.
+    pub(super) fn add_library_clip_on_track(
+        &mut self,
+        source_id: &str,
+        offset_millis: u64,
+        track: usize,
+    ) -> bool {
+        self.insert_library_clip(source_id, Some(offset_millis), Some(track))
+    }
+
+    fn insert_library_clip(
+        &mut self,
+        source_id: &str,
+        offset_millis: Option<u64>,
+        track: Option<usize>,
+    ) -> bool {
         if self.is_processing || self.update_installation_in_progress() {
             return false;
         }
@@ -159,6 +187,18 @@ impl FrameRoot {
             return false;
         };
         let kind = metadata.source_kind();
+        let track_kind = super::project_tracks::TrackKind::of(kind);
+        let Some(track) = track
+            .filter(|&index| {
+                self.project
+                    .tracks
+                    .get(index)
+                    .is_some_and(|track| track.kind == track_kind && !track.locked)
+            })
+            .or_else(|| self.project.tracks.first_unlocked(track_kind))
+        else {
+            return false;
+        };
         if self.project.clips.is_empty()
             || (kind != SourceKind::Audio
                 && self
@@ -189,10 +229,10 @@ impl FrameRoot {
             if kind == SourceKind::Audio {
                 crate::numeric::rounded_f64_to_u64(self.preview_ui.playback.current_time() * 1000.0)
             } else {
-                self.project_sources()
+                self.project_timeline_clips()
                     .iter()
-                    .filter(|clip| clip.kind != "audio")
-                    .map(|clip| {
+                    .filter(|(placement, _)| placement.track == track)
+                    .map(|(_, clip)| {
                         clip.offset_millis.saturating_add(
                             frame_core::project_timeline::clip_duration_millis(clip),
                         )
@@ -201,6 +241,7 @@ impl FrameRoot {
                     .unwrap_or(0)
             }
         });
+        self.record_timeline_edit();
         file.id = self.next_file_id();
         file.output_name = "Untitled project".to_string();
         initialize_output_config(&mut file.config, Some(&metadata));
@@ -214,6 +255,7 @@ impl FrameRoot {
             source_id: source_id.to_string(),
             offset_millis,
             kind,
+            track,
             muted: false,
             speed: 1.0,
         });
@@ -234,9 +276,14 @@ impl FrameRoot {
     }
 
     pub(super) fn remove_project_clip(&mut self, id: &str) -> bool {
-        if self.is_processing || self.update_installation_in_progress() {
+        if self.is_processing
+            || self.update_installation_in_progress()
+            || self.project_clip_locked(id)
+            || self.file_queue.file_by_id(id).is_none()
+        {
             return false;
         }
+        self.record_timeline_edit();
         if !self.remove_file_from_queue(id) {
             return false;
         }
@@ -253,6 +300,9 @@ impl FrameRoot {
         let Some(id) = self.file_queue.selected_file_id() else {
             return false;
         };
+        if self.project_clip_locked(id) {
+            return false;
+        }
         let Some(index) = self.project.clips.iter().position(|clip| clip.id == id) else {
             return false;
         };
@@ -291,6 +341,7 @@ impl FrameRoot {
             source_time += cut.duration();
         }
         let split_time = format_time(trim_start + source_time);
+        self.record_timeline_edit();
         let left_id = right.id.clone();
         file.id = self.next_file_id();
         file.config.start_time = Some(split_time.clone());
@@ -307,14 +358,29 @@ impl FrameRoot {
         true
     }
 
+    /// Sources in composition order: audio and lower video tracks first, so higher video
+    /// tracks draw over them.
     pub(super) fn project_sources(&self) -> Vec<frame_core::types::TimelineSource> {
+        let mut clips = self.project_timeline_clips();
+        clips.sort_by_key(|(placement, _)| {
+            (placement.kind != SourceKind::Audio).then_some(placement.track)
+        });
+        clips.into_iter().map(|(_, source)| source).collect()
+    }
+
+    /// Each placed clip with the source it renders, in clip order. Clips whose instance or
+    /// metadata is missing are left out.
+    pub(super) fn project_timeline_clips(
+        &self,
+    ) -> Vec<(ClipPlacement, frame_core::types::TimelineSource)> {
         self.project
             .clips
             .iter()
             .filter_map(|placement| {
                 let file = self.file_queue.file_by_id(&placement.id)?;
                 let metadata = self.source_metadata.metadata_for(&placement.id)?;
-                Some(frame_core::types::TimelineSource {
+                let track = self.project.tracks.get(placement.track);
+                let source = frame_core::types::TimelineSource {
                     path: file.path.clone(),
                     kind: match placement.kind {
                         SourceKind::Video => "video",
@@ -330,10 +396,12 @@ impl FrameRoot {
                             preview_duration_seconds(Some(metadata))
                         } * 1000.0,
                     ),
-                    muted: placement.muted,
+                    muted: placement.muted || track.is_some_and(|track| track.muted),
                     speed: placement.speed,
+                    hidden: track.is_some_and(|track| track.hidden),
                     config: Box::new(core_config_from_gpui(&file.config)),
-                })
+                };
+                Some((placement.clone(), source))
             })
             .collect()
     }
@@ -350,7 +418,10 @@ impl FrameRoot {
         initial_start: f64,
         initial_offset: u64,
     ) -> bool {
-        if self.is_processing || self.update_installation_in_progress() || !project_time.is_finite()
+        if self.is_processing
+            || self.update_installation_in_progress()
+            || !project_time.is_finite()
+            || self.project_clip_locked(id)
         {
             return false;
         }
@@ -413,12 +484,19 @@ impl FrameRoot {
         if (clip.speed - speed).abs() < f64::EPSILON {
             return false;
         }
-        clip.speed = speed;
+        self.record_timeline_edit();
+        if let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) {
+            clip.speed = speed;
+        }
         true
     }
 
+    /// Moves a clip without recording history. Callers record once per gesture.
     pub(super) fn move_project_clip(&mut self, id: &str, offset_millis: u64) -> bool {
-        if self.is_processing || self.update_installation_in_progress() {
+        if self.is_processing
+            || self.update_installation_in_progress()
+            || self.project_clip_locked(id)
+        {
             return false;
         }
         let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) else {
@@ -706,7 +784,9 @@ pub(in crate::app) mod tests {
         let mut root = FrameRoot::new();
         root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
         assert_eq!(root.project.library.files().len(), 2);
-        assert_eq!(root.project.clips.len(), 3);
+        assert_eq!(root.project.clips.len(), 4);
+        assert_eq!(root.project.tracks.len(), 4);
+        assert!(!root.project.history.can_undo());
         assert!(root.project.clips[1].offset_millis > 0);
         assert_eq!(
             root.project.clips[0].source_id,

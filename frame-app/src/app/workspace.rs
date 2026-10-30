@@ -304,19 +304,15 @@ pub(super) fn workspace_view(
         let speed = project
             .map(|project| &project.timeline)
             .and_then(|timeline| {
-                let index = timeline
+                timeline
                     .clips
                     .iter()
-                    .position(|clip| file_queue.selected_file_id() == Some(clip.id.as_str()))?;
-                Some((timeline, index))
+                    .find(|(clip, _)| file_queue.selected_file_id() == Some(clip.id.as_str()))
             })
-            .map(|(timeline, index)| {
+            .map(|(clip, source)| {
                 super::track_speed::track_speed_control(
-                    &timeline.clips[index],
-                    // Sources skip clips without metadata, so they only line up when none are
-                    // missing.
-                    (timeline.sources.len() == timeline.clips.len())
-                        .then(|| &timeline.sources[index]),
+                    clip,
+                    Some(source),
                     !settings.settings_disabled,
                     scheme,
                     window,
@@ -1086,7 +1082,7 @@ fn media_card(
                             .timeline
                             .clips
                             .iter()
-                            .filter(|clip| clip.source_id == file.id)
+                            .filter(|(clip, _)| clip.source_id == file.id)
                             .count()
                     )),
             )

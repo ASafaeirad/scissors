@@ -322,6 +322,7 @@ fn project_timeline_exports_sequence_and_previews_the_same_frames_and_audio() ->
             duration_millis: 2000,
             muted: false,
             speed: 1.0,
+            hidden: false,
             config: Box::new(clip_config.clone()),
         },
         TimelineSource {
@@ -331,6 +332,7 @@ fn project_timeline_exports_sequence_and_previews_the_same_frames_and_audio() ->
             duration_millis: 2000,
             muted: false,
             speed: 1.0,
+            hidden: false,
             config: Box::new(clip_config.clone()),
         },
     ];
@@ -343,6 +345,7 @@ fn project_timeline_exports_sequence_and_previews_the_same_frames_and_audio() ->
         duration_millis: 2000,
         muted: false,
         speed: 1.0,
+        hidden: false,
         config: Box::new(clip_config),
     });
     let output = sandbox.path("project.mp4");
@@ -467,6 +470,7 @@ fn project_track_speed_changes_export_duration_and_keeps_audio() -> TestResult {
             duration_millis: 2000,
             muted: false,
             speed,
+            hidden: false,
             config: Box::new(config.clone()),
         }];
         let output = sandbox.path(&format!("speed-{speed}.mp4"));

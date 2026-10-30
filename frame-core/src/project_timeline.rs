@@ -238,7 +238,7 @@ pub fn add_graph(args: &mut Vec<String>, clips: &[TimelineSource], window: &Rend
     for (index, (clip, span)) in visible.iter().enumerate() {
         let config = &clip.config;
         let length = span.length;
-        if video && clip.kind != "audio" {
+        if video && clip.kind != "audio" && !clip.hidden {
             let input_label = if has_overlay(config) {
                 let mut overlay_config = (**config).clone();
                 overlay_config.resolution = "original".to_string();
@@ -414,6 +414,7 @@ mod tests {
             duration_millis: 60_000,
             muted: false,
             speed: 1.0,
+            hidden: false,
             config: Box::new(config),
         }
     }
@@ -516,6 +517,17 @@ mod tests {
         value.as_object_mut().unwrap().remove("speed");
         let restored: TimelineSource = serde_json::from_value(value).unwrap();
         assert!((restored.speed - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn hidden_clips_keep_their_audio_but_leave_the_picture() {
+        let mut clip = clip(0, None, "20", &[]);
+        clip.hidden = true;
+        let mut args = Vec::new();
+        add_graph(&mut args, &[clip], &window(0.0, 20.0));
+        let graph = args.last().unwrap();
+        assert!(!graph.contains("[0:v:0]"));
+        assert!(graph.contains("[0:1]atrim=end=20.000000,"));
     }
 
     #[test]

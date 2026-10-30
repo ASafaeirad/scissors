@@ -1,7 +1,14 @@
 //! The project timeline selects and moves instances, never library sources.
+//!
+//! Layout: a toolbar, then a fixed header column beside a ruler and one lane per track. The
+//! ruler and lanes share a width, so a project time maps to the same x in each.
 use super::m3::{self, M3Text};
+use super::project::ClipPlacement;
+use super::project_tracks::{TrackKind, TrackToggle, Tracks};
 use super::*;
 use crate::material::{self, Symbol, shape, typography};
+use frame_core::types::TimelineSource;
+use std::{cell::Cell, rc::Rc};
 
 /// The visible time range is UI state, independent of the exported project duration.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,9 +37,15 @@ impl TimelineView {
         if !factor.is_finite() || factor <= 0.0 {
             return;
         }
-        self.span = (self.span / factor).clamp(0.1, 86400.0 * 7.0);
+        self.span = (self.span / factor).clamp(MIN_SPAN, MAX_SPAN);
     }
 }
+
+/// The narrowest and widest visible spans, in seconds.
+const MIN_SPAN: f64 = 0.1;
+const MAX_SPAN: f64 = 86400.0 * 7.0;
+/// The zoom slider runs from the fitted span down to this many seconds.
+const SLIDER_MIN_SPAN: f64 = 1.0;
 
 impl FrameRoot {
     pub(super) fn project_timeline_view(&self) -> TimelineView {
@@ -44,6 +57,12 @@ impl FrameRoot {
     fn zoom_project_timeline(&mut self, factor: f64) {
         let mut view = self.project_timeline_view();
         view.zoom(factor);
+        self.preview_ui.project_timeline_view = Some(view);
+    }
+
+    fn pan_project_timeline(&mut self, start: f64) {
+        let mut view = self.project_timeline_view();
+        view.start = start.max(0.0);
         self.preview_ui.project_timeline_view = Some(view);
     }
 
@@ -65,11 +84,10 @@ impl FrameRoot {
             let Some(bounds) = self.preview_ui.timeline_track_bounds else {
                 return false;
             };
-            let mut view = self.project_timeline_view();
+            let view = self.project_timeline_view();
             let fraction =
                 f64::from(horizontal.as_f32()) / f64::from(bounds.size.width.as_f32().max(1.0));
-            view.start = fraction.mul_add(-view.span, view.start).max(0.0);
-            self.preview_ui.project_timeline_view = Some(view);
+            self.pan_project_timeline(fraction.mul_add(-view.span, view.start));
         }
         true
     }
@@ -92,6 +110,17 @@ impl FrameRoot {
     }
 
     fn drop_library_source(&mut self, source_id: &str, position: Point<Pixels>) -> bool {
+        self.drop_library_source_on(source_id, position, None)
+    }
+
+    /// Adds a library source where it was dropped: at the pointer's time, on `track` when it
+    /// holds the source's kind, otherwise on the default track.
+    fn drop_library_source_on(
+        &mut self,
+        source_id: &str,
+        position: Point<Pixels>,
+        track: Option<usize>,
+    ) -> bool {
         let Some(bounds) = self.preview_ui.timeline_track_bounds else {
             return false;
         };
@@ -100,8 +129,13 @@ impl FrameRoot {
         }
         let view = self.project_timeline_view();
         let time = view.time(timeline_slider_percent_from_bounds(position, bounds));
+        let offset = crate::numeric::rounded_f64_to_u64(time * 1000.0);
         let first_clip = !self.preview_ui.first_clip_zoomed;
-        if !self.add_library_clip_at(source_id, crate::numeric::rounded_f64_to_u64(time * 1000.0)) {
+        let added = match track {
+            Some(track) => self.add_library_clip_on_track(source_id, offset, track),
+            None => self.add_library_clip_at(source_id, offset),
+        };
+        if !added {
             return false;
         }
         // Keep the drop position stable when the new clip extends the project duration.
@@ -123,10 +157,231 @@ impl FrameRoot {
             span: self.project_duration() * FIRST_CLIP_TRACK_SPAN,
         });
     }
+
+    pub(super) fn remove_selected_project_clip(&mut self) -> bool {
+        let Some(id) = self.file_queue.selected_file_id().map(str::to_string) else {
+            return false;
+        };
+        self.remove_project_clip(&id)
+    }
+
+    /// Runs one step of a drag gesture, recording history before its first change only.
+    fn gesture_edit(
+        &mut self,
+        recorded: &Cell<bool>,
+        edit: impl FnOnce(&mut Self) -> bool,
+    ) -> bool {
+        let before = (!recorded.get()).then(|| self.timeline_snapshot());
+        let changed = edit(self);
+        if changed && let Some(before) = before {
+            self.project.history.push(before);
+            recorded.set(true);
+        }
+        changed
+    }
+
+    /// Clip edges, the playhead, and the project start: where moves and trims snap.
+    fn snap_targets(&self, exclude: &str) -> Vec<f64> {
+        let mut targets = vec![0.0, self.preview_ui.playback.current_time()];
+        for (placement, source) in self.project_timeline_clips() {
+            if placement.id != exclude {
+                let (start, length) = clip_extent(&source);
+                targets.extend([start, start + length]);
+            }
+        }
+        targets
+    }
+
+    /// How close, in seconds, an edge must come to a target to snap. `None` with snapping off.
+    fn snap_threshold(&self, view: TimelineView, width: f64) -> Option<f64> {
+        (self.preview_ui.timeline_snap && width > 0.0)
+            .then(|| f64::from(SNAP_DISTANCE) * view.span / width)
+    }
+
+    fn drag_project_clip(
+        &mut self,
+        drag: &ClipDrag,
+        position: Point<Pixels>,
+        bounds: Bounds<Pixels>,
+    ) -> bool {
+        let width = f64::from(bounds.size.width.as_f32());
+        if width <= 0.0 {
+            return false;
+        }
+        let x = position.x - bounds.origin.x - drag.grab_x.get();
+        let mut start = drag.view.time(f64::from(x.as_f32()) / width);
+        if let Some(threshold) = self.snap_threshold(drag.view, width) {
+            start += snap_shift(
+                &[start, start + drag.length],
+                &self.snap_targets(&drag.id),
+                threshold,
+            );
+        }
+        self.preview_ui.project_timeline_view = Some(drag.view);
+        let offset = crate::numeric::rounded_f64_to_u64(start.max(0.0) * 1000.0);
+        self.gesture_edit(&drag.recorded, |root| {
+            root.move_project_clip(&drag.id, offset)
+        })
+    }
+
+    fn drag_project_trim(
+        &mut self,
+        drag: &ClipTrimDrag,
+        position: Point<Pixels>,
+        bounds: Bounds<Pixels>,
+    ) -> bool {
+        let width = f64::from(bounds.size.width.as_f32());
+        if width <= 0.0 {
+            return false;
+        }
+        let mut time = drag
+            .view
+            .time(f64::from((position.x - bounds.origin.x).as_f32()) / width);
+        if let Some(threshold) = self.snap_threshold(drag.view, width) {
+            time += snap_shift(&[time], &self.snap_targets(&drag.id), threshold);
+        }
+        self.preview_ui.project_timeline_view = Some(drag.view);
+        self.gesture_edit(&drag.recorded, |root| {
+            root.trim_project_clip(
+                &drag.id,
+                drag.start,
+                time,
+                drag.initial_start,
+                drag.initial_offset,
+            )
+        })
+    }
+
+    fn toggle_timeline_menu(
+        &mut self,
+        target: MenuTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .preview_ui
+            .timeline_menu
+            .as_ref()
+            .is_some_and(|menu| menu.target == target)
+        {
+            self.preview_ui.timeline_menu = None;
+            return;
+        }
+        let count = match target {
+            MenuTarget::AddTrack => 2,
+            MenuTarget::Track(_) => 1,
+        };
+        let focuses: Vec<_> = (0..count).map(|_| cx.focus_handle()).collect();
+        focuses[0].focus(window, cx);
+        self.preview_ui.timeline_menu = Some(TimelineMenu { target, focuses });
+    }
 }
 
 /// The visible span after the first clip is added, as a multiple of the project length.
 const FIRST_CLIP_TRACK_SPAN: f64 = 1.1;
+/// Pixels within which a dragged edge snaps to a target.
+const SNAP_DISTANCE: f32 = 8.0;
+
+/// The shift that moves the closest of `edges` onto a target within `threshold`, or zero.
+fn snap_shift(edges: &[f64], targets: &[f64], threshold: f64) -> f64 {
+    let mut best: Option<f64> = None;
+    for edge in edges {
+        for target in targets {
+            let shift = target - edge;
+            if shift.abs() <= threshold && best.is_none_or(|best| shift.abs() < best.abs()) {
+                best = Some(shift);
+            }
+        }
+    }
+    best.unwrap_or(0.0)
+}
+
+/// A clip's start and length in project seconds.
+fn clip_extent(source: &TimelineSource) -> (f64, f64) {
+    (
+        std::time::Duration::from_millis(source.offset_millis).as_secs_f64(),
+        std::time::Duration::from_millis(frame_core::project_timeline::clip_duration_millis(
+            source,
+        ))
+        .as_secs_f64(),
+    )
+}
+
+/// Ruler steps in seconds, from a tenth of a second to half a day.
+const TICK_STEPS: [f64; 19] = [
+    0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0,
+    3600.0, 7200.0, 18000.0, 43200.0,
+];
+/// Labeled ticks are at least this many pixels apart.
+const MIN_MAJOR_TICK_DISTANCE: f32 = 96.0;
+/// Unlabeled ticks between two labeled ones, plus one.
+const MINOR_TICK_DIVISIONS: u32 = 5;
+
+/// The smallest step whose labeled ticks are far enough apart to read.
+fn major_tick_step(span: f64, width: f32) -> f64 {
+    let min_step = span * f64::from(MIN_MAJOR_TICK_DISTANCE) / f64::from(width.max(1.0));
+    TICK_STEPS
+        .into_iter()
+        .find(|step| *step >= min_step)
+        .unwrap_or(TICK_STEPS[TICK_STEPS.len() - 1])
+}
+
+/// Times of the ticks inside `view`, each with whether it is labeled.
+fn ruler_ticks(view: TimelineView, step: f64) -> Vec<(f64, bool)> {
+    let minor = step / f64::from(MINOR_TICK_DIVISIONS);
+    let end = view.start + view.span;
+    let mut ticks = Vec::new();
+    let mut index = (view.start / minor).ceil();
+    loop {
+        let time = index * minor;
+        if time > minor.mul_add(1e-6, end) {
+            break;
+        }
+        let major = (index / f64::from(MINOR_TICK_DIVISIONS)).fract().abs() < 1e-6;
+        ticks.push((time, major));
+        index += 1.0;
+    }
+    ticks
+}
+
+fn tenths(seconds: f64) -> (u64, u64) {
+    let tenths = crate::numeric::rounded_f64_to_u64(seconds.max(0.0) * 10.0);
+    (tenths / 10, tenths % 10)
+}
+
+fn clock(whole: u64) -> String {
+    format!("{}:{:02}:{:02}", whole / 3600, whole / 60 % 60, whole % 60)
+}
+
+/// `H:MM:SS.d`, as in the toolbar and status line.
+fn format_timecode(seconds: f64) -> String {
+    let (whole, tenth) = tenths(seconds);
+    format!("{}.{tenth}", clock(whole))
+}
+
+/// Ruler labels drop the tenths unless ticks are closer than a second.
+fn format_ruler_time(seconds: f64, step: f64) -> String {
+    if step < 1.0 {
+        format_timecode(seconds)
+    } else {
+        clock(crate::numeric::rounded_f64_to_u64(seconds.max(0.0)))
+    }
+}
+
+/// Maps a visible span to the zoom slider, where 0 is the fitted view and 1 is zoomed in.
+fn zoom_fraction(span: f64, fit_span: f64) -> f64 {
+    let range = (fit_span / SLIDER_MIN_SPAN).ln();
+    if range <= 0.0 {
+        return 0.0;
+    }
+    ((fit_span / span).ln() / range).clamp(0.0, 1.0)
+}
+
+fn span_from_zoom_fraction(fraction: f64, fit_span: f64) -> f64 {
+    let fit_span = fit_span.max(SLIDER_MIN_SPAN);
+    (fit_span * (SLIDER_MIN_SPAN / fit_span).powf(fraction.clamp(0.0, 1.0)))
+        .clamp(MIN_SPAN, MAX_SPAN)
+}
 
 #[derive(Clone)]
 pub(super) struct LibrarySourceDrag(pub(super) String);
@@ -152,8 +407,11 @@ impl Render for LibraryDragPreview {
 #[derive(Clone)]
 struct ClipDrag {
     id: String,
-    grab_x: std::rc::Rc<std::cell::Cell<Pixels>>,
+    grab_x: Rc<Cell<Pixels>>,
+    /// Project seconds, for snapping the trailing edge.
+    length: f64,
     view: TimelineView,
+    recorded: Rc<Cell<bool>>,
 }
 
 #[derive(Clone)]
@@ -163,6 +421,23 @@ struct ClipTrimDrag {
     initial_start: f64,
     initial_offset: u64,
     view: TimelineView,
+    recorded: Rc<Cell<bool>>,
+}
+
+#[derive(Clone, Copy)]
+struct PlayheadDrag;
+
+#[derive(Clone)]
+struct ScrollbarDrag {
+    grab_x: Rc<Cell<Pixels>>,
+    /// Seconds the whole scrollbar track stands for.
+    total: f64,
+    span: f64,
+}
+
+#[derive(Clone)]
+struct ZoomDrag {
+    fit_span: f64,
 }
 
 pub(super) struct MediaDragPreview;
@@ -172,43 +447,104 @@ impl Render for MediaDragPreview {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MenuTarget {
+    AddTrack,
+    Track(usize),
+}
+
+#[derive(Clone)]
+pub(super) struct TimelineMenu {
+    pub(super) target: MenuTarget,
+    pub(super) focuses: Vec<FocusHandle>,
+}
+
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "The timeline renders from independent editing, history, and playback flags."
+)]
 pub(super) struct ProjectTimelineState {
     pub(super) scheme: material::ColorScheme,
-    pub(super) clips: Vec<super::project::ClipPlacement>,
-    pub(super) sources: Vec<frame_core::types::TimelineSource>,
+    /// Every placed clip with its rendered source, in clip order.
+    pub(super) clips: Vec<(ClipPlacement, TimelineSource)>,
+    pub(super) tracks: Tracks,
     pub(super) files: Vec<FileItem>,
     pub(super) selected: Option<String>,
     pub(super) duration: f64,
     pub(super) current: f64,
     pub(super) view: TimelineView,
     pub(super) enabled: bool,
+    pub(super) snap: bool,
+    pub(super) can_undo: bool,
+    pub(super) can_redo: bool,
+    pub(super) playing: bool,
+    pub(super) menu: Option<TimelineMenu>,
+    /// The ruler's width from the last layout, to space its ticks.
+    pub(super) ruler_width: Option<f32>,
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "The panel composes its viewport input, accessible ruler, and track rows."
-)]
+impl ProjectTimelineState {
+    fn selected_clip(&self) -> Option<&(ClipPlacement, TimelineSource)> {
+        let selected = self.selected.as_deref()?;
+        self.clips
+            .iter()
+            .find(|(placement, _)| placement.id == selected)
+    }
+
+    fn selected_editable(&self) -> bool {
+        self.enabled
+            && self
+                .selected_clip()
+                .is_some_and(|(placement, _)| !self.tracks[placement.track].locked)
+    }
+
+    /// Whether the playhead is far enough inside the selected clip to split it.
+    fn can_split(&self) -> bool {
+        self.selected_editable()
+            && self.selected_clip().is_some_and(|(_, source)| {
+                let (start, length) = clip_extent(source);
+                self.current - start >= 0.05 && start + length - self.current >= 0.05
+            })
+    }
+}
+
+/// The track header column, beside the ruler and every lane.
+const HEADER_WIDTH: f32 = 184.0;
+const RULER_HEIGHT: f32 = 28.0;
+const VIDEO_LANE_HEIGHT: f32 = 72.0;
+const AUDIO_LANE_HEIGHT: f32 = 48.0;
+const LANE_GAP: f32 = 4.0;
+/// Clips sit this far inside their lane.
+const CLIP_INSET: f32 = 3.0;
+const CLIP_HEADER_HEIGHT: f32 = 18.0;
+/// Video clips end with a waveform band for the audio they export.
+const VIDEO_WAVEFORM_HEIGHT: f32 = 14.0;
+/// Audio clips fill the space under their header with the waveform.
+const AUDIO_WAVEFORM_HEIGHT: f32 = AUDIO_LANE_HEIGHT - CLIP_HEADER_HEIGHT - 2.0 * CLIP_INSET;
+const TRIM_HANDLE_WIDTH: f32 = 8.0;
+/// Lanes scroll vertically past this height.
+const MAX_LANES_HEIGHT: f32 = 248.0;
+/// Room beside the scrollbar for each scroll arrow. The ruler and lanes leave the same room
+/// on their right, so all three share their left edge and width.
+const SCROLL_ARROW_WIDTH: f32 = 20.0;
+/// Opacity of clips on hidden tracks.
+const HIDDEN_CLIP_OPACITY: f32 = 0.38;
+
+const fn lane_height(kind: TrackKind) -> f32 {
+    match kind {
+        TrackKind::Video => VIDEO_LANE_HEIGHT,
+        TrackKind::Audio => AUDIO_LANE_HEIGHT,
+    }
+}
+
 pub(super) fn project_timeline(
     state: &ProjectTimelineState,
     focus: &FocusHandle,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Stateful<gpui::Div> {
-    let ProjectTimelineState {
-        scheme,
-        clips,
-        sources,
-        files,
-        selected,
-        current,
-        enabled,
-        ..
-    } = state;
-    let surface_container_high = scheme.surface_container_high;
-    let current = *current;
-    let enabled = *enabled;
-    let duration = state.duration.max(1.0);
-    let view = state.view;
+    let scheme = &state.scheme;
+    let order = state.tracks.display_order();
     m3::m3_surface(scheme.surface_container_low, shape::CORNER_EXTRA_LARGE)
         .id("project-timeline")
         .track_focus(focus)
@@ -228,8 +564,6 @@ pub(super) fn project_timeline(
         .flex_none()
         .min_w_0()
         .w_full()
-        .max_h(theme::ui_rem(320.0))
-        .overflow_y_scroll()
         .p(theme::ui_rem(16.0))
         .flex()
         .flex_col()
@@ -246,266 +580,711 @@ pub(super) fn project_timeline(
                 cx.notify();
             }
         }))
-        .drag_over::<LibrarySourceDrag>(move |style, _, _, _| {
-            if enabled {
-                style.bg(color(surface_container_high))
-            } else {
-                style
-            }
-        })
+        // Drops outside a lane land on the default track.
         .on_drop(cx.listener(|root, source: &LibrarySourceDrag, window, cx| {
             cx.stop_propagation();
             if root.drop_library_source(&source.0, window.mouse_position()) {
                 cx.notify();
             }
         }))
-        .child(project_timeline_toolbar(state, window, cx))
+        .child(toolbar(state, window, cx))
         .child(
             div()
-                .id("project-ruler")
-                .focusable()
-                .tab_stop(true)
-                .role(gpui::Role::Slider)
-                .aria_label("Project playhead")
-                .aria_numeric_value(current)
-                .aria_min_numeric_value(0.0)
-                .aria_max_numeric_value(duration)
-                .aria_value(current.to_string())
-                .on_key_down(cx.listener(|root, event: &gpui::KeyDownEvent, _, cx| {
-                    if root.adjust_preview_timeline_from_keyboard_with_context(
-                        TimelineDragTarget::Scrub,
-                        &event.keystroke.key,
-                        cx,
-                    ) {
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
-                }))
-                .h(theme::ui_rem(24.0))
-                .ml(theme::ui_rem(212.0))
-                .relative()
-                .cursor_pointer()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |root, event: &MouseDownEvent, _, cx| {
-                        if root.seek_project_timeline(event.position, cx) {
-                            cx.notify();
-                        }
-                    }),
-                )
-                .child(
-                    super::preview_panel::timeline::PreviewTimelineTrackBoundsProbe {
-                        owner: cx.entity(),
-                    },
-                )
-                .children((0_u8..=4).map(|step| {
-                    div()
-                        .absolute()
-                        .when(step < 4, |tick| tick.left(relative(f32::from(step) / 4.0)))
-                        .when(step == 4, gpui::Styled::right_0)
-                        .m3_type(typography::LABEL_SMALL)
-                        .text_color(color(scheme.on_surface_variant))
-                        .child(format!("{:.1}s", view.time(f64::from(step) / 4.0)))
-                })),
-        )
-        .children([false, true].into_iter().flat_map(|audio| {
-            let rows: Vec<_> = clips
-                .iter()
-                .zip(sources)
-                .filter(|(placement, _)| (placement.kind == SourceKind::Audio) == audio)
-                .filter_map(|(placement, source)| {
-                    let file = files.iter().find(|file| file.id == placement.id)?;
-                    Some(track_row(
-                        placement,
-                        source,
-                        file,
-                        selected.as_deref() == Some(&placement.id),
-                        view,
-                        current,
-                        enabled,
-                        scheme,
-                        window,
-                        cx,
-                    ))
-                })
-                .collect();
-            if rows.is_empty() {
-                vec![empty_track_row(audio, view, current, scheme, cx)]
-            } else {
-                rows
-            }
-        }))
-}
-
-fn empty_track_row(
-    audio: bool,
-    view: TimelineView,
-    current: f64,
-    scheme: &material::ColorScheme,
-    cx: &Context<FrameRoot>,
-) -> gpui::Div {
-    let (id, label, symbol) = if audio {
-        ("project-empty-audio", "Audio", Symbol::MusicNote)
-    } else {
-        ("project-empty-video", "Video", Symbol::Movie)
-    };
-    div()
-        .flex()
-        .items_center()
-        .gap(theme::ui_rem(12.0))
-        .child(
-            div()
-                .w(theme::ui_rem(200.0))
-                .flex_none()
                 .flex()
-                .items_center()
-                .gap(theme::ui_rem(8.0))
-                .px(theme::ui_rem(12.0))
-                .m3_type(typography::LABEL_LARGE)
-                .child(m3::m3_icon(symbol, false, 18.0, color(scheme.on_surface)))
-                .child(label),
+                .items_end()
+                .pr(theme::ui_rem(SCROLL_ARROW_WIDTH))
+                .child(
+                    div()
+                        .w(theme::ui_rem(HEADER_WIDTH))
+                        .flex_none()
+                        .child(add_track_button(state, window, cx)),
+                )
+                .child(ruler(state, cx)),
         )
         .child(
             div()
-                .id(id)
-                .debug_selector(move || id.to_string())
-                .aria_label(format!("Empty {label} track"))
-                .flex_1()
-                .min_w_0()
-                .h(theme::ui_rem(if audio {
-                    LANE_HEIGHT
-                } else {
-                    VIDEO_LANE_HEIGHT
-                }))
-                .relative()
-                .overflow_hidden()
-                .rounded(theme::ui_rem(shape::CORNER_SMALL))
-                .bg(color(scheme.surface_container_highest))
-                .cursor_pointer()
-                .on_click(cx.listener(|root, event: &gpui::ClickEvent, _, cx| {
-                    if let gpui::ClickEvent::Mouse(event) = event
-                        && root.seek_project_timeline(event.up.position, cx)
-                    {
-                        cx.notify();
-                    }
-                }))
+                .id("project-timeline-lanes")
+                .max_h(theme::ui_rem(MAX_LANES_HEIGHT))
+                .overflow_y_scroll()
+                .flex()
+                .pr(theme::ui_rem(SCROLL_ARROW_WIDTH))
                 .child(
                     div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .w(theme::ui_rem(2.0))
-                        .left(relative(view.fraction(current)))
-                        .bg(color(scheme.on_surface)),
-                ),
+                        .w(theme::ui_rem(HEADER_WIDTH))
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap(theme::ui_rem(LANE_GAP))
+                        .children(
+                            order
+                                .iter()
+                                .map(|&index| track_header(state, index, window, cx)),
+                        ),
+                )
+                .child(lanes(state, &order, window, cx)),
         )
+        .child(scrollbar(state, cx))
+        .child(status_line(state))
 }
 
-const LANE_HEIGHT: f32 = 40.0;
-/// Video lanes stack thumbnails over a waveform band for the exported audio.
-const VIDEO_LANE_HEIGHT: f32 = 56.0;
-const VIDEO_WAVEFORM_HEIGHT: f32 = 20.0;
-
-fn project_timeline_toolbar(
+#[expect(
+    clippy::too_many_lines,
+    reason = "The toolbar lays out transport, history, edit, snap, and zoom controls."
+)]
+fn toolbar(
     state: &ProjectTimelineState,
     window: &mut Window,
     cx: &mut Context<FrameRoot>,
 ) -> gpui::Div {
     let scheme = &state.scheme;
-    let audio_count = state
-        .clips
-        .iter()
-        .filter(|clip| clip.kind == SourceKind::Audio)
-        .count();
-    let count = audio_count.max(1) + (state.clips.len() - audio_count).max(1);
+    let fit_span = state.duration.max(1.0);
     div()
         .w_full()
         .min_w_0()
         .flex()
+        .flex_wrap()
         .items_center()
-        .gap(theme::ui_rem(12.0))
+        .gap(theme::ui_rem(8.0))
+        .child(
+            m3::IconButton::new(
+                "timeline-play",
+                if state.playing {
+                    Symbol::Pause
+                } else {
+                    Symbol::PlayArrow
+                },
+                if state.playing { "Pause" } else { "Play" },
+            )
+            .variant(m3::IconButtonVariant::Filled)
+            .enabled(!state.clips.is_empty())
+            .build(scheme, window, cx)
+            .on_click(cx.listener(|root, _, _, cx| {
+                if root.toggle_preview_playback_with_context(cx) {
+                    cx.notify();
+                }
+            })),
+        )
         .child(
             div()
-                .m3_type(typography::TITLE_SMALL)
-                .child("Project timeline"),
+                .flex_none()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .m3_type(typography::TITLE_SMALL)
+                        .child(format_timecode(state.current)),
+                )
+                .child(
+                    div()
+                        .m3_type(typography::BODY_SMALL)
+                        .text_color(color(scheme.on_surface_variant))
+                        .child(format!(
+                            "of {} · {} tracks",
+                            format_timecode(state.duration),
+                            state.tracks.len()
+                        )),
+                ),
         )
+        .child(
+            div()
+                .flex_none()
+                .w(theme::ui_rem(1.0))
+                .h(theme::ui_rem(24.0))
+                .mx(theme::ui_rem(8.0))
+                .bg(color(scheme.outline_variant)),
+        )
+        .child(
+            m3::IconButton::new("timeline-undo", Symbol::Undo, "Undo")
+                .size(m3::IconButtonSize::ExtraSmall)
+                .enabled(state.enabled && state.can_undo)
+                .build(scheme, window, cx)
+                .on_click(cx.listener(|root, _, _, cx| {
+                    if root.undo_timeline_edit() {
+                        cx.notify();
+                    }
+                })),
+        )
+        .child(
+            m3::IconButton::new("timeline-redo", Symbol::Redo, "Redo")
+                .size(m3::IconButtonSize::ExtraSmall)
+                .enabled(state.enabled && state.can_redo)
+                .build(scheme, window, cx)
+                .on_click(cx.listener(|root, _, _, cx| {
+                    if root.redo_timeline_edit() {
+                        cx.notify();
+                    }
+                })),
+        )
+        .child(
+            m3::Button::new(
+                "timeline-split",
+                "Split at playhead",
+                m3::ButtonVariant::Tonal,
+            )
+            .icon(Symbol::ContentCut)
+            .size(m3::ButtonSize::ExtraSmall)
+            .enabled(state.can_split())
+            .build(scheme, window, cx)
+            .on_click(cx.listener(|root, _, _, cx| {
+                if root.split_project_clip_at_playhead() {
+                    cx.notify();
+                }
+            })),
+        )
+        .child(
+            m3::IconButton::new("timeline-delete", Symbol::Delete, "Delete clip")
+                .size(m3::IconButtonSize::ExtraSmall)
+                .enabled(state.selected_editable())
+                .build(scheme, window, cx)
+                .on_click(cx.listener(|root, _, _, cx| {
+                    if root.remove_selected_project_clip() {
+                        cx.notify();
+                    }
+                })),
+        )
+        .child(
+            m3::Chip::new("timeline-snap", "Snap", m3::ChipKind::Filter)
+                .selected(state.snap)
+                .build(scheme, window, cx)
+                .on_click(cx.listener(|root, _, _, cx| {
+                    root.preview_ui.timeline_snap = !root.preview_ui.timeline_snap;
+                    cx.notify();
+                })),
+        )
+        // Zoom controls keep to the right, and wrap below on narrow panels.
         .child(
             div()
                 .flex_1()
-                .min_w_0()
-                .truncate()
-                .m3_type(typography::BODY_SMALL)
-                .text_color(color(scheme.on_surface_variant))
-                .child(format!("{count} tracks")),
-        )
-        .children(
-            [
-                (
-                    "timeline-zoom-out",
-                    Symbol::ZoomOut,
-                    "Zoom out timeline",
-                    0.8,
+                .flex()
+                .items_center()
+                .justify_end()
+                .gap(theme::ui_rem(4.0))
+                .child(
+                    m3::IconButton::new("timeline-zoom-out", Symbol::ZoomOut, "Zoom out timeline")
+                        .size(m3::IconButtonSize::ExtraSmall)
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(|root, _, _, cx| {
+                            root.zoom_project_timeline(0.8);
+                            cx.notify();
+                        })),
+                )
+                .child(zoom_slider(state, fit_span, cx))
+                .child(
+                    m3::IconButton::new("timeline-zoom-in", Symbol::ZoomIn, "Zoom in timeline")
+                        .size(m3::IconButtonSize::ExtraSmall)
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(|root, _, _, cx| {
+                            root.zoom_project_timeline(1.25);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    m3::Button::new("timeline-fit", "Fit", m3::ButtonVariant::Text)
+                        .icon(Symbol::FitScreen)
+                        .size(m3::ButtonSize::ExtraSmall)
+                        .build(scheme, window, cx)
+                        .on_click(cx.listener(|root, _, _, cx| {
+                            root.preview_ui.project_timeline_view =
+                                Some(TimelineView::fit(root.project_duration()));
+                            cx.notify();
+                        })),
                 ),
-                ("timeline-zoom-in", Symbol::ZoomIn, "Zoom in timeline", 1.25),
+        )
+}
+
+fn zoom_slider(
+    state: &ProjectTimelineState,
+    fit_span: f64,
+    cx: &Context<FrameRoot>,
+) -> gpui::Stateful<gpui::Div> {
+    let fraction = zoom_fraction(state.view.span, fit_span);
+    let step = |delta: f64| {
+        move |root: &mut FrameRoot,
+              _: &gpui::KeyDownEvent,
+              _: &mut Window,
+              cx: &mut Context<FrameRoot>| {
+            let span = span_from_zoom_fraction(fraction + delta, fit_span);
+            let mut view = root.project_timeline_view();
+            view.span = span;
+            root.preview_ui.project_timeline_view = Some(view);
+            cx.stop_propagation();
+            cx.notify();
+        }
+    };
+    let (decrease, increase) = (step(-0.1), step(0.1));
+    m3::Slider::new("timeline-zoom", "Timeline zoom", fraction, 0.0, 1.0)
+        .value_text(format!("{:.0}%", fraction * 100.0))
+        .build(&state.scheme)
+        .flex_none()
+        .w(theme::ui_rem(128.0))
+        .on_key_down(
+            cx.listener(move |root, event: &gpui::KeyDownEvent, window, cx| {
+                match event.keystroke.key.as_str() {
+                    "left" | "down" => decrease(root, event, window, cx),
+                    "right" | "up" => increase(root, event, window, cx),
+                    _ => {}
+                }
+            }),
+        )
+        .on_drag(ZoomDrag { fit_span }, |_, _, _, cx| {
+            cx.new(|_| MediaDragPreview)
+        })
+        .on_drag_move(cx.listener(|root, event: &DragMoveEvent<ZoomDrag>, _, cx| {
+            let fit_span = event.drag(cx).fit_span;
+            let fraction = timeline_slider_percent_from_bounds(event.event.position, event.bounds);
+            let mut view = root.project_timeline_view();
+            view.span = span_from_zoom_fraction(fraction, fit_span);
+            root.preview_ui.project_timeline_view = Some(view);
+            cx.notify();
+        }))
+}
+
+fn timeline_menu(
+    state: &ProjectTimelineState,
+    target: MenuTarget,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> Option<gpui::Div> {
+    let menu = state.menu.as_ref().filter(|menu| menu.target == target)?;
+    let items = match target {
+        MenuTarget::AddTrack => vec![
+            m3::MenuItem::new("Video track", Symbol::Movie).enabled(state.enabled),
+            m3::MenuItem::new("Audio track", Symbol::MusicNote).enabled(state.enabled),
+        ],
+        MenuTarget::Track(index) => {
+            let track = state.tracks[index];
+            vec![
+                m3::MenuItem::new("Delete track", Symbol::Delete)
+                    .enabled(state.enabled && !track.locked && state.tracks.count(track.kind) > 1),
             ]
-            .into_iter()
-            .map(|(id, symbol, label, factor)| {
-                m3::IconButton::new(id, symbol, label)
-                    .size(m3::IconButtonSize::ExtraSmall)
-                    .build(scheme, window, cx)
-                    .on_click(cx.listener(move |root, _, _, cx| {
-                        root.zoom_project_timeline(factor);
-                        cx.notify();
-                    }))
+        }
+    };
+    let items = items
+        .into_iter()
+        .zip(&menu.focuses)
+        .map(|(item, focus)| item.focus(focus))
+        .collect();
+    let id = match target {
+        MenuTarget::AddTrack => "timeline-add-track-menu".to_string(),
+        MenuTarget::Track(index) => format!("timeline-track-menu-{index}"),
+    };
+    let menu = m3::Menu::new(id, items)
+        .on_select(cx.listener(move |root, index: &usize, _, cx| {
+            root.preview_ui.timeline_menu = None;
+            match target {
+                MenuTarget::AddTrack => {
+                    root.add_project_track(if *index == 0 {
+                        TrackKind::Video
+                    } else {
+                        TrackKind::Audio
+                    });
+                }
+                MenuTarget::Track(track) => {
+                    root.remove_project_track(track);
+                }
+            }
+            cx.notify();
+        }))
+        .build(&state.scheme, window, cx)
+        .shadow(m3::elevation_shadows(
+            material::Elevation::Level2,
+            &state.scheme,
+        ))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down_out(cx.listener(|root, _, _, cx| {
+            root.preview_ui.timeline_menu = None;
+            cx.notify();
+        }))
+        .on_key_down(cx.listener(|root, event: &gpui::KeyDownEvent, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "escape" | "tab") {
+                cx.stop_propagation();
+                root.preview_ui.timeline_menu = None;
+                cx.notify();
+            }
+        }));
+    // A zero-size anchor keeps the menu out of the trigger's layout.
+    Some(
+        div()
+            .absolute()
+            .size_0()
+            .left_0()
+            .top(theme::ui_rem(36.0))
+            .child(
+                gpui::deferred(
+                    gpui::anchored()
+                        .anchor(gpui::Anchor::TopLeft)
+                        .snap_to_window()
+                        .child(menu),
+                )
+                .with_priority(20),
+            ),
+    )
+}
+
+fn add_track_button(
+    state: &ProjectTimelineState,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    div()
+        .relative()
+        .child(
+            m3::Button::new("timeline-add-track", "Add track", m3::ButtonVariant::Text)
+                .icon(Symbol::Add)
+                .size(m3::ButtonSize::ExtraSmall)
+                .enabled(state.enabled)
+                .build(&state.scheme, window, cx)
+                .on_click(cx.listener(|root, _, window, cx| {
+                    root.toggle_timeline_menu(MenuTarget::AddTrack, window, cx);
+                    cx.notify();
+                })),
+        )
+        .children(timeline_menu(state, MenuTarget::AddTrack, window, cx))
+}
+
+fn ruler(state: &ProjectTimelineState, cx: &Context<FrameRoot>) -> gpui::Stateful<gpui::Div> {
+    let scheme = &state.scheme;
+    let view = state.view;
+    let step = major_tick_step(view.span, state.ruler_width.unwrap_or(800.0));
+    div()
+        .id("project-ruler")
+        .focusable()
+        .tab_stop(true)
+        .role(gpui::Role::Slider)
+        .aria_label("Project playhead")
+        .aria_numeric_value(state.current)
+        .aria_min_numeric_value(0.0)
+        .aria_max_numeric_value(state.duration.max(1.0))
+        .aria_value(format_timecode(state.current))
+        .on_key_down(cx.listener(|root, event: &gpui::KeyDownEvent, _, cx| {
+            if root.adjust_preview_timeline_from_keyboard_with_context(
+                TimelineDragTarget::Scrub,
+                &event.keystroke.key,
+                cx,
+            ) {
+                cx.stop_propagation();
+                cx.notify();
+            }
+        }))
+        .flex_1()
+        .min_w_0()
+        .h(theme::ui_rem(RULER_HEIGHT))
+        .relative()
+        .overflow_hidden()
+        .cursor_pointer()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|root, event: &MouseDownEvent, _, cx| {
+                if root.seek_project_timeline(event.position, cx) {
+                    cx.notify();
+                }
+            }),
+        )
+        .on_drag(PlayheadDrag, |_, _, _, cx| cx.new(|_| MediaDragPreview))
+        .on_drag_move(
+            cx.listener(|root, event: &DragMoveEvent<PlayheadDrag>, _, cx| {
+                if root.seek_project_timeline(event.event.position, cx) {
+                    cx.notify();
+                }
             }),
         )
         .child(
-            m3::Button::new("timeline-fit", "Fit", m3::ButtonVariant::Text)
-                .size(m3::ButtonSize::ExtraSmall)
-                .build(scheme, window, cx)
-                .on_click(cx.listener(|root, _, _, cx| {
-                    root.preview_ui.project_timeline_view =
-                        Some(TimelineView::fit(root.project_duration()));
+            super::preview_panel::timeline::PreviewTimelineTrackBoundsProbe { owner: cx.entity() },
+        )
+        .children(ruler_ticks(view, step).into_iter().map(|(time, major)| {
+            div()
+                .absolute()
+                .left(relative(view.fraction(time)))
+                .bottom_0()
+                .h(theme::ui_rem(if major { 12.0 } else { 5.0 }))
+                .border_l_1()
+                .border_color(color(if major {
+                    scheme.outline
+                } else {
+                    scheme.outline_variant
+                }))
+                .when(major, |tick| {
+                    tick.child(
+                        div()
+                            .absolute()
+                            .bottom(theme::ui_rem(2.0))
+                            .left(theme::ui_rem(3.0))
+                            .whitespace_nowrap()
+                            .m3_type(typography::LABEL_SMALL)
+                            .text_color(color(scheme.on_surface_variant))
+                            .child(format_ruler_time(time, step)),
+                    )
+                })
+        }))
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(relative(view.fraction(state.current)))
+                .w(theme::ui_rem(2.0))
+                .ml(theme::ui_rem(-1.0))
+                .bg(color(scheme.primary))
+                .child(
+                    div()
+                        .absolute()
+                        .top(theme::ui_rem(4.0))
+                        .left(theme::ui_rem(-5.0))
+                        .w(theme::ui_rem(12.0))
+                        .h(theme::ui_rem(16.0))
+                        .rounded(theme::ui_rem(shape::CORNER_EXTRA_SMALL))
+                        .bg(color(scheme.primary)),
+                ),
+        )
+}
+
+fn track_header(
+    state: &ProjectTimelineState,
+    index: usize,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Div {
+    let scheme = &state.scheme;
+    let track = state.tracks[index];
+    let name = state.tracks.name(index);
+    let (badge, on_badge) = match track.kind {
+        TrackKind::Video => (scheme.primary_container, scheme.on_primary_container),
+        TrackKind::Audio => (scheme.tertiary_container, scheme.on_tertiary_container),
+    };
+    let mut toggle = |id: &str, symbol: Symbol, label: String, value: TrackToggle| {
+        m3::IconButton::new(format!("track-{id}-{index}"), symbol, label)
+            .size(m3::IconButtonSize::ExtraSmall)
+            .enabled(state.enabled)
+            .build(scheme, window, cx)
+            .on_click(cx.listener(move |root, _, _, cx| {
+                if root.toggle_project_track(index, value) {
                     cx.notify();
-                })),
+                }
+            }))
+    };
+    let visibility = (track.kind == TrackKind::Video).then(|| {
+        toggle(
+            "visibility",
+            if track.hidden {
+                Symbol::VisibilityOff
+            } else {
+                Symbol::Visibility
+            },
+            format!("{} {name}", if track.hidden { "Show" } else { "Hide" }),
+            TrackToggle::Hidden,
+        )
+    });
+    let mute = toggle(
+        "mute",
+        if track.muted {
+            Symbol::VolumeOff
+        } else {
+            Symbol::VolumeUp
+        },
+        format!("{} {name}", if track.muted { "Unmute" } else { "Mute" }),
+        TrackToggle::Muted,
+    );
+    let lock = toggle(
+        "lock",
+        if track.locked {
+            Symbol::Lock
+        } else {
+            Symbol::LockOpen
+        },
+        format!("{} {name}", if track.locked { "Unlock" } else { "Lock" }),
+        TrackToggle::Locked,
+    );
+    let more = m3::IconButton::new(
+        format!("track-more-{index}"),
+        Symbol::MoreVert,
+        format!("{name} options"),
+    )
+    .size(m3::IconButtonSize::ExtraSmall)
+    .enabled(state.enabled)
+    .build(scheme, window, cx)
+    .on_click(cx.listener(move |root, _, window, cx| {
+        root.toggle_timeline_menu(MenuTarget::Track(index), window, cx);
+        cx.notify();
+    }));
+    div()
+        .h(theme::ui_rem(lane_height(track.kind)))
+        .flex()
+        .items_center()
+        .gap(theme::ui_rem(2.0))
+        .pl(theme::ui_rem(8.0))
+        .rounded_l(theme::ui_rem(shape::CORNER_SMALL))
+        .bg(color(scheme.surface_container))
+        .child(
+            div()
+                .flex_none()
+                .min_w(theme::ui_rem(28.0))
+                .mr(theme::ui_rem(6.0))
+                .px(theme::ui_rem(4.0))
+                .rounded(theme::ui_rem(shape::CORNER_EXTRA_SMALL))
+                .bg(color(badge))
+                .text_color(color(on_badge))
+                .m3_type(typography::LABEL_MEDIUM)
+                .flex()
+                .justify_center()
+                .child(state.tracks.label(index)),
+        )
+        .children(visibility)
+        .child(mute)
+        .child(lock)
+        .child(div().relative().child(more).children(timeline_menu(
+            state,
+            MenuTarget::Track(index),
+            window,
+            cx,
+        )))
+}
+
+fn lanes(
+    state: &ProjectTimelineState,
+    order: &[usize],
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id("project-lanes")
+        .flex_1()
+        .min_w_0()
+        .relative()
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .gap(theme::ui_rem(LANE_GAP))
+        .on_drag_move(cx.listener(|root, event: &DragMoveEvent<ClipDrag>, _, cx| {
+            let drag = event.drag(cx).clone();
+            if root.drag_project_clip(&drag, event.event.position, event.bounds) {
+                cx.notify();
+            }
+        }))
+        .on_drag_move(
+            cx.listener(|root, event: &DragMoveEvent<ClipTrimDrag>, _, cx| {
+                let drag = event.drag(cx).clone();
+                if root.drag_project_trim(&drag, event.event.position, event.bounds) {
+                    cx.notify();
+                }
+            }),
+        )
+        .children(order.iter().map(|&index| lane(state, index, window, cx)))
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .w(theme::ui_rem(2.0))
+                .ml(theme::ui_rem(-1.0))
+                .left(relative(state.view.fraction(state.current)))
+                .bg(color(state.scheme.primary)),
+        )
+}
+
+fn lane(
+    state: &ProjectTimelineState,
+    index: usize,
+    window: &mut Window,
+    cx: &mut Context<FrameRoot>,
+) -> gpui::Stateful<gpui::Div> {
+    let scheme = &state.scheme;
+    let track = state.tracks[index];
+    let label = state.tracks.label(index);
+    let highlight = scheme.surface_container_high;
+    let enabled = state.enabled && !track.locked;
+    div()
+        .id(format!("project-lane-{index}"))
+        .debug_selector(move || format!("project-lane-{label}"))
+        .aria_label(format!("{} lane", state.tracks.name(index)))
+        .h(theme::ui_rem(lane_height(track.kind)))
+        .flex_none()
+        .relative()
+        .overflow_hidden()
+        .rounded_r(theme::ui_rem(shape::CORNER_SMALL))
+        .bg(color(scheme.surface_container))
+        .cursor_pointer()
+        .on_click(cx.listener(|root, event: &gpui::ClickEvent, _, cx| {
+            if let gpui::ClickEvent::Mouse(event) = event
+                && root.seek_project_timeline(event.up.position, cx)
+            {
+                cx.notify();
+            }
+        }))
+        .when(enabled, |lane| {
+            lane.drag_over::<LibrarySourceDrag>(move |style, _, _, _| style.bg(color(highlight)))
+                .on_drop(
+                    cx.listener(move |root, source: &LibrarySourceDrag, window, cx| {
+                        cx.stop_propagation();
+                        if root.drop_library_source_on(
+                            &source.0,
+                            window.mouse_position(),
+                            Some(index),
+                        ) {
+                            cx.notify();
+                        }
+                    }),
+                )
+                // Dragging a clip over another lane of its kind moves it there.
+                .on_drag_move(
+                    cx.listener(move |root, event: &DragMoveEvent<ClipDrag>, _, cx| {
+                        let y = event.event.position.y;
+                        if y < event.bounds.top() || y >= event.bounds.bottom() {
+                            return;
+                        }
+                        let drag = event.drag(cx).clone();
+                        if root.gesture_edit(&drag.recorded, |root| {
+                            root.move_project_clip_to_track(&drag.id, index)
+                        }) {
+                            cx.notify();
+                        }
+                    }),
+                )
+        })
+        .children(
+            state
+                .clips
+                .iter()
+                .filter(|(placement, _)| placement.track == index)
+                .filter_map(|(placement, source)| {
+                    let file = state.files.iter().find(|file| file.id == placement.id)?;
+                    Some(clip(state, placement, source, file, window, cx))
+                }),
         )
 }
 
 #[expect(
-    clippy::too_many_arguments,
-    reason = "A track row has its source, instance, selection, ruler, and render context."
-)]
-#[expect(
     clippy::too_many_lines,
-    reason = "A row composes its property controls, movable clip, and independent trim handles."
+    reason = "A clip composes its header, filmstrip, waveform, and independent trim handles."
 )]
-fn track_row(
-    placement: &super::project::ClipPlacement,
-    source: &frame_core::types::TimelineSource,
+fn clip(
+    state: &ProjectTimelineState,
+    placement: &ClipPlacement,
+    source: &TimelineSource,
     file: &FileItem,
-    selected: bool,
-    view: TimelineView,
-    current: f64,
-    enabled: bool,
-    scheme: &material::ColorScheme,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<FrameRoot>,
-) -> gpui::Div {
+) -> gpui::Stateful<gpui::Div> {
+    let scheme = &state.scheme;
+    let view = state.view;
+    let track = state.tracks[placement.track];
+    let selected = state.selected.as_deref() == Some(&placement.id);
+    let enabled = state.enabled && !track.locked;
     let id = placement.id.clone();
-    let start = std::time::Duration::from_millis(placement.offset_millis).as_secs_f64();
-    let length = std::time::Duration::from_millis(
-        frame_core::project_timeline::clip_duration_millis(source),
-    )
-    .as_secs_f64();
+    let (start, length) = clip_extent(source);
+    let video = placement.kind == SourceKind::Video;
+    let (container, on_container) = match placement.kind {
+        SourceKind::Audio => (scheme.tertiary_container, scheme.on_tertiary_container),
+        SourceKind::Video | SourceKind::Image => {
+            (scheme.primary_container, scheme.on_primary_container)
+        }
+    };
     let symbol = match placement.kind {
         SourceKind::Audio => Symbol::MusicNote,
         SourceKind::Image => Symbol::Image,
         SourceKind::Video => Symbol::Movie,
     };
-    let grab = std::rc::Rc::new(std::cell::Cell::new(px(0.0)));
     let source_name = file.name.clone();
     let source_duration = std::time::Duration::from_millis(source.duration_millis).as_secs_f64();
-    let video = placement.kind == SourceKind::Video;
     let filmstrip = video
         .then(|| super::filmstrip::request(&source.path, source_duration, cx))
         .flatten();
@@ -546,324 +1325,335 @@ fn track_row(
     if cursor < trim_end {
         ranges.push((cursor, trim_end));
     }
+    let waveform_height = if video {
+        VIDEO_WAVEFORM_HEIGHT
+    } else {
+        AUDIO_WAVEFORM_HEIGHT
+    };
+    let grab = Rc::new(Cell::new(px(0.0)));
+    let debug_id = id.clone();
 
     div()
-        .flex()
-        .items_center()
-        .gap(theme::ui_rem(12.0))
+        .id(format!("project-clip-{id}"))
+        .debug_selector(move || format!("project-clip-{debug_id}"))
+        .absolute()
+        .top(theme::ui_rem(CLIP_INSET))
+        .bottom(theme::ui_rem(CLIP_INSET))
+        .left(relative(view.fraction(start)))
+        .w(relative(crate::numeric::f64_to_f32(length / view.span)))
+        .min_w(theme::ui_rem(8.0))
+        .rounded(theme::ui_rem(shape::CORNER_SMALL))
+        .overflow_hidden()
+        .bg(color(if video {
+            scheme.surface_container_highest
+        } else {
+            container
+        }))
+        .when(selected, |clip| {
+            clip.border_2().border_color(color(scheme.primary))
+        })
+        .when(track.hidden, |clip| clip.opacity(HIDDEN_CLIP_OPACITY))
+        .text_color(color(on_container))
+        .role(gpui::Role::Button)
+        .aria_label(format!("Select {source_name} clip"))
+        .aria_selected(selected)
+        .focusable()
+        .tab_stop(true)
+        .on_click(cx.listener({
+            let id = id.clone();
+            move |root, _, _, cx| {
+                if root.select_project_clip(&id) {
+                    cx.notify();
+                }
+            }
+        }))
+        .on_key_down(cx.listener({
+            let id = id.clone();
+            move |root, event: &gpui::KeyDownEvent, _, cx| {
+                let key = event.keystroke.key.as_str();
+                if matches!(key, "enter" | "space") {
+                    root.select_project_clip(&id);
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+                if matches!(key, "left" | "right") {
+                    let offset = root
+                        .project
+                        .clips
+                        .iter()
+                        .find(|clip| clip.id == id)
+                        .map_or(0, |clip| clip.offset_millis);
+                    let offset = if key == "left" {
+                        offset.saturating_sub(100)
+                    } else {
+                        offset.saturating_add(100)
+                    };
+                    root.gesture_edit(&Cell::new(false), |root| {
+                        root.move_project_clip(&id, offset)
+                    });
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }
+        }))
+        .when(enabled, |clip| {
+            clip.cursor_grab().on_drag(
+                ClipDrag {
+                    id: id.clone(),
+                    grab_x: grab.clone(),
+                    length,
+                    view,
+                    recorded: Rc::default(),
+                },
+                move |drag, position, _, cx| {
+                    drag.grab_x.set(position.x);
+                    cx.new(|_| MediaDragPreview)
+                },
+            )
+        })
+        .when_some(filmstrip, |clip, filmstrip| {
+            clip.child(
+                super::filmstrip::element(filmstrip, ranges.clone())
+                    .top(theme::ui_rem(CLIP_HEADER_HEIGHT))
+                    .bottom(theme::ui_rem(if waveform_stream.is_some() {
+                        VIDEO_WAVEFORM_HEIGHT
+                    } else {
+                        0.0
+                    })),
+            )
+        })
+        .when(video && waveform_stream.is_some(), |clip| {
+            clip.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(theme::ui_rem(VIDEO_WAVEFORM_HEIGHT))
+                    .bg(color(container)),
+            )
+        })
+        .when_some(waveform, |clip, waveform| {
+            clip.child(
+                super::waveform::element(waveform, ranges, color(on_container))
+                    .bottom(theme::ui_rem(2.0))
+                    .h(theme::ui_rem(waveform_height - 2.0)),
+            )
+        })
         .child(
             div()
-                .w(theme::ui_rem(200.0))
-                .flex_none()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(theme::ui_rem(CLIP_HEADER_HEIGHT))
+                .px(theme::ui_rem(6.0))
                 .flex()
                 .items_center()
                 .gap(theme::ui_rem(4.0))
+                .overflow_hidden()
+                .bg(color(container))
+                .m3_type(typography::LABEL_SMALL)
+                .child(m3::m3_icon(symbol, false, 12.0, color(on_container)))
+                .child(div().flex_none().truncate().child(source_name))
                 .child(
-                    m3::Button::new(
-                        format!("project-select-{id}"),
-                        match placement.kind {
-                            SourceKind::Audio => "Audio",
-                            SourceKind::Image => "Image",
-                            SourceKind::Video => "Video",
-                        },
-                        m3::ButtonVariant::Text,
-                    )
-                    .icon(symbol)
-                    .size(m3::ButtonSize::ExtraSmall)
-                    .enabled(enabled)
-                    .build(scheme, window, cx)
-                    .flex_1()
-                    .min_w_0()
-                    .aria_label(format!("Edit {source_name} track properties"))
-                    .aria_selected(selected)
-                    .on_click(cx.listener({
-                        let id = id.clone();
-                        move |root, _, _, cx| {
-                            if root.select_project_clip(&id) {
-                                cx.notify();
-                            }
-                        }
-                    })),
-                )
-                .child(
-                    m3::IconButton::new(
-                        format!("project-mute-{id}"),
-                        if placement.muted {
-                            Symbol::VolumeOff
-                        } else {
-                            Symbol::VolumeUp
-                        },
-                        format!(
-                            "{} {}",
-                            if placement.muted { "Unmute" } else { "Mute" },
-                            source_name
-                        ),
-                    )
-                    .size(m3::IconButtonSize::ExtraSmall)
-                    .enabled(enabled)
-                    .build(scheme, window, cx)
-                    .on_click(cx.listener({
-                        let id = id.clone();
-                        move |root, _, _, cx| {
-                            if !root.is_processing
-                                && let Some(clip) =
-                                    root.project.clips.iter_mut().find(|clip| clip.id == id)
-                            {
-                                clip.muted = !clip.muted;
-                                cx.notify();
-                            }
-                        }
-                    })),
-                )
-                .child(
-                    m3::IconButton::new(
-                        format!("project-remove-{id}"),
-                        Symbol::Delete,
-                        format!("Remove {source_name} from timeline"),
-                    )
-                    .size(m3::IconButtonSize::ExtraSmall)
-                    .enabled(enabled)
-                    .build(scheme, window, cx)
-                    .on_click(cx.listener({
-                        let id = id.clone();
-                        move |root, _, _, cx| {
-                            if root.remove_project_clip(&id) {
-                                cx.notify();
-                            }
-                        }
-                    })),
+                    div()
+                        .flex_none()
+                        .opacity(0.72)
+                        .child(format_timecode(length)),
                 ),
+        )
+        .children([true, false].into_iter().map(|leading| {
+            div()
+                .id(format!("project-trim-{id}-{leading}"))
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .w(theme::ui_rem(TRIM_HANDLE_WIDTH))
+                .when(leading, gpui::Styled::left_0)
+                .when(!leading, gpui::Styled::right_0)
+                .flex()
+                .items_center()
+                .justify_center()
+                .when(selected, |handle| {
+                    handle.child(
+                        div()
+                            .w(theme::ui_rem(2.0))
+                            .h(theme::ui_rem(20.0))
+                            .rounded(theme::ui_rem(1.0))
+                            .bg(color(scheme.primary)),
+                    )
+                })
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .when(enabled, |handle| {
+                    handle.cursor_ew_resize().on_drag(
+                        ClipTrimDrag {
+                            id: id.clone(),
+                            start: leading,
+                            view,
+                            initial_offset: placement.offset_millis,
+                            initial_start: file
+                                .config
+                                .start_time
+                                .as_deref()
+                                .map_or(0.0, parse_time_to_seconds),
+                            recorded: Rc::default(),
+                        },
+                        |_, _, _, cx| cx.new(|_| MediaDragPreview),
+                    )
+                })
+        }))
+}
+
+/// A horizontal scrollbar over the project plus some room after it. The track lines up with
+/// the ruler, so clicks reuse the ruler's bounds.
+#[expect(
+    clippy::too_many_lines,
+    reason = "The scrollbar handles arrows, paging clicks, and thumb dragging."
+)]
+fn scrollbar(state: &ProjectTimelineState, cx: &Context<FrameRoot>) -> gpui::Div {
+    let scheme = &state.scheme;
+    let view = state.view;
+    let total = (state.duration.max(1.0) * FIRST_CLIP_TRACK_SPAN).max(view.start + view.span);
+    let thumb_start = crate::numeric::f64_to_f32(view.start / total);
+    let thumb_width = crate::numeric::f64_to_f32(view.span / total);
+    let grab = Rc::new(Cell::new(px(0.0)));
+    let arrow = |id: &'static str, symbol: Symbol, label: &'static str, direction: f64| {
+        div()
+            .id(id)
+            .flex_none()
+            .w(theme::ui_rem(SCROLL_ARROW_WIDTH))
+            .flex()
+            .justify_center()
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .cursor_pointer()
+            .child(m3::m3_icon(
+                symbol,
+                false,
+                16.0,
+                color(scheme.on_surface_variant),
+            ))
+            .on_click(cx.listener(move |root, _, _, cx| {
+                let view = root.project_timeline_view();
+                root.pan_project_timeline((direction * 0.1).mul_add(view.span, view.start));
+                cx.notify();
+            }))
+    };
+    div()
+        .flex()
+        .items_center()
+        .child(
+            div()
+                .w(theme::ui_rem(HEADER_WIDTH))
+                .flex_none()
+                .flex()
+                .justify_end()
+                .child(arrow(
+                    "timeline-scroll-left",
+                    Symbol::ArrowLeft,
+                    "Scroll timeline left",
+                    -1.0,
+                )),
         )
         .child(
             div()
-                .id(format!("project-lane-{id}"))
+                .id("timeline-scrollbar")
                 .flex_1()
                 .min_w_0()
-                .h(theme::ui_rem(if video {
-                    VIDEO_LANE_HEIGHT
-                } else {
-                    LANE_HEIGHT
-                }))
+                .h(theme::ui_rem(8.0))
                 .relative()
-                .overflow_hidden()
-                .rounded(theme::ui_rem(shape::CORNER_SMALL))
+                .rounded(theme::ui_rem(shape::CORNER_FULL))
                 .bg(color(scheme.surface_container_highest))
-                .cursor_pointer()
-                .on_click(cx.listener(|root, event: &gpui::ClickEvent, _, cx| {
+                .on_click(cx.listener(move |root, event: &gpui::ClickEvent, _, cx| {
                     if let gpui::ClickEvent::Mouse(event) = event
-                        && root.seek_project_timeline(event.up.position, cx)
+                        && let Some(bounds) = root.preview_ui.timeline_track_bounds
                     {
+                        let fraction =
+                            timeline_slider_percent_from_bounds(event.up.position, bounds);
+                        let view = root.project_timeline_view();
+                        root.pan_project_timeline(fraction.mul_add(total, -view.span / 2.0));
                         cx.notify();
                     }
                 }))
                 .on_drag_move(
-                    cx.listener(move |root, event: &DragMoveEvent<ClipDrag>, _, cx| {
+                    cx.listener(|root, event: &DragMoveEvent<ScrollbarDrag>, _, cx| {
                         let drag = event.drag(cx).clone();
                         let width = f64::from(event.bounds.size.width.as_f32());
                         if width <= 0.0 {
                             return;
                         }
                         let x = event.event.position.x - event.bounds.origin.x - drag.grab_x.get();
-                        let offset = drag.view.time(f64::from(x.as_f32()) / width) * 1000.0;
-                        root.preview_ui.project_timeline_view = Some(drag.view);
-                        if root
-                            .move_project_clip(&drag.id, crate::numeric::rounded_f64_to_u64(offset))
-                        {
-                            cx.notify();
-                        }
+                        let start = f64::from(x.as_f32()) / width * drag.total;
+                        root.pan_project_timeline(start.min(drag.total - drag.span));
+                        cx.notify();
                     }),
                 )
-                .on_drag_move(cx.listener(
-                    move |root, event: &DragMoveEvent<ClipTrimDrag>, _, cx| {
-                        let drag = event.drag(cx).clone();
-                        let width = f64::from(event.bounds.size.width.as_f32());
-                        if width <= 0.0 {
-                            return;
-                        }
-                        let time = drag.view.time(
-                            f64::from((event.event.position.x - event.bounds.origin.x).as_f32())
-                                / width,
-                        );
-                        root.preview_ui.project_timeline_view = Some(drag.view);
-                        root.trim_project_clip(
-                            &drag.id,
-                            drag.start,
-                            time,
-                            drag.initial_start,
-                            drag.initial_offset,
-                        );
-                        cx.notify();
-                    },
-                ))
                 .child(
                     div()
-                        .id(format!("project-clip-{id}"))
+                        .id("timeline-scrollbar-thumb")
                         .absolute()
                         .top_0()
                         .bottom_0()
-                        .left(relative(view.fraction(start)))
-                        .w(relative(crate::numeric::f64_to_f32(length / view.span)))
-                        .min_w(theme::ui_rem(16.0))
-                        .rounded(theme::ui_rem(shape::CORNER_SMALL))
-                        .bg(color(if selected {
-                            scheme.primary_container
-                        } else {
-                            scheme.secondary_container
-                        }))
-                        .text_color(color(if selected {
-                            scheme.on_primary_container
-                        } else {
-                            scheme.on_secondary_container
-                        }))
-                        .m3_type(typography::LABEL_MEDIUM)
-                        .flex()
-                        .items_center()
-                        .px(theme::ui_rem(10.0))
-                        .overflow_hidden()
-                        .role(gpui::Role::Button)
-                        .aria_label(format!("Select {source_name} track"))
-                        .aria_selected(selected)
-                        .focusable()
-                        .tab_stop(true)
-                        .on_click(cx.listener({
-                            let id = id.clone();
-                            move |root, _, _, cx| {
-                                if root.select_project_clip(&id) {
-                                    cx.notify();
-                                }
-                            }
-                        }))
-                        .on_key_down(cx.listener({
-                            let id = id.clone();
-                            move |root, event: &gpui::KeyDownEvent, _, cx| {
-                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                    root.select_project_clip(&id);
-                                    cx.stop_propagation();
-                                    cx.notify();
-                                }
-                                if matches!(event.keystroke.key.as_str(), "left" | "right") {
-                                    let offset = root
-                                        .project
-                                        .clips
-                                        .iter()
-                                        .find(|clip| clip.id == id)
-                                        .map_or(0, |clip| clip.offset_millis);
-                                    root.move_project_clip(
-                                        &id,
-                                        if event.keystroke.key == "left" {
-                                            offset.saturating_sub(100)
-                                        } else {
-                                            offset.saturating_add(100)
-                                        },
-                                    );
-                                    cx.stop_propagation();
-                                    cx.notify();
-                                }
-                            }
-                        }))
-                        .when(enabled, |clip| {
-                            clip.on_drag(
-                                ClipDrag {
-                                    id: id.clone(),
-                                    grab_x: grab.clone(),
-                                    view,
-                                },
-                                move |drag, position, _, cx| {
-                                    drag.grab_x.set(position.x);
-                                    cx.new(|_| MediaDragPreview)
-                                },
-                            )
-                        })
-                        .when_some(filmstrip, |clip, filmstrip| {
-                            clip.child(
-                                super::filmstrip::element(filmstrip, ranges.clone())
-                                    .top_0()
-                                    .bottom(theme::ui_rem(if waveform_stream.is_some() {
-                                        VIDEO_WAVEFORM_HEIGHT
-                                    } else {
-                                        0.0
-                                    })),
-                            )
-                        })
-                        .when_some(waveform, |clip, waveform| {
-                            clip.child(
-                                super::waveform::element(
-                                    waveform,
-                                    ranges,
-                                    color(if selected {
-                                        scheme.on_primary_container
-                                    } else {
-                                        scheme.on_secondary_container
-                                    }),
-                                )
-                                .bottom(theme::ui_rem(3.0))
-                                .top(theme::ui_rem(if video {
-                                    VIDEO_LANE_HEIGHT - VIDEO_WAVEFORM_HEIGHT + 2.0
-                                } else {
-                                    20.0
-                                })),
-                            )
-                        })
-                        .when(video || waveform_stream.is_some(), |clip| {
-                            clip.items_start()
-                                .pt(theme::ui_rem(if video { 4.0 } else { 2.0 }))
-                        })
-                        .child(
-                            div()
-                                .truncate()
-                                // The name sits on the thumbnails, so it keeps the clip's fill.
-                                .when(video, |label| {
-                                    label
-                                        .px(theme::ui_rem(6.0))
-                                        .rounded(theme::ui_rem(shape::CORNER_EXTRA_SMALL))
-                                        .bg(color(if selected {
-                                            scheme.primary_container
-                                        } else {
-                                            scheme.secondary_container
-                                        }))
-                                })
-                                .child(format!("{source_name} • {length:.1}s")),
-                        )
-                        .children([true, false].into_iter().map(|start| {
-                            div()
-                                .id(format!("project-trim-{id}-{start}"))
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .w(theme::ui_rem(6.0))
-                                .when(start, gpui::Styled::left_0)
-                                .when(!start, gpui::Styled::right_0)
-                                .bg(color(scheme.outline))
-                                .cursor_ew_resize()
-                                .on_click(|_, _, cx| cx.stop_propagation())
-                                .when(enabled, |handle| {
-                                    handle.on_drag(
-                                        ClipTrimDrag {
-                                            id: id.clone(),
-                                            start,
-                                            view,
-                                            initial_offset: placement.offset_millis,
-                                            initial_start: file
-                                                .config
-                                                .start_time
-                                                .as_deref()
-                                                .map_or(0.0, parse_time_to_seconds),
-                                        },
-                                        |_, _, _, cx| cx.new(|_| MediaDragPreview),
-                                    )
-                                })
-                        })),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .w(theme::ui_rem(2.0))
-                        .left(relative(view.fraction(current)))
-                        .bg(color(scheme.on_surface)),
+                        .left(relative(thumb_start))
+                        .w(relative(thumb_width))
+                        .min_w(theme::ui_rem(24.0))
+                        .rounded(theme::ui_rem(shape::CORNER_FULL))
+                        .bg(color(scheme.outline))
+                        .cursor_grab()
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .on_drag(
+                            ScrollbarDrag {
+                                grab_x: grab,
+                                total,
+                                span: view.span,
+                            },
+                            |drag, position, _, cx| {
+                                drag.grab_x.set(position.x);
+                                cx.new(|_| MediaDragPreview)
+                            },
+                        ),
                 ),
         )
+        .child(arrow(
+            "timeline-scroll-right",
+            Symbol::ArrowRight,
+            "Scroll timeline right",
+            1.0,
+        ))
+}
+
+fn status_line(state: &ProjectTimelineState) -> gpui::Div {
+    let text = state.selected_clip().map_or_else(
+        || {
+            if state.clips.is_empty() {
+                "Drag media from the library onto a track".to_string()
+            } else {
+                format!("{} clips", state.clips.len())
+            }
+        },
+        |(placement, source)| {
+            let (start, length) = clip_extent(source);
+            let name = state
+                .files
+                .iter()
+                .find(|file| file.id == placement.id)
+                .map_or("", |file| file.name.as_str());
+            format!(
+                "{name} · {} · {} – {} · {}",
+                state.tracks.name(placement.track),
+                format_timecode(start),
+                format_timecode(start + length),
+                format_timecode(length),
+            )
+        },
+    );
+    div()
+        .min_w_0()
+        .truncate()
+        .m3_type(typography::BODY_SMALL)
+        .text_color(color(state.scheme.on_surface_variant))
+        .child(text)
 }
 
 #[cfg(test)]
@@ -959,22 +1749,17 @@ mod tests {
         });
     }
 
+    fn lane_center(cx: &mut gpui::VisualTestContext, selector: &'static str) -> Pixels {
+        cx.debug_bounds(selector).unwrap().center().y
+    }
+
     #[test]
-    fn video_and_audio_rows_remain_after_their_last_clips_are_removed() {
+    fn tracks_remain_after_their_last_clips_are_removed() {
         let mut app = TestAppContext::single();
         let (view, cx) = app.add_window_view(|_, cx| {
             let root = cx.new(|_| {
                 let mut root = FrameRoot::new();
                 root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
-                let ids: Vec<_> = root
-                    .project
-                    .clips
-                    .iter()
-                    .map(|clip| clip.id.clone())
-                    .collect();
-                for id in ids {
-                    assert!(root.remove_project_clip(&id));
-                }
                 root
             });
             TimelineTestView {
@@ -984,37 +1769,21 @@ mod tests {
         });
         let root = view.read_with(cx, |view, _| view.root.clone());
         cx.update(|window, cx| window.draw(cx).clear());
-        assert!(cx.debug_bounds("project-empty-video").is_some());
-        assert!(cx.debug_bounds("project-empty-audio").is_some());
-
-        root.update(cx, |root, _| {
-            assert!(root.add_library_clip("library-video"));
-        });
-        cx.update(|window, cx| window.draw(cx).clear());
-        assert!(cx.debug_bounds("project-empty-video").is_none());
-        assert!(cx.debug_bounds("project-empty-audio").is_some());
-
-        root.update(cx, |root, _| {
-            assert!(root.add_library_clip("library-audio"));
-        });
-        cx.update(|window, cx| window.draw(cx).clear());
-        assert!(cx.debug_bounds("project-empty-video").is_none());
-        assert!(cx.debug_bounds("project-empty-audio").is_none());
-
-        root.update(cx, |root, _| {
-            let ids: Vec<_> = root
-                .project
+        let ids: Vec<_> = root.read_with(cx, |root, _| {
+            root.project
                 .clips
                 .iter()
                 .map(|clip| clip.id.clone())
-                .collect();
-            for id in ids {
-                assert!(root.remove_project_clip(&id));
+                .collect()
+        });
+        root.update(cx, |root, _| {
+            for id in &ids {
+                assert!(root.remove_project_clip(id));
             }
         });
         cx.update(|window, cx| window.draw(cx).clear());
-        assert!(cx.debug_bounds("project-empty-video").is_some());
-        assert!(cx.debug_bounds("project-empty-audio").is_some());
+        assert!(cx.debug_bounds("project-lane-V1").is_some());
+        assert!(cx.debug_bounds("project-lane-A1").is_some());
     }
 
     #[test]
@@ -1108,6 +1877,54 @@ mod tests {
     }
 
     #[test]
+    fn snapping_picks_the_closest_target_within_the_threshold() {
+        // The trailing edge (9.8) is closer to 10 than the leading edge (2.3) is to 2.
+        assert!((snap_shift(&[2.3, 9.8], &[2.0, 10.0], 0.5) - 0.2).abs() < 1e-9);
+        assert!((snap_shift(&[2.3], &[3.0], 0.5)).abs() < f64::EPSILON);
+        assert!((snap_shift(&[5.0], &[], 0.5)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn ruler_steps_keep_labels_apart_and_ticks_inside_the_view() {
+        assert!((major_tick_step(6840.0, 1700.0) - 600.0).abs() < f64::EPSILON);
+        assert!((major_tick_step(1.0, 1000.0) - 0.1).abs() < f64::EPSILON);
+        assert!((major_tick_step(1e9, 100.0) - 43200.0).abs() < f64::EPSILON);
+        let ticks = ruler_ticks(
+            TimelineView {
+                start: 3.0,
+                span: 20.0,
+            },
+            10.0,
+        );
+        assert_eq!(ticks.first(), Some(&(4.0, false)));
+        assert!(ticks.contains(&(10.0, true)));
+        assert!(ticks.contains(&(20.0, true)));
+        assert_eq!(ticks.iter().filter(|(_, major)| *major).count(), 2);
+        assert!(ticks.iter().all(|(time, _)| (3.0..=23.0).contains(time)));
+    }
+
+    #[test]
+    fn timecodes_show_hours_and_tenths() {
+        assert_eq!(format_timecode(993.0), "0:16:33.0");
+        assert_eq!(format_timecode(6837.29), "1:53:57.3");
+        assert_eq!(format_timecode(-1.0), "0:00:00.0");
+        assert_eq!(format_ruler_time(600.0, 600.0), "0:10:00");
+        assert_eq!(format_ruler_time(1.5, 0.5), "0:00:01.5");
+    }
+
+    #[test]
+    fn zoom_slider_maps_the_fitted_view_to_zero_and_round_trips() {
+        assert!(zoom_fraction(100.0, 100.0).abs() < f64::EPSILON);
+        assert!((zoom_fraction(SLIDER_MIN_SPAN, 100.0) - 1.0).abs() < f64::EPSILON);
+        for fraction in [0.0, 0.3, 1.0] {
+            let span = span_from_zoom_fraction(fraction, 100.0);
+            assert!((zoom_fraction(span, 100.0) - fraction).abs() < 1e-9);
+        }
+        // A project shorter than the slider's range can't zoom further.
+        assert!(zoom_fraction(0.5, 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
     fn zoom_keeps_visible_start_fixed_and_limits_invalid_gestures() {
         for start in [0.0, 30.0] {
             let original = TimelineView { start, span: 100.0 };
@@ -1141,7 +1958,7 @@ mod tests {
                 let mut root = FrameRoot::new();
                 root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
                 root.preview_ui.playback =
-                    preview_playback_state(PreviewMediaKind::Video, 8.0, None, None);
+                    preview_playback_state(PreviewMediaKind::Video, 6.0, None, None);
                 root
             });
             TimelineTestView {
@@ -1159,12 +1976,10 @@ mod tests {
                 .map(|clip| clip.offset_millis)
                 .collect::<Vec<_>>()
         });
-        // Ruler, a clip body, and the empty half of that clip's lane.
-        for (fraction, y) in [
-            (0.75, bounds.center().y),
-            (0.25, bounds.bottom() + px(28.0)),
-            (0.75, bounds.bottom() + px(28.0)),
-        ] {
+        let video = lane_center(cx, "project-lane-V1");
+        let audio = lane_center(cx, "project-lane-A1");
+        // The ruler, the first clip's body, and the empty end of the audio lane.
+        for (fraction, y) in [(0.75, bounds.center().y), (0.25, video), (0.75, audio)] {
             cx.simulate_click(
                 point(bounds.left() + bounds.size.width * fraction, y),
                 Modifiers::default(),
@@ -1201,6 +2016,10 @@ mod tests {
             let root = cx.new(|_| {
                 let mut root = FrameRoot::new();
                 root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                root.preview_ui.timeline_snap = false;
+                // Keep the second clip clear of the first after it moves.
+                let second = root.project.clips[1].id.clone();
+                assert!(root.move_project_clip(&second, 8_000));
                 root.preview_ui.project_timeline_view = Some(TimelineView {
                     start: 2.0,
                     span: 8.0,
@@ -1216,21 +2035,11 @@ mod tests {
         cx.update(|window, cx| window.draw(cx).clear());
         let bounds = root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
         let id = root.read_with(cx, |root, _| root.project.clips[0].id.clone());
-        let start = point(
-            bounds.left() + bounds.size.width * 0.125,
-            bounds.bottom() + px(28.0),
-        );
+        let y = lane_center(cx, "project-lane-V1");
+        let start = point(bounds.left() + bounds.size.width * 0.125, y);
         // GPUI starts the drag after crossing its threshold and captures that grab point.
         let end = point(start.x + px(8.0) + bounds.size.width * 0.125, start.y);
-        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
-        cx.simulate_mouse_move(
-            point(start.x + px(8.0), start.y),
-            MouseButton::Left,
-            Modifiers::default(),
-        );
-        cx.update(|window, cx| window.draw(cx).clear());
-        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
-        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        drag(cx, start, end);
         root.read_with(cx, |root, _| {
             assert!(
                 root.project.clips[0].offset_millis.abs_diff(1000) <= 1,
@@ -1246,17 +2055,9 @@ mod tests {
             );
         });
         cx.update(|window, cx| window.draw(cx).clear());
-        let start = point(bounds.left() + bounds.size.width * 0.375 - px(3.0), end.y);
-        let end = point(bounds.left() + bounds.size.width * 0.25, end.y);
-        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
-        cx.simulate_mouse_move(
-            point(start.x + px(8.0), start.y),
-            MouseButton::Left,
-            Modifiers::default(),
-        );
-        cx.update(|window, cx| window.draw(cx).clear());
-        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
-        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+        let start = point(bounds.left() + bounds.size.width * 0.375 - px(3.0), y);
+        let end = point(bounds.left() + bounds.size.width * 0.25, y);
+        drag(cx, start, end);
         root.read_with(cx, |root, _| {
             let trim_end = root
                 .file_queue
@@ -1274,6 +2075,65 @@ mod tests {
                     span: 8.0
                 }
             );
+        });
+
+        // Each gesture is one undo step.
+        root.update(cx, |root, _| {
+            assert!(root.undo_timeline_edit());
+            assert!(root.undo_timeline_edit());
+            assert_eq!(root.project.clips[0].offset_millis, 0);
+        });
+    }
+
+    fn drag(cx: &mut gpui::VisualTestContext, start: Point<Pixels>, end: Point<Pixels>) {
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(
+            point(start.x + px(8.0), start.y),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.update(|window, cx| window.draw(cx).clear());
+        cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
+    }
+
+    #[test]
+    fn dragging_a_clip_onto_another_video_lane_moves_it_there() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = app.add_window_view(|_, cx| {
+            let root = cx.new(|_| {
+                let mut root = FrameRoot::new();
+                root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                root
+            });
+            TimelineTestView {
+                root,
+                focus: cx.focus_handle(),
+            }
+        });
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        cx.update(|window, cx| window.draw(cx).clear());
+        let bounds = root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
+        let x = bounds.left() + bounds.size.width * 0.1;
+        let (v1, v2, a1) = (
+            lane_center(cx, "project-lane-V1"),
+            lane_center(cx, "project-lane-V2"),
+            lane_center(cx, "project-lane-A1"),
+        );
+        assert!(v2 < v1 && v1 < a1, "V2 sits above V1, audio below");
+        drag(cx, point(x, v1), point(x, v2));
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.project.clips[0].track, 2);
+        });
+        // Audio lanes don't take video clips.
+        cx.update(|window, cx| window.draw(cx).clear());
+        let (v2, a1) = (
+            lane_center(cx, "project-lane-V2"),
+            lane_center(cx, "project-lane-A1"),
+        );
+        drag(cx, point(x, v2), point(x, a1));
+        root.read_with(cx, |root, _| {
+            assert_eq!(root.project.clips[0].track, 2);
         });
     }
 
