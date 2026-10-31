@@ -92,6 +92,13 @@ impl Tracks {
         tracks
     }
 
+    /// Video 1 is always the primary track, including after track removal or loading.
+    pub(super) fn primary(&self) -> usize {
+        self.iter()
+            .position(|track| track.kind == TrackKind::Video)
+            .unwrap()
+    }
+
     /// The 1-based number of a track among tracks of its kind.
     pub(super) fn number(&self, index: usize) -> usize {
         let kind = self[index].kind;
@@ -183,6 +190,7 @@ impl FrameRoot {
                 clip.track -= 1;
             }
         }
+        self.close_primary_track_gaps();
         if self.file_queue.selected_file().is_none() {
             self.file_queue
                 .select_file(self.project.clips.last().map(|clip| clip.id.clone()));
@@ -232,6 +240,7 @@ impl FrameRoot {
             return false;
         }
         clip.track = track;
+        self.close_primary_track_gaps();
         true
     }
 }
@@ -255,6 +264,16 @@ mod tests {
         let labels: Vec<_> = (0..4).map(|index| tracks.label(index)).collect();
         assert_eq!(labels, ["V1", "A1", "V2", "A2"]);
         assert_eq!(tracks.name(2), "Video 2");
+    }
+
+    #[test]
+    fn primary_is_video_one_even_when_audio_precedes_it() {
+        let mut tracks = tracks(&[TrackKind::Audio, TrackKind::Video, TrackKind::Video]);
+        assert_eq!(tracks.primary(), 1);
+        assert_eq!(tracks.label(tracks.primary()), "V1");
+        tracks.remove(1);
+        assert_eq!(tracks.primary(), 1);
+        assert_eq!(tracks.label(tracks.primary()), "V1");
     }
 
     #[test]
