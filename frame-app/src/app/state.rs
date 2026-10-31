@@ -82,9 +82,7 @@ impl FrameRoot {
         };
 
         let mut root = Self {
-            active_view: active_view_from_env_value(
-                std::env::var("FRAME_GPUI_INITIAL_VIEW").ok().as_deref(),
-            ),
+            active_view: ActiveView::Workspace,
             appearance: persisted_settings.appearance,
             titlebar_drag: TitlebarDragState::default(),
             fps_meter: None,
@@ -95,12 +93,6 @@ impl FrameRoot {
                 ..project::Project::default()
             },
             conversion_events: ConversionEventState::new(),
-            logs_scroll_handle: UniformListScrollHandle::new(),
-            last_log_scroll_target: None,
-            logs_keyboard_scroll_top: 0,
-            logs_follow_tail: true,
-            copied_log_file_id: None,
-            log_copy_feedback_epoch: 0,
             is_processing: false,
             settings_ui,
             tooltip_ui: TooltipUiState::default(),

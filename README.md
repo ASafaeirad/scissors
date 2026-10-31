@@ -74,8 +74,9 @@ source probing, compatibility validation, task control, and progress parsing.
 
 ### Architecture & Workflow
 
-- **Native UI:** GPUI-CE application shell, custom titlebar, workspace/logs
-  views, settings panels, and shared UI primitives.
+- **Native UI:** GPUI-CE application shell, custom titlebar, workspace view,
+  export dialog with live FFmpeg output, settings panels, and shared UI
+  primitives.
 - **Shared Conversion Core:** `frame-core` owns FFmpeg arguments, media rules,
   probing types, filter construction, and validation logic.
 - **Single-project workflow:** Edit one timeline with multiple media clips, save or

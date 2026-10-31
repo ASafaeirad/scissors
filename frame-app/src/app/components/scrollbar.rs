@@ -31,11 +31,14 @@ struct FrameScrollbarPaintState {
     ui_scale: f32,
 }
 
-pub(in crate::app) fn frame_vertical_scrollbar(
+/// A draggable vertical scrollbar over the right edge of its parent, painted in the given track
+/// and thumb colors. `content_height` is the fallback until the scroll extent is measured.
+pub(in crate::app) fn vertical_scrollbar(
     id: impl Into<String>,
     scroll_handle: ScrollHandle,
     content_height: f32,
-    palette: &'static theme::ThemePalette,
+    track: theme::RgbaToken,
+    thumb: theme::RgbaToken,
 ) -> gpui::Stateful<gpui::Div> {
     let content_height = content_height.max(0.0);
     let drag = FrameScrollbarDrag {
@@ -97,7 +100,7 @@ pub(in crate::app) fn frame_vertical_scrollbar(
                         ui_scale,
                     }
                 },
-                |bounds, state, window, _cx| {
+                move |bounds, state, window, _cx| {
                     let Some(metrics) = state.metrics else {
                         return;
                     };
@@ -113,8 +116,7 @@ pub(in crate::app) fn frame_vertical_scrollbar(
                         size(px(track_width), bounds.size.height),
                     );
                     window.paint_quad(
-                        fill(track_bounds, color(palette.fill_subtle))
-                            .corner_radii(px(track_width / 2.0)),
+                        fill(track_bounds, color(track)).corner_radii(px(track_width / 2.0)),
                     );
 
                     let thumb_bounds = Bounds::new(
@@ -125,8 +127,7 @@ pub(in crate::app) fn frame_vertical_scrollbar(
                         size(px(thumb_width), px(metrics.thumb_height)),
                     );
                     window.paint_quad(
-                        fill(thumb_bounds, color(palette.control_muted))
-                            .corner_radii(px(thumb_width / 2.0)),
+                        fill(thumb_bounds, color(thumb)).corner_radii(px(thumb_width / 2.0)),
                     );
                 },
             )
@@ -156,16 +157,6 @@ fn frame_scrollbar_measured_content_height(
     } else {
         fallback_content_height
     }
-}
-
-pub(in crate::app) fn frame_vertical_uniform_scrollbar(
-    id: impl Into<String>,
-    scroll_handle: &UniformListScrollHandle,
-    content_height: f32,
-    palette: &'static theme::ThemePalette,
-) -> gpui::Stateful<gpui::Div> {
-    let base_handle = scroll_handle.0.borrow().base_handle.clone();
-    frame_vertical_scrollbar(id, base_handle, content_height, palette)
 }
 
 pub(in crate::app) fn frame_vertical_scrollbar_metrics(

@@ -250,11 +250,10 @@ pub(super) struct WorkspaceState {
     pub(super) audio_details: bool,
 }
 
-const TOOLS: [(Symbol, &str); 4] = [
+const TOOLS: [(Symbol, &str); 3] = [
     (Symbol::VideoLibrary, "Library"),
     (Symbol::Movie, "Video"),
     (Symbol::VolumeUp, "Audio"),
-    (Symbol::Info, "Logs"),
 ];
 /// Index of the Video tool in [`TOOLS`].
 const VIDEO_TOOL: usize = 1;
@@ -658,48 +657,6 @@ fn audio_source_information(
     content
 }
 
-pub(super) fn logs_workspace_view(
-    logs: gpui::Div,
-    queue: &FileQueue,
-    state: WorkspaceState,
-    header: &ProjectHeaderProps,
-    scheme: &ColorScheme,
-    window: &mut Window,
-    cx: &mut Context<FrameRoot>,
-) -> gpui::Div {
-    div()
-        .size_full()
-        .flex()
-        .min_h_0()
-        .bg(color(scheme.surface))
-        .text_color(color(scheme.on_surface))
-        .m3_type(typography::BODY_MEDIUM)
-        .child(navigation_rail(3, scheme, window, cx))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .child(project_header(
-                    queue,
-                    state.export_enabled,
-                    header,
-                    scheme,
-                    window,
-                    cx,
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .px(theme::ui_rem(spacing::SPACE_4))
-                        .child(logs),
-                ),
-        )
-}
-
 fn navigation_rail(
     selected: usize,
     scheme: &ColorScheme,
@@ -719,11 +676,6 @@ fn navigation_rail(
         cx.notify();
     }))
     .on_select(cx.listener(|root, index: &usize, _, cx| {
-        if *index == 3 {
-            root.active_view = ActiveView::Logs;
-            cx.notify();
-            return;
-        }
         root.active_view = ActiveView::Workspace;
         root.workspace_ui.tool = *index;
         root.settings_ui.active_tab = match index {

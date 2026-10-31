@@ -31,6 +31,8 @@ impl FrameRoot {
         job.status = FileStatus::Queued;
         let mut task = conversion_task_from_file(&job, &output_directory);
         task.config = config;
+        // Each export starts with fresh FFmpeg output.
+        self.conversion_events.remove_logs("project-export");
         if let Some(existing) = self.file_queue.file_by_id_mut("project-export") {
             *existing = job;
         } else {

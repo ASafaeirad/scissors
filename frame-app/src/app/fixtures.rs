@@ -15,7 +15,6 @@ impl FrameRoot {
                 };
                 self.open_app_settings();
             }
-            Some(VisualFixture::LogsActive) => self.apply_logs_active_fixture(),
             Some(VisualFixture::M3Gallery) => self.m3_gallery = Some(m3::M3GalleryState::new()),
             Some(VisualFixture::PreviewCrop) => self.apply_preview_crop_fixture(),
             Some(VisualFixture::PreviewReady) => self.apply_preview_ready_fixture(),
@@ -48,6 +47,7 @@ impl FrameRoot {
                 self.apply_settings_video_filters_fixture();
             }
             Some(VisualFixture::ExportDialog) => self.apply_export_dialog_fixture(),
+            Some(VisualFixture::ExportProgress) => self.apply_export_progress_fixture(),
             Some(VisualFixture::WorkspaceAudio) => self.apply_workspace_audio_fixture(),
             Some(VisualFixture::WorkspaceEmpty) => self.apply_workspace_empty_fixture(),
             Some(VisualFixture::WorkspaceImage) => self.apply_workspace_image_fixture(),
@@ -138,31 +138,6 @@ impl FrameRoot {
         self.seed_image_source_fixture();
         self.settings_ui.active_tab = SettingsTab::VideoFilters;
     }
-    pub(super) fn apply_logs_active_fixture(&mut self) {
-        self.active_view = ActiveView::Logs;
-        self.file_queue.add_file(FileItem::from_path(
-            "fixture-video",
-            "/tmp/source_render.mov",
-            1_572_864_000,
-        ));
-        self.file_queue
-            .update_status("fixture-video", FileStatus::Converting, 64);
-
-        for line in [
-            "ffmpeg version 7.1.1 Copyright (c) 2000-2025 the FFmpeg developers",
-            "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'source_render.mov':",
-            "Stream #0:0: Video: prores (HQ), yuv422p10le, 3840x2160, 24 fps",
-            "Stream mapping:",
-            "frame=  148 fps= 27 q=-0.0 size=   65536kB time=00:00:06.16 bitrate=87145.2kbits/s speed=1.12x",
-            "frame=  296 fps= 28 q=-0.0 size=  131072kB time=00:00:12.33 bitrate=87042.7kbits/s speed=1.14x",
-            "frame=  444 fps= 29 q=-0.0 size=  196608kB time=00:00:18.50 bitrate=87054.9kbits/s speed=1.16x",
-        ] {
-            self.conversion_events.apply_conversion_event(
-                &mut self.file_queue,
-                ConversionEvent::log("fixture-video", line),
-            );
-        }
-    }
     pub(super) fn apply_preview_ready_fixture(&mut self) {
         // Standalone preview fixtures exercise source controls without a project timeline.
         self.project.enabled = false;
@@ -233,6 +208,37 @@ impl FrameRoot {
         }
         self.open_export_dialog();
         self.export_ui.advanced = true;
+    }
+    pub(super) fn apply_export_progress_fixture(&mut self) {
+        self.apply_export_dialog_fixture();
+        let Some(id) = self.file_queue.selected_file_id().map(str::to_string) else {
+            return;
+        };
+        self.file_queue
+            .update_status(&id, FileStatus::Converting, 30);
+        self.export_ui.task_ids = vec![id.clone()];
+        self.export_ui.started_at = std::time::Instant::now().checked_sub(Duration::from_secs(3));
+        self.export_ui.show_log = true;
+        let preamble = [
+            "ffmpeg version 7.1.1 Copyright (c) 2000-2025 the FFmpeg developers".to_string(),
+            "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'source_render.mov':".to_string(),
+            "  Stream #0:0: Video: h264 (High), yuv420p, 1920x1080, 30 fps".to_string(),
+            "Stream mapping:".to_string(),
+            "  Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))".to_string(),
+        ];
+        let progress = (1..=14).map(|step| {
+            let frame = step * 15;
+            format!(
+                "frame={frame:>5} fps= 120 q=28.0 size={:>8}KiB time=00:00:{:05.2} \
+                 bitrate=7712.0kbits/s speed=4.00x",
+                frame * 31,
+                f64::from(frame) / 30.0
+            )
+        });
+        for line in preamble.into_iter().chain(progress) {
+            self.conversion_events
+                .apply_conversion_event(&mut self.file_queue, ConversionEvent::log(&id, line));
+        }
     }
     pub(super) fn apply_settings_video_filters_fixture(&mut self) {
         self.apply_project_timeline_fixture();

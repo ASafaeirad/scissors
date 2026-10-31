@@ -11,8 +11,6 @@ mod fixtures;
 mod fps_meter;
 mod hotkeys;
 mod input;
-mod logs_panel;
-mod logs_state;
 mod m3;
 mod media_assets;
 mod metadata;
@@ -40,11 +38,10 @@ pub use runtime::{frame_window_options, init_app, open_frame_window};
 use accessibility::{FrameFocusKey, FrameFocusRegistry};
 use chrome::{AppSettingsSheetProps, app_settings_sheet, drag_drop_overlay};
 use input::{FrameTextInputKind, FrameTextInputUiState};
-use logs_panel::logs_view;
 use motion::{
-    INTERACTION_MOTION_DURATION, SURFACE_MOTION_DURATION, contextual_icon_motion, hover_motion,
-    mix_color, mix_scalar, motion_is_hidden, motion_target, retarget_hover_motion, selected_motion,
-    set_motion_target, settings_sheet_right_inset,
+    INTERACTION_MOTION_DURATION, SURFACE_MOTION_DURATION, hover_motion, mix_color, mix_scalar,
+    motion_is_hidden, motion_target, retarget_hover_motion, selected_motion, set_motion_target,
+    settings_sheet_right_inset,
 };
 use preview_panel::{
     FlipAxis, PreviewCanvasRenderState, PreviewCropRenderState, PreviewMediaRenderState,
@@ -67,13 +64,13 @@ use crate::{
     PREVIEW_TIMELINE_ROW_GAP, PREVIEW_TIMELINE_RULER_HEIGHT, PREVIEW_TOOLBAR_BUTTON_SIZE,
     PREVIEW_TOOLBAR_ICON_SIZE, PREVIEW_TOOLBAR_OFFSET, SETTINGS_CONTROL_HEIGHT,
     SETTINGS_PANEL_PADDING, SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE, VisualFixture,
-    WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, active_view_from_env_value,
+    WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
     app_info::{FRAME_APP_ID, FRAME_APP_VERSION},
     app_persistence::{AppPersistence, AppSettings},
     appearance::{AppearanceSettings, ColorTheme, ScalePreset},
     assets::{self},
     capabilities::{detect_available_encoders, detect_available_filters},
-    conversion_events::{ActiveLogFile, ConversionEventState, LogLine, all_conversions_settled},
+    conversion_events::{ConversionEventState, LogLine, all_conversions_settled},
     conversion_runner::{
         ConversionProcessController, conversion_task_from_file, run_conversion_batch_with_control,
     },
@@ -187,13 +184,6 @@ actions!(
     ]
 );
 
-const LOG_LINE_NUMBER_WIDTH: f32 = 32.0;
-const LOG_LINE_HEIGHT: f32 = 24.0;
-const LOG_SCROLL_BUTTON_OFFSET: f32 = 10.0;
-const LOG_SCROLL_BUTTON_PADDING: f32 = 4.0;
-const LOG_SCROLL_BUTTON_SIZE: f32 = 24.0;
-const LOG_SCROLL_ICON_SIZE: f32 = 16.0;
-const LOG_COPY_FEEDBACK_DURATION: Duration = Duration::from_millis(1_200);
 const ROOT_DROP_GROUP: &str = "frame-root-drop-target";
 const DEFAULT_CROP_X: f64 = 0.1;
 const DEFAULT_CROP_Y: f64 = 0.1;
@@ -241,12 +231,6 @@ pub struct FrameRoot {
     file_queue: FileQueue,
     project: project::Project,
     conversion_events: ConversionEventState,
-    logs_scroll_handle: UniformListScrollHandle,
-    last_log_scroll_target: Option<LogScrollTarget>,
-    logs_keyboard_scroll_top: usize,
-    logs_follow_tail: bool,
-    copied_log_file_id: Option<String>,
-    log_copy_feedback_epoch: usize,
     is_processing: bool,
     settings_ui: SettingsUiState,
     tooltip_ui: TooltipUiState,
@@ -623,10 +607,4 @@ struct SettingsMetadataInputFocuses<'a> {
     comment: Option<&'a FocusHandle>,
     service_name: Option<&'a FocusHandle>,
     service_provider: Option<&'a FocusHandle>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct LogScrollTarget {
-    file_id: String,
-    line_count: usize,
 }

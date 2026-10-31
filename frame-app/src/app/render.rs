@@ -41,9 +41,6 @@ impl Render for FrameRoot {
         let source_metadata = source_metadata_entry.metadata.clone();
         self.normalize_selected_config(source_metadata.as_ref());
         self.resolve_selected_settings_tab(source_metadata.as_ref());
-        self.conversion_events
-            .ensure_selected_log_file(&self.file_queue);
-        self.update_log_scroll_target();
         let selected_file_id = self.file_queue.selected_file_id().map(str::to_string);
         let selected_config_snapshot = self.selected_config().cloned().unwrap_or_default();
 
@@ -278,34 +275,6 @@ impl Render for FrameRoot {
                         ..self.workspace_ui
                     },
                     &self.project_header_props(),
-                    window,
-                    cx,
-                ))
-            }
-            Some(ActiveView::Logs) => {
-                let logs = logs_view(
-                    &self.file_queue,
-                    &self.conversion_events,
-                    &self.logs_scroll_handle,
-                    self.logs_follow_tail,
-                    self.copied_log_file_id.as_deref(),
-                    palette,
-                    window,
-                    cx,
-                );
-                content.child(workspace::logs_workspace_view(
-                    logs,
-                    &self.file_queue,
-                    workspace::WorkspaceState {
-                        export_enabled: if self.project.enabled {
-                            !self.project.clips.is_empty()
-                        } else {
-                            self.file_queue.selected_file().is_some()
-                        },
-                        ..self.workspace_ui
-                    },
-                    &self.project_header_props(),
-                    &crate::app::m3::scheme(self.appearance.color_theme, cx),
                     window,
                     cx,
                 ))

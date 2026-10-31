@@ -67,19 +67,6 @@ pub(super) fn selected_motion(
     *transition.evaluate(window, cx)
 }
 
-pub(super) fn contextual_icon_motion(
-    key: impl Into<ElementId>,
-    active: bool,
-    window: &mut Window,
-    cx: &mut App,
-) -> f32 {
-    let transition = window
-        .use_keyed_transition(key, cx, INTERACTION_MOTION_DURATION, |_window, _cx| 0.0_f32)
-        .with_easing(ease_in_out);
-    set_motion_target(&transition, motion_target(active), cx);
-    *transition.evaluate(window, cx)
-}
-
 pub(super) fn mix_color(from: theme::RgbaToken, to: theme::RgbaToken, progress: f32) -> Rgba {
     mix_rgba(color(from), color(to), progress)
 }
