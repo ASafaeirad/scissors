@@ -305,10 +305,6 @@ pub(super) fn panel_bottom_separator(palette: &theme::ThemePalette) -> gpui::Div
     }
 }
 
-pub(super) fn element_id(prefix: &str, id: &str) -> String {
-    format!("{prefix}-{id}")
-}
-
 pub(super) trait FrameSurface {
     fn card_surface(self, palette: &theme::ThemePalette) -> Self;
 }

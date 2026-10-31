@@ -7,6 +7,8 @@ use gpui::FontWeight;
 
 /// Brand and plain typeface family (`--md-ref-typeface-brand` / `--md-ref-typeface-plain`).
 pub const TYPEFACE: &str = "Roboto";
+/// Monospaced face for console output, such as encoder logs.
+pub const MONO_TYPEFACE: &str = "Roboto Mono";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TypeStyle {

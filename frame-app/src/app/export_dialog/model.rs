@@ -874,10 +874,46 @@ pub(super) fn export_phase(files: &[FileItem], task_ids: &[String]) -> ExportPha
     }
 }
 
+/// Seconds left at the average rate so far, once enough of the export has run to judge it.
+pub(super) fn remaining_seconds(elapsed: f64, progress: f32) -> Option<f64> {
+    let progress = f64::from(progress);
+    if elapsed < 1.0 || !(0.02..1.0).contains(&progress) {
+        return None;
+    }
+    Some(elapsed * (1.0 - progress) / progress)
+}
+
+/// "About 4 s left", or whole minutes from a minute up.
+pub(super) fn format_remaining(seconds: f64) -> String {
+    let seconds = seconds.ceil().max(1.0);
+    if seconds < 60.0 {
+        format!("About {seconds:.0} s left")
+    } else {
+        format!("About {:.0} min left", (seconds / 60.0).round())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::settings::{CropSettings, CutSegment};
+
+    #[test]
+    fn remaining_seconds_waits_for_enough_progress() {
+        assert_eq!(remaining_seconds(0.5, 0.5), None);
+        assert_eq!(remaining_seconds(10.0, 0.01), None);
+        assert_eq!(remaining_seconds(10.0, 1.0), None);
+        let left = remaining_seconds(3.0, 0.3).expect("30% after 3 s should estimate");
+        assert!((left - 7.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn format_remaining_uses_seconds_then_minutes() {
+        assert_eq!(format_remaining(3.2), "About 4 s left");
+        assert_eq!(format_remaining(0.1), "About 1 s left");
+        assert_eq!(format_remaining(59.0), "About 59 s left");
+        assert_eq!(format_remaining(150.0), "About 3 min left");
+    }
 
     fn video_metadata(width: u32, height: u32, fps: f64) -> SourceMetadata {
         SourceMetadata {

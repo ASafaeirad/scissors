@@ -84,15 +84,6 @@ pub const PREVIEW_PLAYHEAD_KNOB_SIZE: f32 = 10.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActiveView {
     Workspace,
-    Logs,
-}
-
-#[must_use]
-pub fn active_view_from_env_value(value: Option<&str>) -> ActiveView {
-    match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
-        Some("logs") => ActiveView::Logs,
-        _ => ActiveView::Workspace,
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,7 +92,7 @@ pub enum VisualFixture {
     AppSettingsThemeOpen,
     AppSettingsUiOpen,
     ExportDialog,
-    LogsActive,
+    ExportProgress,
     M3Gallery,
     PreviewCrop,
     PreviewReady,
@@ -124,7 +115,7 @@ pub fn visual_fixture_from_env_value(value: Option<&str>) -> Option<VisualFixtur
         Some("app-settings-theme-open") => Some(VisualFixture::AppSettingsThemeOpen),
         Some("app-settings-ui-open") => Some(VisualFixture::AppSettingsUiOpen),
         Some("export-dialog") => Some(VisualFixture::ExportDialog),
-        Some("logs-active") => Some(VisualFixture::LogsActive),
+        Some("export-progress") => Some(VisualFixture::ExportProgress),
         Some("m3-gallery") => Some(VisualFixture::M3Gallery),
         Some("preview-crop") => Some(VisualFixture::PreviewCrop),
         Some("preview-ready") => Some(VisualFixture::PreviewReady),
@@ -380,12 +371,12 @@ mod tests {
             ));
             assert_eq!(queue.toggle_batch_selection("second"), Some(false));
 
-            let state = FrameAppState::from_file_queue(ActiveView::Logs, true, true, &queue);
+            let state = FrameAppState::from_file_queue(ActiveView::Workspace, true, true, &queue);
 
             assert_eq!(
                 state,
                 FrameAppState {
-                    active_view: ActiveView::Logs,
+                    active_view: ActiveView::Workspace,
                     is_processing: true,
                     file_count: 2,
                     selected_count: 1,
@@ -393,25 +384,6 @@ mod tests {
                     has_default_output_directory: true,
                     total_size_bytes: 35,
                 }
-            );
-        }
-    }
-
-    mod active_view_env {
-        use super::*;
-
-        #[test]
-        fn logs_value_opens_logs_view_for_visual_checks() {
-            assert_eq!(active_view_from_env_value(Some("logs")), ActiveView::Logs);
-            assert_eq!(active_view_from_env_value(Some(" LOGS ")), ActiveView::Logs);
-        }
-
-        #[test]
-        fn missing_or_unknown_value_keeps_workspace_default() {
-            assert_eq!(active_view_from_env_value(None), ActiveView::Workspace);
-            assert_eq!(
-                active_view_from_env_value(Some("workspace")),
-                ActiveView::Workspace
             );
         }
     }
@@ -429,7 +401,7 @@ mod tests {
                 ),
                 ("app-settings-ui-open", VisualFixture::AppSettingsUiOpen),
                 ("export-dialog", VisualFixture::ExportDialog),
-                ("logs-active", VisualFixture::LogsActive),
+                ("export-progress", VisualFixture::ExportProgress),
                 ("m3-gallery", VisualFixture::M3Gallery),
                 ("preview-crop", VisualFixture::PreviewCrop),
                 ("preview-ready", VisualFixture::PreviewReady),

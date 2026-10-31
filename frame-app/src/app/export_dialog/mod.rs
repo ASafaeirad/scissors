@@ -16,19 +16,22 @@ use crate::settings::{
     AudioCodecOption, VideoCodecOption, is_audio_only_container, source_kind_for,
 };
 
+mod log;
 mod model;
 mod presets;
 
+use log::{ExportLogState, ExportLogView, export_log_panel, export_log_toggle};
 use model::{
     AUDIO_CHANNEL_OPTIONS, EXPORT_FORMATS, ExportPhase, GIF_COLOR_OPTIONS, GIF_DITHER_OPTIONS,
     QualityTarget, RESOLUTION_OPTIONS, SCALING_OPTIONS, advanced_summary, apply_export_format,
     audio_bitrate_error, audio_channels_note, audio_codec_description, audio_codec_label,
     audio_quality_for_position, audio_section_summary, audio_summary, audio_vbr_control,
     custom_dimensions_error, encoder_description, encodes_audio, estimate_size_bytes, export_phase,
-    exports_audio, format_clock, format_dimensions, format_rate, format_size, fps_note,
-    fps_option_label, fps_options, native_speed_preset, output_dimensions, output_duration_seconds,
-    output_fps, parse_dimension, pixel_format_text, quality_control, resolution_note, scaled_even,
-    scaling_note, source_dimensions, speed_presets,
+    exports_audio, format_clock, format_dimensions, format_rate, format_remaining, format_size,
+    fps_note, fps_option_label, fps_options, native_speed_preset, output_dimensions,
+    output_duration_seconds, output_fps, parse_dimension, pixel_format_text, quality_control,
+    remaining_seconds, resolution_note, scaled_even, scaling_note, source_dimensions,
+    speed_presets,
 };
 
 const DIALOG_WIDTH: f32 = 1160.0;
@@ -55,6 +58,11 @@ pub(super) struct ExportUiState {
     pub(super) lock_aspect: bool,
     /// Files started from the dialog. Empty until the user exports.
     pub(super) task_ids: Vec<String>,
+    /// When the current export started, for the time-left estimate.
+    pub(super) started_at: Option<std::time::Instant>,
+    /// Shows the encoder output under the export progress.
+    pub(super) show_log: bool,
+    log: ExportLogState,
     preset_selections: std::collections::HashMap<String, presets::PresetSelection>,
     scroll_handle: ScrollHandle,
 }
@@ -68,6 +76,9 @@ impl Default for ExportUiState {
             advanced: false,
             lock_aspect: true,
             task_ids: Vec::new(),
+            started_at: None,
+            show_log: false,
+            log: ExportLogState::default(),
             preset_selections: std::collections::HashMap::new(),
             scroll_handle: ScrollHandle::new(),
         }
@@ -167,6 +178,8 @@ impl FrameRoot {
         self.export_ui
             .task_ids
             .clone_from(&self.active_conversion_task_ids);
+        self.export_ui.started_at = Some(std::time::Instant::now());
+        self.export_ui.log = ExportLogState::default();
     }
 
     fn cancel_export(&mut self) {
@@ -266,6 +279,8 @@ impl FrameRoot {
 
         let view = self.export_view(scheme);
         let phase = self.export_phase();
+        self.sync_export_log_scroll();
+        let log = self.export_log_view();
         let panel_focus = self.ensure_focus(
             FrameFocusKey::Control("export-dialog-panel".to_string()),
             false,
@@ -319,7 +334,10 @@ impl FrameRoot {
                 ]
             }
             ExportPhase::Running { .. } | ExportPhase::Done { .. } => {
-                vec![Self::export_status(&view, phase, &last_focus, window, cx).into_any_element()]
+                vec![
+                    Self::export_status(&view, phase, &log, &last_focus, window, cx)
+                        .into_any_element(),
+                ]
             }
         };
 
@@ -436,6 +454,10 @@ impl FrameRoot {
                     )
                 })
                 .collect(),
+            elapsed: self
+                .export_ui
+                .started_at
+                .map(|started| started.elapsed().as_secs_f64()),
         }
     }
 
@@ -506,6 +528,7 @@ impl FrameRoot {
     fn export_status(
         view: &ExportView,
         phase: ExportPhase,
+        log: &ExportLogView,
         last_focus: &FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -525,7 +548,17 @@ impl FrameRoot {
                     },
                     progress * 100.0
                 ),
-                "You can close this and keep editing.".to_string(),
+                view.elapsed
+                    .and_then(|elapsed| remaining_seconds(elapsed, progress))
+                    .map_or_else(
+                        || "You can close this and keep editing.".to_string(),
+                        |left| {
+                            format!(
+                                "{} · you can close this and keep editing.",
+                                format_remaining(left)
+                            )
+                        },
+                    ),
             ),
             ExportPhase::Done {
                 completed,
@@ -547,7 +580,7 @@ impl FrameRoot {
                 view.tasks
                     .iter()
                     .find_map(|(_, _, error)| error.clone())
-                    .unwrap_or_else(|| "Check the logs for details.".to_string()),
+                    .unwrap_or_else(|| "Show the FFmpeg output for details.".to_string()),
             ),
             ExportPhase::Idle => unreachable!("the status view only renders for a started export"),
         };
@@ -669,6 +702,10 @@ impl FrameRoot {
                 },
             )
             .child(actions)
+            .child(export_log_toggle(log.shown, scheme, window, cx))
+            .when(log.shown, |this| {
+                this.child(export_log_panel(log, phase, scheme, window, cx))
+            })
     }
 }
 
@@ -702,6 +739,8 @@ struct ExportView {
     scroll_handle: ScrollHandle,
     /// Output name, container and error of each started file.
     tasks: Vec<(String, String, Option<String>)>,
+    /// Seconds since the export started.
+    elapsed: Option<f64>,
 }
 
 impl ExportView {

@@ -80,6 +80,7 @@ symbols! {
     CheckCircle => "check_circle",
     Close => "close",
     ClosedCaption => "closed_caption",
+    ContentCopy => "content_copy",
     ContentCut => "content_cut",
     Crop => "crop",
     Delete => "delete",

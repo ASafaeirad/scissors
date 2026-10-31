@@ -9,14 +9,6 @@ use crate::file_queue::{FileQueue, FileStatus};
 pub const LOG_STICKY_BOTTOM_THRESHOLD_PX: f64 = 25.0;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ActiveLogFile {
-    pub id: String,
-    pub name: String,
-    pub status: FileStatus,
-    pub line_count: usize,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LogLine {
     pub index: usize,
     pub text: String,
@@ -25,7 +17,6 @@ pub struct LogLine {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ConversionEventState {
     logs: BTreeMap<String, Vec<String>>,
-    selected_log_file_id: Option<String>,
 }
 
 impl ConversionEventState {
@@ -33,13 +24,7 @@ impl ConversionEventState {
     pub const fn new() -> Self {
         Self {
             logs: BTreeMap::new(),
-            selected_log_file_id: None,
         }
-    }
-
-    #[must_use]
-    pub fn selected_log_file_id(&self) -> Option<&str> {
-        self.selected_log_file_id.as_deref()
     }
 
     #[must_use]
@@ -49,9 +34,6 @@ impl ConversionEventState {
 
     pub fn remove_logs(&mut self, id: &str) {
         self.logs.remove(id);
-        if self.selected_log_file_id.as_deref() == Some(id) {
-            self.selected_log_file_id = None;
-        }
     }
 
     #[must_use]
@@ -73,48 +55,6 @@ impl ConversionEventState {
                 text: line.clone(),
             })
             .collect()
-    }
-
-    #[must_use]
-    pub fn active_log_files(&self, queue: &FileQueue) -> Vec<ActiveLogFile> {
-        queue
-            .files()
-            .iter()
-            .filter(|file| self.logs.contains_key(&file.id) || file.status != FileStatus::Idle)
-            .map(|file| ActiveLogFile {
-                id: file.id.clone(),
-                name: file.name.clone(),
-                status: file.status,
-                line_count: self.logs_for(&file.id).len(),
-            })
-            .collect()
-    }
-
-    pub fn select_log_file(&mut self, queue: &FileQueue, id: &str) -> bool {
-        if self
-            .active_log_files(queue)
-            .iter()
-            .any(|file| file.id == id)
-        {
-            self.selected_log_file_id = Some(id.to_string());
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn ensure_selected_log_file(&mut self, queue: &FileQueue) -> Option<&str> {
-        let active_files = self.active_log_files(queue);
-        let selected_is_active = self
-            .selected_log_file_id
-            .as_deref()
-            .is_some_and(|selected| active_files.iter().any(|file| file.id == selected));
-
-        if !selected_is_active {
-            self.selected_log_file_id = active_files.first().map(|file| file.id.clone());
-        }
-
-        self.selected_log_file_id()
     }
 
     pub fn apply_conversion_event(&mut self, queue: &mut FileQueue, event: ConversionEvent) {
@@ -159,8 +99,6 @@ impl ConversionEventState {
                 queue.clear_error(&payload.id);
             }
         }
-
-        self.ensure_selected_log_file(queue);
     }
 }
 
@@ -320,18 +258,6 @@ mod tests {
     }
 
     #[test]
-    fn remove_logs_clears_selected_log_target() {
-        let mut queue = queue_with_file(FileStatus::Converting);
-        let mut state = ConversionEventState::new();
-        state.apply_conversion_event(&mut queue, ConversionEvent::log("task-1", "line"));
-        state.select_log_file(&queue, "task-1");
-
-        state.remove_logs("task-1");
-
-        assert_eq!(state.selected_log_file_id(), None);
-    }
-
-    #[test]
     fn log_line_window_for_returns_numbered_visible_range() {
         let mut queue = queue_with_file(FileStatus::Idle);
         let mut state = ConversionEventState::new();
@@ -353,49 +279,6 @@ mod tests {
                 }
             ]
         );
-    }
-
-    #[test]
-    fn active_log_files_include_idle_files_with_logs() {
-        let mut queue = queue_with_file(FileStatus::Idle);
-        let mut state = ConversionEventState::new();
-        state.apply_conversion_event(&mut queue, ConversionEvent::log("task-1", "line"));
-
-        assert_eq!(
-            state.active_log_files(&queue),
-            [ActiveLogFile {
-                id: "task-1".to_string(),
-                name: "source.mp4".to_string(),
-                status: FileStatus::Idle,
-                line_count: 1,
-            }]
-        );
-    }
-
-    #[test]
-    fn ensure_selected_log_file_selects_first_active_file() {
-        let mut queue = FileQueue::new();
-        queue.add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
-        queue.add_file(FileItem::from_path("second", "/tmp/two.mp4", 1));
-        queue.update_status("second", FileStatus::Queued, 0);
-        let mut state = ConversionEventState::new();
-
-        assert_eq!(state.ensure_selected_log_file(&queue), Some("second"));
-    }
-
-    #[test]
-    fn select_log_file_preserves_active_selection() {
-        let mut queue = FileQueue::new();
-        queue.add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
-        queue.add_file(FileItem::from_path("second", "/tmp/two.mp4", 1));
-        queue.update_status("first", FileStatus::Queued, 0);
-        queue.update_status("second", FileStatus::Queued, 0);
-        let mut state = ConversionEventState::new();
-
-        assert!(state.select_log_file(&queue, "second"));
-        state.ensure_selected_log_file(&queue);
-
-        assert_eq!(state.selected_log_file_id(), Some("second"));
     }
 
     #[test]
