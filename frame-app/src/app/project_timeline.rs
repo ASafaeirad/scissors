@@ -1497,9 +1497,6 @@ fn clip(
         } else {
             container
         }))
-        .when(selected, |clip| {
-            clip.border_2().border_color(color(scheme.primary))
-        })
         .when(track.hidden, |clip| clip.opacity(HIDDEN_CLIP_OPACITY))
         .text_color(color(on_container))
         .role(gpui::Role::Button)
@@ -1611,6 +1608,17 @@ fn clip(
                         .child(format_timecode(length)),
                 ),
         )
+        // Drawn over the content so selecting a clip doesn't shift or resize anything.
+        .when(selected, |clip| {
+            clip.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(theme::ui_rem(shape::CORNER_SMALL))
+                    .border_2()
+                    .border_color(color(scheme.primary)),
+            )
+        })
         .children([true, false].into_iter().map(|leading| {
             div()
                 .id(format!("project-trim-{id}-{leading}"))
@@ -1620,18 +1628,6 @@ fn clip(
                 .w(theme::ui_rem(TRIM_HANDLE_WIDTH))
                 .when(leading, gpui::Styled::left_0)
                 .when(!leading, gpui::Styled::right_0)
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(selected, |handle| {
-                    handle.child(
-                        div()
-                            .w(theme::ui_rem(2.0))
-                            .h(theme::ui_rem(20.0))
-                            .rounded(theme::ui_rem(1.0))
-                            .bg(color(scheme.primary)),
-                    )
-                })
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .when(enabled, |handle| {
                     handle.cursor_ew_resize().on_drag(
