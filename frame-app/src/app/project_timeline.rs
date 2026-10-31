@@ -207,11 +207,78 @@ impl FrameRoot {
         changed
     }
 
+    /// Closes empty time on Video 1 without changing overlaps or other tracks.
+    /// Call inside the triggering edit so its history snapshot includes these moves.
+    pub(super) fn close_primary_track_gaps(&mut self) -> bool {
+        let primary = self.project.tracks.primary();
+        if !self.preview_ui.timeline_snap || self.project.tracks[primary].locked {
+            return false;
+        }
+        let mut clips: Vec<_> = self
+            .project_timeline_clips()
+            .into_iter()
+            .filter(|(clip, _)| clip.track == primary)
+            .collect();
+        // Wait for all durations rather than closing over a clip still being loaded.
+        if clips.len()
+            != self
+                .project
+                .clips
+                .iter()
+                .filter(|clip| clip.track == primary)
+                .count()
+        {
+            return false;
+        }
+        clips.sort_by_key(|(clip, _)| clip.offset_millis);
+        let mut end = 0_u64;
+        let mut removed = 0_u64;
+        let mut changed = false;
+        for (clip, source) in clips {
+            removed = removed.saturating_add(clip.offset_millis.saturating_sub(end));
+            end = end.max(
+                clip.offset_millis
+                    .saturating_add(frame_core::project_timeline::clip_duration_millis(&source)),
+            );
+            let offset = clip.offset_millis - removed;
+            if offset != clip.offset_millis {
+                self.project
+                    .clips
+                    .iter_mut()
+                    .find(|item| item.id == clip.id)
+                    .unwrap()
+                    .offset_millis = offset;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn toggle_timeline_snap(&mut self) {
+        if self.is_processing || self.update_installation_in_progress() {
+            return;
+        }
+        self.preview_ui.timeline_snap = !self.preview_ui.timeline_snap;
+        if self.preview_ui.timeline_snap {
+            let before = self.timeline_snapshot();
+            if self.close_primary_track_gaps() {
+                self.project.history.push(before);
+            }
+        }
+    }
+
+    fn primary_clip(&self, id: &str) -> bool {
+        self.project
+            .clips
+            .iter()
+            .any(|clip| clip.id == id && clip.track == self.project.tracks.primary())
+    }
+
     /// Clip edges, the playhead, and the project start: where moves and trims snap.
     fn snap_targets(&self, exclude: &str) -> Vec<f64> {
         let mut targets = vec![0.0, self.preview_ui.playback.current_time()];
         for (placement, source) in self.project_timeline_clips() {
-            if placement.id != exclude {
+            if placement.id != exclude && placement.track == self.project.tracks.primary() {
                 let (start, length) = clip_extent(&source);
                 targets.extend([start, start + length]);
             }
@@ -220,8 +287,8 @@ impl FrameRoot {
     }
 
     /// How close, in seconds, an edge must come to a target to snap. `None` with snapping off.
-    fn snap_threshold(&self, view: TimelineView, width: f64) -> Option<f64> {
-        (self.preview_ui.timeline_snap && width > 0.0)
+    fn snap_threshold(&self, id: &str, view: TimelineView, width: f64) -> Option<f64> {
+        (self.preview_ui.timeline_snap && self.primary_clip(id) && width > 0.0)
             .then(|| f64::from(SNAP_DISTANCE) * view.span / width)
     }
 
@@ -237,7 +304,7 @@ impl FrameRoot {
         }
         let x = position.x - bounds.origin.x - drag.grab_x.get();
         let mut start = drag.view.time(f64::from(x.as_f32()) / width);
-        if let Some(threshold) = self.snap_threshold(drag.view, width) {
+        if let Some(threshold) = self.snap_threshold(&drag.id, drag.view, width) {
             start += snap_shift(
                 &[start, start + drag.length],
                 &self.snap_targets(&drag.id),
@@ -264,7 +331,7 @@ impl FrameRoot {
         let mut time = drag
             .view
             .time(f64::from((position.x - bounds.origin.x).as_f32()) / width);
-        if let Some(threshold) = self.snap_threshold(drag.view, width) {
+        if let Some(threshold) = self.snap_threshold(&drag.id, drag.view, width) {
             time += snap_shift(&[time], &self.snap_targets(&drag.id), threshold);
         }
         self.preview_ui.project_timeline_view = Some(drag.view);
@@ -812,9 +879,10 @@ fn toolbar(
         .child(
             m3::Chip::new("timeline-snap", "Snap", m3::ChipKind::Filter)
                 .selected(state.snap)
+                .enabled(state.enabled)
                 .build(scheme, window, cx)
                 .on_click(cx.listener(|root, _, _, cx| {
-                    root.preview_ui.timeline_snap = !root.preview_ui.timeline_snap;
+                    root.toggle_timeline_snap();
                     cx.notify();
                 })),
         )
@@ -1193,7 +1261,12 @@ fn track_header(
                 .m3_type(typography::LABEL_MEDIUM)
                 .flex()
                 .justify_center()
-                .child(state.tracks.label(index)),
+                .flex_col()
+                .items_center()
+                .child(state.tracks.label(index))
+                .when(index == state.tracks.primary(), |badge| {
+                    badge.child(div().m3_type(typography::LABEL_SMALL).child("Primary"))
+                }),
         )
         .children(visibility)
         .child(mute)
@@ -1753,7 +1826,7 @@ mod tests {
         assert!(!root.drop_library_source("library-video", point(px(50.0), px(10.0))));
         assert_eq!(root.project.clips.len(), count);
         root.is_processing = false;
-        for (source, x, offset) in [("library-audio", -10.0, 0), ("library-video", 150.0, 6000)] {
+        for (source, x, offset) in [("library-audio", -10.0, 0), ("library-video", 150.0, 4000)] {
             assert!(root.drop_library_source(source, point(px(x), px(10.0))));
             assert_eq!(root.project.clips.last().unwrap().offset_millis, offset);
         }
@@ -1984,6 +2057,103 @@ mod tests {
             ..ScrollWheelEvent::default()
         }));
         assert_eq!(root.project_timeline_view(), view);
+    }
+
+    #[test]
+    fn primary_snap_closes_gaps_in_time_order_and_can_be_undone() {
+        let mut root = crate::app::project::tests::project();
+        root.add_project_track(TrackKind::Video);
+        for (offset, track) in [(30_000, 0), (2_000, 0), (5_000, 0), (40_000, 2)] {
+            assert!(root.add_library_clip_on_track("source", offset, track));
+        }
+        root.toggle_timeline_snap();
+        let offsets = |root: &FrameRoot| {
+            root.project
+                .clips
+                .iter()
+                .map(|clip| clip.offset_millis)
+                .collect::<Vec<_>>()
+        };
+        // Preserve the overlap between the clips originally at 2s and 5s.
+        assert_eq!(offsets(&root), [13_000, 0, 3_000, 40_000]);
+        assert!(root.undo_timeline_edit());
+        assert_eq!(offsets(&root), [30_000, 2_000, 5_000, 40_000]);
+        assert!(root.redo_timeline_edit());
+        assert_eq!(offsets(&root), [13_000, 0, 3_000, 40_000]);
+    }
+
+    #[test]
+    fn primary_snap_uses_edited_durations_and_closes_new_gaps() {
+        let mut root = crate::app::project::tests::project();
+        root.preview_ui.timeline_snap = true;
+        root.add_library_clip_at("source", 5_000);
+        root.add_library_clip_at("source", 30_000);
+        root.add_library_clip("source");
+        let first = root.project.clips[0].id.clone();
+        assert!(root.set_project_clip_speed(&first, 2.0));
+        assert_eq!(root.project.clips[1].offset_millis, 5_000);
+        assert_eq!(root.project.clips[2].offset_millis, 15_000);
+        assert!(root.trim_project_clip(&first, false, 3.0, 0.0, 0));
+        assert_eq!(root.project.clips[1].offset_millis, 3_000);
+        assert_eq!(root.project.clips[2].offset_millis, 13_000);
+        let second = root.project.clips[1].id.clone();
+        assert!(root.remove_project_clip(&second));
+        assert_eq!(root.project.clips[1].offset_millis, 3_000);
+        assert!(root.undo_timeline_edit());
+        assert_eq!(root.project.clips[2].offset_millis, 13_000);
+        assert!(root.add_project_track(TrackKind::Video));
+        assert!(root.move_project_clip_to_track(&second, 2));
+        assert_eq!(root.project.clips[2].offset_millis, 3_000);
+        assert!(root.move_project_clip(&first, 50_000));
+        assert_eq!(root.project.clips[2].offset_millis, 0);
+        assert_eq!(root.project.clips[0].offset_millis, 10_000);
+    }
+
+    #[test]
+    fn primary_snap_closes_gaps_after_settings_trims() {
+        let mut root = crate::app::project::tests::project();
+        root.preview_ui.timeline_snap = true;
+        root.add_library_clip("source");
+        root.add_library_clip("source");
+        let first = root.project.clips[0].id.clone();
+        root.file_queue.select_existing_file(&first);
+        assert!(root.update_selected_config(|config| {
+            config.end_time = Some(format_time(4.0));
+            true
+        }));
+        assert_eq!(root.project.clips[1].offset_millis, 4_000);
+        assert!(root.undo_timeline_edit());
+        assert_eq!(root.project.clips[1].offset_millis, 10_000);
+        assert!((root.project_duration() - 20.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn snapping_only_uses_the_primary_track_and_respects_locks() {
+        let mut root = crate::app::project::tests::project();
+        root.add_project_track(TrackKind::Video);
+        root.add_library_clip_at("source", 3_000);
+        root.add_library_clip_on_track("source", 50_000, 2);
+        let primary = root.project.clips[0].id.clone();
+        let upper = root.project.clips[1].id.clone();
+        root.project.tracks[0].locked = true;
+        root.toggle_timeline_snap();
+        assert_eq!(root.project.clips[0].offset_millis, 3_000);
+        assert_eq!(
+            root.snap_threshold(&upper, TimelineView::fit(60.0), 600.0),
+            None
+        );
+        assert!(
+            root.snap_threshold(&primary, TimelineView::fit(60.0), 600.0)
+                .is_some()
+        );
+        assert!(!root.snap_targets(&primary).contains(&50.0));
+        root.project.tracks[0].locked = false;
+        assert!(root.close_primary_track_gaps());
+        assert_eq!(root.project.clips[0].offset_millis, 0);
+        assert_eq!(root.project.clips[1].offset_millis, 50_000);
+        root.toggle_timeline_snap();
+        assert!(root.move_project_clip(&primary, 20_000));
+        assert_eq!(root.project.clips[0].offset_millis, 20_000);
     }
 
     #[test]

@@ -173,6 +173,7 @@ mod drag_drop_tests {
                 let root = cx.new(|_| {
                     let mut root = FrameRoot::new();
                     root.apply_visual_fixture(Some(VisualFixture::ProjectTimeline));
+                    root.preview_ui.timeline_snap = false;
                     root.is_processing = processing;
                     if empty {
                         root.project.clips.clear();
