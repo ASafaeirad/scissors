@@ -259,6 +259,7 @@ impl FrameRoot {
             muted: false,
             speed: 1.0,
         });
+        self.close_primary_track_gaps();
         self.zoom_to_first_project_clip();
         true
     }
@@ -288,6 +289,7 @@ impl FrameRoot {
             return false;
         }
         self.project.clips.retain(|clip| clip.id != id);
+        self.close_primary_track_gaps();
         self.file_queue
             .select_file(self.project.clips.last().map(|clip| clip.id.clone()));
         true
@@ -331,6 +333,7 @@ impl FrameRoot {
         self.source_metadata.mark_ready(right.id.clone(), metadata);
         self.file_queue.add_file(file);
         self.project.clips.insert(index + 1, right);
+        self.close_primary_track_gaps();
         true
     }
 
@@ -381,6 +384,7 @@ impl FrameRoot {
             config.end_time = Some(format_time(source_time));
         }
         self.file_queue.select_existing_file(&id);
+        self.close_primary_track_gaps();
         true
     }
 
@@ -528,6 +532,7 @@ impl FrameRoot {
                 .clamp(trim_start + 0.05, duration.max(trim_start + 0.05));
             file.config.end_time = Some(format_time(next));
         }
+        self.close_primary_track_gaps();
         true
     }
 
@@ -549,6 +554,7 @@ impl FrameRoot {
         if let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) {
             clip.speed = speed;
         }
+        self.close_primary_track_gaps();
         true
     }
 
@@ -567,6 +573,7 @@ impl FrameRoot {
             return false;
         }
         clip.offset_millis = offset_millis;
+        self.close_primary_track_gaps();
         true
     }
 }
@@ -578,6 +585,8 @@ pub(in crate::app) mod tests {
     pub(in crate::app) fn project() -> FrameRoot {
         let mut root = FrameRoot::new();
         root.project.enabled = true;
+        // Most edit tests exercise free placement; primary snapping tests opt in.
+        root.preview_ui.timeline_snap = false;
         root.project
             .library
             .add_file(FileItem::from_path("source", "/tmp/example.mp4", 1));

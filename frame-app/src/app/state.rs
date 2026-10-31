@@ -160,7 +160,18 @@ impl FrameRoot {
         if self.update_installation_in_progress() || (self.project.enabled && self.is_processing) {
             return false;
         }
-        self.selected_config_mut().is_some_and(update)
+        let before = (self.project.enabled
+            && self.preview_ui.timeline_snap
+            && !self.editing_project_output())
+        .then(|| self.timeline_snapshot());
+        let changed = self.selected_config_mut().is_some_and(update);
+        if changed
+            && let Some(before) = before
+            && self.close_primary_track_gaps()
+        {
+            self.project.history.push(before);
+        }
+        changed
     }
     pub(super) fn normalize_selected_config(&mut self, metadata: Option<&SourceMetadata>) -> bool {
         if self.editing_project_output() {
