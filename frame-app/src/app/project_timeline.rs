@@ -114,26 +114,34 @@ impl FrameRoot {
         if !self.commit_preview_timeline_seek_at_position_with_context(position, cx) {
             return false;
         }
-        // Ruler clicks select the highest video clip covering the playhead, skipping
-        // empty tracks and gaps. Lane clicks select only within the clicked lane.
+        self.select_project_clip_at_playhead(track);
+        true
+    }
+
+    /// Prefers a clip in the clicked lane, then the highest video clip at the playhead.
+    /// Keeps the current selection when no eligible clip covers the playhead.
+    pub(super) fn select_project_clip_at_playhead(&mut self, track: Option<usize>) -> bool {
+        if !self.project.enabled
+            || self.preview_ui.crop_mode
+            || self.preview_ui.overlay.overlay_mode()
+        {
+            return false;
+        }
         let time = self.preview_ui.playback.current_time();
         let selected = self
             .project_timeline_clips()
             .into_iter()
             .filter(|(placement, source)| {
                 let (start, length) = clip_extent(source);
-                let eligible = track.map_or_else(
-                    || self.project.tracks[placement.track].kind == TrackKind::Video,
-                    |track| placement.track == track,
-                );
+                let eligible = track == Some(placement.track)
+                    || self.project.tracks[placement.track].kind == TrackKind::Video;
                 eligible && time >= start && time < start + length
             })
-            .max_by_key(|(placement, _)| placement.track)
+            .max_by_key(|(placement, _)| (track == Some(placement.track), placement.track))
             .map(|(placement, _)| placement.id);
-        if let Some(id) = selected {
-            self.select_project_clip(&id);
-        }
-        true
+        selected.is_some_and(|id| {
+            self.file_queue.selected_file_id() != Some(id.as_str()) && self.select_project_clip(&id)
+        })
     }
 
     fn drop_library_source(&mut self, source_id: &str, position: Point<Pixels>) -> bool {
@@ -2106,7 +2114,7 @@ mod tests {
         root.read_with(cx, |root, _| {
             assert_eq!(
                 root.file_queue.selected_file_id(),
-                Some(root.project.clips[0].id.as_str())
+                Some(root.project.clips[1].id.as_str())
             );
             assert_eq!(
                 root.project
@@ -2149,6 +2157,7 @@ mod tests {
         let bounds = root.read_with(cx, |root, _| root.preview_ui.timeline_track_bounds.unwrap());
         let lower = lane_center(cx, "project-lane-V1");
         let upper = lane_center(cx, "project-lane-V2");
+        let empty = lane_center(cx, "project-lane-V3");
         // Selecting a different lane is explicit; the next ruler click selects the
         // top video clip again. At the shared boundary, select the incoming clip.
         for (time, y, selected) in [
@@ -2158,6 +2167,10 @@ mod tests {
             (10.0, bounds.center().y, 2),
             (3.0, lower, 0),
             (3.0, upper, 1),
+            // Gaps and empty lanes fall back to the highest video clip at that time.
+            (12.0, lower, 2),
+            (20.0, upper, 3),
+            (12.0, empty, 2),
             (20.0, bounds.center().y, 3),
             (25.0, bounds.center().y, 3),
             (3.0, bounds.center().y, 1),

@@ -470,7 +470,7 @@ impl FrameRoot {
         selected_file_id: Option<&str>,
         metadata: Option<&SourceMetadata>,
         config: &ConversionConfig,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.project.enabled
             && !self.preview_ui.crop_mode
@@ -491,12 +491,14 @@ impl FrameRoot {
             self.preview_ui.playback.sync_cut_segments(&[]);
             if let Some(session) = &self.preview_ui.session {
                 let snapshot = session.snapshot();
-                if !self.preview_media_snapshot_sync_blocked() {
-                    self.preview_ui.playback.sync_media(MediaSnapshot {
+                if !self.preview_media_snapshot_sync_blocked()
+                    && self.sync_project_playback_media(MediaSnapshot {
                         current_time: snapshot.playback.position_seconds,
                         duration: self.project_duration(),
                         paused: !snapshot.playback.playing,
-                    });
+                    })
+                {
+                    cx.notify();
                 }
             }
             return;
@@ -562,6 +564,13 @@ impl FrameRoot {
 
     pub(super) fn preview_playback_state(&self) -> PreviewPlaybackState {
         self.preview_ui.playback.clone()
+    }
+
+    fn sync_project_playback_media(&mut self, snapshot: MediaSnapshot) -> bool {
+        let previous_time = self.preview_ui.playback.current_time();
+        self.preview_ui.playback.sync_media(snapshot);
+        (self.preview_ui.playback.current_time() - previous_time).abs() > f64::EPSILON
+            && self.select_project_clip_at_playhead(None)
     }
 
     pub(super) const fn preview_media_snapshot_sync_blocked(&self) -> bool {
@@ -1631,6 +1640,7 @@ impl FrameRoot {
                     self.preview_ui.trim_preview_seek.pause_before_next_seek();
                 }
                 self.apply_preview_command_to_local_state(command);
+                self.select_project_clip_at_playhead(None);
                 if let Some(preview_seek_to) = command.seek_to {
                     self.queue_trim_preview_seek(preview_seek_to, cx);
                 }
@@ -1656,6 +1666,9 @@ impl FrameRoot {
 
         let update = self.preview_ui.playback.drag_to_percent(percent);
         self.apply_preview_command_to_local_state(update.command);
+        if target == TimelineDragTarget::Scrub {
+            self.select_project_clip_at_playhead(None);
+        }
         if let Some(preview_seek_to) = update.preview_seek_to {
             self.queue_trim_preview_seek(preview_seek_to, cx);
         }
@@ -1786,7 +1799,9 @@ impl FrameRoot {
         if target == TimelineDragTarget::Scrub {
             self.cancel_trim_preview_seek();
             let command = self.preview_ui.playback.seek_once_to_percent(percent);
-            return self.apply_preview_media_command(command, true, cx);
+            let changed = self.apply_preview_media_command(command, true, cx);
+            self.select_project_clip_at_playhead(None);
+            return changed;
         }
 
         self.apply_preview_timeline_drag(target, percent)
@@ -1826,7 +1841,9 @@ impl FrameRoot {
             .preview_ui
             .playback
             .seek_once_to_percent(time / duration);
-        self.apply_preview_media_command(command, true, Some(cx))
+        let changed = self.apply_preview_media_command(command, true, Some(cx));
+        self.select_project_clip_at_playhead(None);
+        changed
     }
 
     pub(super) fn toggle_preview_playback_with_context(&mut self, cx: &Context<Self>) -> bool {
@@ -2671,4 +2688,84 @@ pub(in crate::app) fn preview_canvas_transform_settled(
     (target_zoom - current_zoom).abs() <= PREVIEW_CANVAS_ZOOM_SNAP_EPSILON
         && (target_pan_x - current_pan_x).abs() <= PREVIEW_CANVAS_PAN_SNAP_EPSILON
         && (target_pan_y - current_pan_y).abs() <= PREVIEW_CANVAS_PAN_SNAP_EPSILON
+}
+
+#[cfg(test)]
+mod project_selection_tests {
+    use super::*;
+    use crate::app::project_tracks::TrackKind;
+    use gpui::{AppContext, TestAppContext};
+
+    fn project() -> FrameRoot {
+        let mut root = crate::app::project::tests::project();
+        assert!(root.add_library_clip_on_track("source", 0, 0));
+        assert!(root.add_project_track(TrackKind::Video));
+        assert!(root.add_library_clip_on_track("source", 0, 2));
+        assert!(root.add_library_clip_on_track("source", 10_000, 2));
+        assert!(root.add_library_clip_on_track("source", 20_000, 0));
+        assert!(root.add_project_track(TrackKind::Video));
+        root.preview_ui.playback =
+            preview_playback_state(PreviewMediaKind::Video, 30.0, None, None);
+        root
+    }
+
+    fn assert_selected(root: &FrameRoot, index: usize) {
+        assert_eq!(
+            root.file_queue.selected_file_id(),
+            Some(root.project.clips[index].id.as_str())
+        );
+    }
+
+    #[test]
+    fn keyboard_seeks_and_scrubbing_select_the_clip_at_the_playhead() {
+        let mut app = TestAppContext::single();
+        let entity = app.new(|_| project());
+        entity.update(&mut app, |root, cx| {
+            assert!(root.skip_preview_seconds(2.0, cx));
+            assert_selected(root, 1);
+            assert!(root.skip_preview_seconds(8.0, cx));
+            assert_selected(root, 2);
+            assert!(root.adjust_preview_timeline_from_keyboard_internal(
+                TimelineDragTarget::Scrub,
+                "home",
+                None,
+            ));
+            assert_selected(root, 1);
+            // Both the start of a scrub and its subsequent updates select clips.
+            assert!(root.apply_preview_timeline_drag(TimelineDragTarget::Scrub, 0.4));
+            assert_selected(root, 2);
+            assert!(root.apply_preview_timeline_drag(TimelineDragTarget::Scrub, 0.8));
+            assert_selected(root, 3);
+            assert!(root.apply_preview_timeline_drag(TimelineDragTarget::Scrub, 0.1));
+            assert_selected(root, 1);
+            assert!(root.end_preview_timeline_drag());
+        });
+    }
+
+    #[test]
+    fn playback_updates_follow_clips_and_preserve_explicit_selection_until_time_changes() {
+        let mut root = project();
+        for (time, selected) in [(2.0, 1), (10.0, 2), (20.0, 3), (30.0, 3), (3.0, 1)] {
+            root.sync_project_playback_media(MediaSnapshot {
+                current_time: time,
+                duration: 30.0,
+                paused: false,
+            });
+            assert_selected(&root, selected);
+        }
+        let lower = root.project.clips[0].id.clone();
+        assert!(root.select_project_clip(&lower));
+        assert!(!root.sync_project_playback_media(MediaSnapshot {
+            current_time: 3.0,
+            duration: 30.0,
+            paused: true,
+        }));
+        assert_selected(&root, 0);
+        assert!(root.sync_project_playback_media(MediaSnapshot {
+            current_time: 4.0,
+            duration: 30.0,
+            paused: false,
+        }));
+        assert_selected(&root, 1);
+    }
 }
