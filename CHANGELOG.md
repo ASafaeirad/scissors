@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed the project to Scissors, including the app, executable, Rust crates, and environment variables. New projects use `.scissors`; existing `.frame` projects and Frame settings remain readable.
+
 ### Added
 
 - **Preview Control Tooltips:** Adds tooltips to preview tools, zoom, and playback controls on pointer hover and keyboard focus. Escape dismisses the tooltip. Resolves [#176](https://github.com/66HEX/frame/issues/176).

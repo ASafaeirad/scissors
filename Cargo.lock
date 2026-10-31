@@ -1941,43 +1941,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "frame-app"
-version = "0.33.1"
-dependencies = [
- "ashpd",
- "cpal",
- "directories",
- "embed-resource",
- "frame-core",
- "gpui",
- "gpui_platform",
- "image",
- "libc",
- "material-colors",
- "notify-rust",
- "objc2-app-kit 0.3.2",
- "raw-window-handle",
- "rfd",
- "serde",
- "serde_json",
- "smallvec",
- "smol",
- "sysinfo",
- "thiserror 2.0.21",
- "windows 0.62.2",
-]
-
-[[package]]
-name = "frame-core"
-version = "0.33.1"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "freetype-sys"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5190,6 +5153,43 @@ dependencies = [
  "quote",
  "serde_derive_internals",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "scissors-app"
+version = "0.33.1"
+dependencies = [
+ "ashpd",
+ "cpal",
+ "directories",
+ "embed-resource",
+ "gpui",
+ "gpui_platform",
+ "image",
+ "libc",
+ "material-colors",
+ "notify-rust",
+ "objc2-app-kit 0.3.2",
+ "raw-window-handle",
+ "rfd",
+ "scissors-core",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "smol",
+ "sysinfo",
+ "thiserror 2.0.21",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "scissors-core"
+version = "0.33.1"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

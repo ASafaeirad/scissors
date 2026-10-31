@@ -1,0 +1,277 @@
+use super::super::accessibility::focus_visible_ring;
+use super::{
+    ButtonVariant, ClickEvent, Context, FluentBuilder, InteractiveElement, IntoElement,
+    PANEL_HEADER_HEIGHT, ParentElement, SETTINGS_PANEL_PADDING, SETTINGS_TAB_BUTTON_SIZE,
+    SETTINGS_TAB_ICON_SIZE, ScissorsRoot, ScissorsSurface, SettingsRenderState, SettingsTab,
+    StatefulInteractiveElement, Styled, Window, apply_button_motion, button_colors,
+    button_highlight_shadows, button_motion, color, div, icon_svg, mix_color,
+    panel_bottom_separator, scissors_tooltip, settings_images_tab, settings_metadata_tab,
+    settings_section_label, settings_tab_icon, theme, visible_settings_tabs,
+};
+
+pub(in crate::app) fn settings_panel(
+    settings: &SettingsRenderState<'_>,
+    window: &mut Window,
+    cx: &mut Context<ScissorsRoot>,
+) -> gpui::Div {
+    let palette = settings.palette;
+    let visible_tabs: Vec<_> = visible_settings_tabs(settings.config, settings.metadata)
+        .into_iter()
+        .filter(|tab| !matches!(tab, SettingsTab::VideoFilters | SettingsTab::AudioFilters))
+        .collect();
+    let active_tab = if visible_tabs.contains(&settings.active_tab) {
+        settings.active_tab
+    } else {
+        visible_tabs
+            .first()
+            .copied()
+            .unwrap_or(SettingsTab::Metadata)
+    };
+    let mut tab_rail = div()
+        .id("settings-tab-list")
+        .role(gpui::Role::TabList)
+        .aria_label("Settings sections")
+        .flex()
+        .items_center()
+        .justify_start()
+        .gap_1();
+    for tab in &visible_tabs {
+        tab_rail = tab_rail.child(settings_tab_button(
+            *tab,
+            active_tab == *tab,
+            &visible_tabs,
+            settings.tooltip_visible_id,
+            palette,
+            window,
+            cx,
+        ));
+    }
+
+    div()
+        .debug_selector(|| "legacy-settings-panel".to_string())
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .card_surface(palette)
+        .child(
+            div()
+                .min_h(theme::ui_rem(PANEL_HEADER_HEIGHT))
+                .w_full()
+                .flex()
+                .items_center()
+                .justify_between()
+                .relative()
+                .px_4()
+                .child(tab_rail)
+                .child(panel_bottom_separator(palette)),
+        )
+        .child(
+            div()
+                .id("settings-panel-body")
+                .flex_1()
+                .flex()
+                .flex_col()
+                .overflow_y_scroll()
+                .p(theme::ui_rem(SETTINGS_PANEL_PADDING))
+                .child(settings_tab_content(active_tab, settings, window, cx)),
+        )
+}
+
+pub(in crate::app) fn settings_tab_button(
+    tab: SettingsTab,
+    selected: bool,
+    visible_tabs: &[SettingsTab],
+    tooltip_visible_id: Option<&str>,
+    palette: &'static theme::ThemePalette,
+    window: &mut Window,
+    cx: &mut Context<ScissorsRoot>,
+) -> impl IntoElement {
+    let colors = button_colors(ButtonVariant::Secondary, selected, true, palette);
+    let tab_id = format!("settings-tab-{}", tab.id());
+    let motion = button_motion(format!("{tab_id}-hover"), window, cx);
+    let hover_progress = *motion.hover_transition.evaluate(window, cx);
+    let background = if selected {
+        mix_color(colors.background, colors.hover_background, hover_progress)
+    } else {
+        mix_color(palette.transparent, palette.fill_subtle, hover_progress)
+    };
+    let foreground = mix_color(
+        if selected {
+            palette.text_primary
+        } else {
+            palette.text_muted
+        },
+        palette.text_primary,
+        hover_progress,
+    );
+    let keyboard_tabs = visible_tabs.to_vec();
+
+    let button = div()
+        .id(tab_id.clone())
+        .role(gpui::Role::Tab)
+        .aria_label(tab.label())
+        .aria_selected(selected)
+        .focusable()
+        .tab_stop(true)
+        .focus_visible(move |style| focus_visible_ring(style, palette))
+        .group(tab_id)
+        .w(theme::ui_rem(SETTINGS_TAB_BUTTON_SIZE))
+        .h(theme::ui_rem(SETTINGS_TAB_BUTTON_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(theme::ui_rem(theme::RADIUS_SM))
+        .bg(background)
+        .text_color(foreground)
+        .when(selected, |this| {
+            this.shadow(button_highlight_shadows(palette))
+        })
+        .hover(gpui::Styled::cursor_pointer)
+        .active(move |style| style.bg(color(colors.active_background)))
+        .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
+            root.settings_ui.active_tab = tab;
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .on_key_down(
+            cx.listener(move |root, event: &gpui::KeyDownEvent, _window, cx| {
+                let Some(next_tab) =
+                    settings_tab_for_key(tab, &keyboard_tabs, event.keystroke.key.as_str())
+                else {
+                    return;
+                };
+                root.settings_ui.active_tab = next_tab;
+                cx.stop_propagation();
+                cx.notify();
+            }),
+        )
+        .child(icon_svg(
+            settings_tab_icon(tab),
+            SETTINGS_TAB_ICON_SIZE,
+            foreground,
+        ));
+    let button = apply_button_motion(button, motion, true);
+
+    scissors_tooltip(
+        tab.id(),
+        tab.label(),
+        tooltip_visible_id == Some(tab.id()),
+        button,
+        palette,
+        window,
+        cx,
+    )
+}
+
+fn settings_tab_for_key(
+    current: SettingsTab,
+    visible_tabs: &[SettingsTab],
+    key: &str,
+) -> Option<SettingsTab> {
+    let current_index = visible_tabs.iter().position(|tab| *tab == current)?;
+    match key {
+        "left" => Some(if current_index == 0 {
+            *visible_tabs.last()?
+        } else {
+            visible_tabs[current_index - 1]
+        }),
+        "right" => Some(visible_tabs[(current_index + 1) % visible_tabs.len()]),
+        "home" => visible_tabs.first().copied(),
+        "end" => visible_tabs.last().copied(),
+        _ => None,
+    }
+}
+
+pub(in crate::app) fn settings_tab_content(
+    tab: SettingsTab,
+    settings: &SettingsRenderState<'_>,
+    window: &mut Window,
+    cx: &mut Context<ScissorsRoot>,
+) -> gpui::Div {
+    let palette = settings.palette;
+    let content = div()
+        .flex()
+        .flex_col()
+        .gap_4()
+        .text_size(theme::ui_rem(theme::TEXT_UI_BASE_SIZE))
+        .text_color(color(palette.text_muted));
+
+    match tab {
+        SettingsTab::VideoFilters | SettingsTab::AudioFilters => content,
+        SettingsTab::Images => content.child(settings_images_tab(
+            settings.config,
+            settings.settings_disabled,
+            settings.video_width_focus,
+            settings.video_height_focus,
+            palette,
+            window,
+            cx,
+        )),
+        SettingsTab::Metadata => content.child(settings_metadata_tab(
+            settings.config,
+            settings.metadata,
+            settings.settings_disabled,
+            settings.metadata_focuses,
+            palette,
+            window,
+            cx,
+        )),
+    }
+}
+
+pub(in crate::app) fn settings_section(
+    label: &'static str,
+    palette: &'static theme::ThemePalette,
+) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .child(settings_section_label(label, palette))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TABS: &[SettingsTab] = &[
+        SettingsTab::VideoFilters,
+        SettingsTab::AudioFilters,
+        SettingsTab::Metadata,
+    ];
+
+    #[test]
+    fn settings_tab_for_key_handles_the_navigation_matrix() {
+        let cases = [
+            (
+                SettingsTab::VideoFilters,
+                "left",
+                Some(SettingsTab::Metadata),
+            ),
+            (
+                SettingsTab::Metadata,
+                "right",
+                Some(SettingsTab::VideoFilters),
+            ),
+            (
+                SettingsTab::AudioFilters,
+                "home",
+                Some(SettingsTab::VideoFilters),
+            ),
+            (
+                SettingsTab::AudioFilters,
+                "end",
+                Some(SettingsTab::Metadata),
+            ),
+            (SettingsTab::VideoFilters, "space", None),
+        ];
+
+        for (current, key, expected) in cases {
+            assert_eq!(
+                settings_tab_for_key(current, TABS, key),
+                expected,
+                "navigation failed for current={current:?}, key={key:?}"
+            );
+        }
+    }
+}

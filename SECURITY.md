@@ -5,7 +5,7 @@ run `cargo xtask ci` before using a new build.
 
 ## Reporting
 
-For a suspected vulnerability in upstream Frame, use
+For a suspected vulnerability in upstream Scissors, use
 [private vulnerability reporting](https://github.com/66HEX/frame/security/advisories/new).
 Include the affected commit, platform, reproduction steps, and relevant logs.
 Keep credentials and private media out of reports.

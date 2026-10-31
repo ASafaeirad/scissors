@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Sponsor Frame
+  - name: Sponsor Scissors
     url: https://github.com/sponsors/66HEX
-    about: Support upstream Frame development.
+    about: Support upstream Scissors development.
   - name: Security Report (Private)
     url: mailto:hexthecoder@gmail.com
     about: Report vulnerabilities privately instead of opening a public issue.

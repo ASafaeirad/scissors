@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an improvement to Frame or a new workflow it could support.
+description: Suggest an improvement to Scissors or a new workflow it could support.
 title: "[Feature]: "
 body:
   - type: markdown
@@ -20,7 +20,7 @@ body:
     id: proposed-solution
     attributes:
       label: Proposed solution
-      description: Describe the behavior or outcome you would like Frame to provide.
+      description: Describe the behavior or outcome you would like Scissors to provide.
     validations:
       required: true
 

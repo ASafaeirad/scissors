@@ -5,7 +5,7 @@
 
 /target
 /.cache
-/frame-core/target
-/frame-app/target
-/frame-app/resources/binaries/
+/scissors-core/target
+/scissors-app/target
+/scissors-app/resources/binaries/
 /vendor/gpui-ce/target/

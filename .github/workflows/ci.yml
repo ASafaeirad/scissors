@@ -60,9 +60,9 @@ jobs:
     - name: ci::setup_ffmpeg
       run: cargo xtask setup-ffmpeg
     - name: ci::test_media_conversions
-      run: cargo test --locked -p frame-core --test media_integration -- --ignored --test-threads=1
+      run: cargo test --locked -p scissors-core --test media_integration -- --ignored --test-threads=1
     - name: ci::test_conversion_runner
-      run: cargo test --locked -p frame-app conversion_runner::tests -- --ignored --test-threads=1
+      run: cargo test --locked -p scissors-app conversion_runner::tests -- --ignored --test-threads=1
     - name: ci::test_media_thumbnails
-      run: cargo test --locked -p frame-app app::media_assets::tests -- --ignored --test-threads=1
+      run: cargo test --locked -p scissors-app app::media_assets::tests -- --ignored --test-threads=1
     timeout-minutes: 60

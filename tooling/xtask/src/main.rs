@@ -38,9 +38,9 @@ fn run_xtask() -> Result<()> {
     };
 
     match command.as_str() {
-        "build" => build_frame_app(args.collect()),
+        "build" => build_scissors_app(args.collect()),
         "ci" => ci(),
-        "run" => run_frame_app(args.collect()),
+        "run" => run_scissors_app(args.collect()),
         "setup-ffmpeg" => {
             let args = args.collect::<Vec<_>>();
             setup_ffmpeg(&args)
@@ -59,29 +59,29 @@ fn print_help() {
 Usage: cargo xtask <command>
 
 Commands:
-  run               Run the native Frame app
-  build             Build frame-app
+  run               Run the native Scissors app
+  build             Build scissors-app
   setup-ffmpeg      Download FFmpeg and FFprobe runtime binaries
   ci                Run local formatting, tests, lints, and UI color checks
 "
     );
 }
 
-fn run_frame_app(args: Vec<String>) -> Result<()> {
+fn run_scissors_app(args: Vec<String>) -> Result<()> {
     let mut cargo_args = vec![
         "run".to_string(),
         "--manifest-path".to_string(),
-        "frame-app/Cargo.toml".to_string(),
+        "scissors-app/Cargo.toml".to_string(),
     ];
     cargo_args.extend(args);
     run_command_path("cargo", &cargo_args)
 }
 
-fn build_frame_app(args: Vec<String>) -> Result<()> {
+fn build_scissors_app(args: Vec<String>) -> Result<()> {
     let mut cargo_args = vec![
         "build".to_string(),
         "--manifest-path".to_string(),
-        "frame-app/Cargo.toml".to_string(),
+        "scissors-app/Cargo.toml".to_string(),
     ];
     cargo_args.extend(args);
     run_command_path("cargo", &cargo_args)
@@ -96,7 +96,7 @@ fn setup_ffmpeg(args: &[String]) -> Result<()> {
             .unwrap_or_else(|| host_platform()),
         options.arch.as_deref().unwrap_or(host_arch()),
     )?;
-    let binary_dir = repo_root()?.join("frame-app/resources/binaries");
+    let binary_dir = repo_root()?.join("scissors-app/resources/binaries");
 
     fs::create_dir_all(&binary_dir)?;
     println!(
@@ -117,7 +117,7 @@ fn setup_ffmpeg(args: &[String]) -> Result<()> {
         }
     }
 
-    println!("All binaries are ready in frame-app/resources/binaries.");
+    println!("All binaries are ready in scissors-app/resources/binaries.");
     Ok(())
 }
 
@@ -625,13 +625,13 @@ const LEGACY_THEME_TOKENS: [&str; 12] = [
     "TRANSPARENT",
     "SIDEBAR",
     "DROPDOWN",
-    "FRAME_GRAY_100",
-    "FRAME_GRAY_200",
-    "FRAME_GRAY_400",
-    "FRAME_GRAY_600",
-    "FRAME_BLUE",
-    "FRAME_RED",
-    "FRAME_AMBER",
+    "SCISSORS_GRAY_100",
+    "SCISSORS_GRAY_200",
+    "SCISSORS_GRAY_400",
+    "SCISSORS_GRAY_600",
+    "SCISSORS_BLUE",
+    "SCISSORS_RED",
+    "SCISSORS_AMBER",
 ];
 
 struct ApprovedUiColorLiteral {
@@ -643,19 +643,19 @@ struct ApprovedUiColorLiteral {
 
 const APPROVED_UI_COLOR_LITERALS: [ApprovedUiColorLiteral; 3] = [
     ApprovedUiColorLiteral {
-        path: "frame-app/src/app/preview_panel/crop_overlay.rs",
+        path: "scissors-app/src/app/preview_panel/crop_overlay.rs",
         function: "crop_mask_rect",
         constructor: "hsla",
         arguments: &[0.0, 0.0, 0.0, 0.55],
     },
     ApprovedUiColorLiteral {
-        path: "frame-app/src/app/preview_panel/crop_overlay.rs",
+        path: "scissors-app/src/app/preview_panel/crop_overlay.rs",
         function: "preview_crop_handle",
         constructor: "hsla",
         arguments: &[0.0, 0.0, 0.0, 0.45],
     },
     ApprovedUiColorLiteral {
-        path: "frame-app/src/app/preview_panel/overlay.rs",
+        path: "scissors-app/src/app/preview_panel/overlay.rs",
         function: "preview_overlay_handle",
         constructor: "hsla",
         arguments: &[0.0, 0.0, 0.0, 0.45],
@@ -797,7 +797,7 @@ fn approved_ui_color_literal_index(path: &str, literal: &UiColorLiteralCall) -> 
 fn check_theme_color_literals() -> Result<()> {
     let root = repo_root()?;
     let mut source_paths = Vec::new();
-    collect_rust_sources(&root.join("frame-app/src"), &mut source_paths)?;
+    collect_rust_sources(&root.join("scissors-app/src"), &mut source_paths)?;
     source_paths.sort();
 
     let mut approved_counts = vec![0_usize; APPROVED_UI_COLOR_LITERALS.len()];
@@ -824,7 +824,7 @@ fn check_theme_color_literals() -> Result<()> {
             violations.push(format!("{relative_path}: legacy theme token `{token}`"));
         }
 
-        if !relative_path.starts_with("frame-app/src/app/") {
+        if !relative_path.starts_with("scissors-app/src/app/") {
             continue;
         }
         for literal in audit.color_literals {
@@ -1040,7 +1040,7 @@ mod tests {
             r#"
             // BACKGROUND is only documentation.
             fn example() {
-                let _label = "FRAME_BLUE";
+                let _label = "SCISSORS_BLUE";
             }
             "#,
         )
@@ -1102,7 +1102,7 @@ mod tests {
 
         assert_eq!(
             approved_ui_color_literal_index(
-                "frame-app/src/app/preview_panel/crop_overlay.rs",
+                "scissors-app/src/app/preview_panel/crop_overlay.rs",
                 literal,
             ),
             None

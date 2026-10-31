@@ -1,6 +1,6 @@
 <div align="center">
-  <img src="./icon.png" width="256" height="256" alt="Frame Icon" />
-  <h1>Frame</h1>
+  <img src="./icon.png" width="256" height="256" alt="Scissors Icon" />
+  <h1>Scissors</h1>
 </div>
 
 <div align="center">
@@ -13,7 +13,7 @@
   </a>
 </div>
 
-**Frame** is a native media conversion utility built in Rust. It provides a
+**Scissors** is a native media conversion utility built in Rust. It provides a
 desktop interface for FFmpeg operations, with granular control over video,
 audio, image, and metadata settings. The application uses a GPUI-CE
 front end and a reusable Rust conversion core for FFmpeg argument generation,
@@ -21,7 +21,7 @@ source probing, compatibility validation, task control, and progress parsing.
 
 <br />
 <div align="center">
-  <img src="./preview.png" alt="Frame Application Preview" width="800" />
+  <img src="./preview.png" alt="Scissors Application Preview" width="800" />
 </div>
 <br />
 
@@ -77,14 +77,14 @@ source probing, compatibility validation, task control, and progress parsing.
 - **Native UI:** GPUI-CE application shell, custom titlebar, workspace view,
   export dialog with live FFmpeg output, settings panels, and shared UI
   primitives.
-- **Shared Conversion Core:** `frame-core` owns FFmpeg arguments, media rules,
+- **Shared Conversion Core:** `scissors-core` owns FFmpeg arguments, media rules,
   probing types, filter construction, and validation logic.
 - **Single-project workflow:** Edit one timeline with multiple media clips, save or
   open a project, and export it with progress and cancellation controls.
 - **Real-time Telemetry:** FFmpeg progress and log events are parsed and shown
   in the app while conversions run.
 - **Runtime Binaries:** Local development uses platform-specific FFmpeg and
-  FFprobe binaries under `frame-app/resources/binaries/`. The app detects encoder
+  FFprobe binaries under `scissors-app/resources/binaries/`. The app detects encoder
   capabilities from the selected FFmpeg at startup.
 
 ## Technical Stack
@@ -120,10 +120,15 @@ Build an optimized local executable with:
 cargo xtask build --release
 ```
 
-The executable is `target/release/frame`, or `target/release/frame.exe` on Windows.
-FFmpeg and FFprobe remain under `frame-app/resources/binaries/`. To use your own
-installations, set `FRAME_FFMPEG_PATH` and `FRAME_FFPROBE_PATH`, or set
-`FRAME_USE_SYSTEM_MEDIA_TOOLS=1` to use the tools on `PATH`.
+The executable is `target/release/scissors`, or `target/release/scissors.exe` on Windows.
+FFmpeg and FFprobe remain under `scissors-app/resources/binaries/`. To use your own
+installations, set `SCISSORS_FFMPEG_PATH` and `SCISSORS_FFPROBE_PATH`, or set
+`SCISSORS_USE_SYSTEM_MEDIA_TOOLS=1` to use the tools on `PATH`.
+
+Scissors saves projects with the `.scissors` extension and can open existing
+`.frame` projects. It reads settings from the former Frame config directory
+until settings are saved under Scissors. Environment variables now use the
+`SCISSORS_` prefix.
 
 ## Development Checks
 
@@ -146,7 +151,7 @@ cargo xtask ci
 ## Acknowledgments & Third-Party Code
 
 - **FFmpeg**: Licensed under [GPLv3](https://www.ffmpeg.org/legal.html).
-- **GPUI-CE**: Native Rust UI framework used by Frame.
+- **GPUI-CE**: Native Rust UI framework used by Scissors.
 
 ## License
 

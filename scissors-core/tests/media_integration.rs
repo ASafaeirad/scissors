@@ -1,0 +1,2250 @@
+use std::{
+    env,
+    ffi::OsStr,
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use scissors_core::{
+    args::{build_ffmpeg_args, validate_task_input},
+    preview::{PreviewFfmpegOptions, build_ffmpeg_preview_args},
+    probe::{ffprobe_json_args, parse_ffprobe_stdout},
+    types::{
+        ConversionConfig, CropConfig, MetadataConfig, MetadataMode, OverlayConfig, ProbeMetadata,
+    },
+};
+
+type TestResult<T = ()> = Result<T, String>;
+
+#[derive(Clone, Debug)]
+struct Toolchain {
+    ffmpeg: PathBuf,
+    ffprobe: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Rgb {
+    red: u8,
+    green: u8,
+    blue: u8,
+}
+
+#[derive(Debug)]
+struct RgbFrame {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct Sandbox {
+    root: PathBuf,
+    keep: bool,
+}
+
+impl Toolchain {
+    fn discover() -> TestResult<Self> {
+        let ffmpeg = discover_tool("ffmpeg", "SCISSORS_TEST_FFMPEG")?;
+        let ffprobe = discover_tool("ffprobe", "SCISSORS_TEST_FFPROBE")?;
+        Ok(Self { ffmpeg, ffprobe })
+    }
+}
+
+impl Rgb {
+    const BLACK: Self = Self::new(0, 0, 0);
+    const BLUE: Self = Self::new(0, 0, 255);
+    const GREEN: Self = Self::new(0, 255, 0);
+    const RED: Self = Self::new(255, 0, 0);
+    const YELLOW: Self = Self::new(255, 255, 0);
+
+    const fn new(red: u8, green: u8, blue: u8) -> Self {
+        Self { red, green, blue }
+    }
+}
+
+impl RgbFrame {
+    fn pixel(&self, x: u32, y: u32) -> TestResult<Rgb> {
+        if x >= self.width || y >= self.height {
+            return Err(format!(
+                "pixel coordinate {x},{y} is outside {}x{} frame",
+                self.width, self.height
+            ));
+        }
+
+        let offset = usize::try_from((y * self.width + x) * 3)
+            .map_err(|error| format!("pixel offset overflow: {error}"))?;
+        Ok(Rgb {
+            red: self.pixels[offset],
+            green: self.pixels[offset + 1],
+            blue: self.pixels[offset + 2],
+        })
+    }
+}
+
+impl Sandbox {
+    fn new(name: &str) -> TestResult<Self> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system clock is before unix epoch: {error}"))?
+            .as_nanos();
+        let root = env::temp_dir().join(format!(
+            "scissors-media-test-{}-{}-{now}",
+            std::process::id(),
+            sanitize_name(name)
+        ));
+        fs::create_dir_all(&root)
+            .map_err(|error| format!("failed to create {}: {error}", root.display()))?;
+        Ok(Self {
+            root,
+            keep: env::var_os("SCISSORS_KEEP_MEDIA_TESTS").is_some(),
+        })
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.root.join(name)
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        if self.keep {
+            eprintln!("keeping media test artifacts in {}", self.root.display());
+            return;
+        }
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One generated timeline checks export, seeking, pacing, mute and source audio against the same clip positions."
+)]
+fn gif_audio_timeline_exports_and_previews_aligned_sound() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("gif_audio_timeline")?;
+    let gif = sandbox.path("source.gif");
+    let audio = sandbox.path("music.wav");
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=160x90:rate=10:duration=3",
+            "-y",
+            &path_arg(&gif),
+        ]),
+    )?;
+    generate_audio_source(&tools, &audio)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.selected_audio_tracks.clear();
+    config.start_time = Some("0.5".to_string());
+    config.end_time = Some("2.5".to_string());
+    config.cut_segments = vec![scissors_core::types::CutSegment {
+        start_time: "1.5".to_string(),
+        end_time: "2.0".to_string(),
+    }];
+    config.external_audio_tracks = vec![
+        scissors_core::types::ExternalAudioTrack {
+            path: path_arg(&audio),
+            duration_millis: 1000,
+            offset_millis: 1000,
+            muted: false,
+        },
+        scissors_core::types::ExternalAudioTrack {
+            path: path_arg(&audio),
+            duration_millis: 1000,
+            offset_millis: 0,
+            muted: true,
+        },
+    ];
+    let output = sandbox.path("with_sound.mp4");
+    convert(&tools, &gif, &output, &config)?;
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.audio_tracks.len(), 1);
+    assert!(metadata.video_stream_index.is_some());
+    let duration = metadata
+        .duration
+        .as_deref()
+        .and_then(scissors_core::utils::parse_time)
+        .unwrap_or_default();
+    assert!((duration - 1.5).abs() < 0.15, "output duration: {duration}");
+    let pcm = run_tool_output(
+        &tools.ffmpeg,
+        &args(&[
+            "-i",
+            &path_arg(&output),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ]),
+    )?;
+    let samples = pcm_samples(&pcm);
+    assert!(sample_energy(&samples, 4800, 19200) < 0.001);
+    assert!(sample_energy(&samples, 28800, 43200) > 0.01);
+    assert!(sample_energy(&samples, 52800, 67200) < 0.001);
+
+    let plan = scissors_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&gif),
+        &config,
+        &scissors_core::preview::PreviewAudioFfmpegOptions {
+            start_seconds: 1.25,
+            end_seconds: Some(2.5),
+            sample_rate: 48000,
+            channels: 1,
+            realtime: false,
+            precise_seek: true,
+            selected_track: u32::MAX,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let preview = pcm_samples(&run_tool_output(&tools.ffmpeg, &plan.args)?);
+    assert_eq!(preview.len(), 60_000);
+    assert!(sample_energy(&preview, 4800, 19200) > 0.01);
+    assert!(sample_energy(&preview, 43200, 57600) < 0.001);
+
+    let realtime = scissors_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&gif),
+        &config,
+        &scissors_core::preview::PreviewAudioFfmpegOptions {
+            start_seconds: 0.0,
+            end_seconds: Some(0.4),
+            sample_rate: 48000,
+            channels: 1,
+            realtime: true,
+            precise_seek: true,
+            selected_track: u32::MAX,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let started = std::time::Instant::now();
+    let silence = pcm_samples(&run_tool_output(&tools.ffmpeg, &realtime.args)?);
+    assert_eq!(silence.len(), 19_200);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(250));
+    assert!(sample_energy(&silence, 0, silence.len()) < 0.001);
+
+    // A second audible lane contributes sound after the first lane finishes.
+    config.external_audio_tracks[1].muted = false;
+    config.external_audio_tracks[1].offset_millis = 2250;
+    let output = sandbox.path("two_tracks.mp4");
+    convert(&tools, &gif, &output, &config)?;
+    let pcm = pcm_samples(&run_tool_output(
+        &tools.ffmpeg,
+        &args(&[
+            "-i",
+            &path_arg(&output),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ]),
+    )?);
+    assert!(sample_energy(&pcm, 62400, 69600) > 0.01);
+    let video = sandbox.path("source_with_audio.mp4");
+    generate_h264_aac_source(&tools, &video, 3.0, 160, 90)?;
+    let probe = probe_media(&tools, &video)?;
+    config.selected_audio_tracks = vec![probe.audio_tracks[0].index];
+    let output = sandbox.path("source_and_added_audio.mp4");
+    convert(&tools, &video, &output, &config)?;
+    let pcm = pcm_samples(&run_tool_output(
+        &tools.ffmpeg,
+        &args(&[
+            "-i",
+            &path_arg(&output),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-f",
+            "f32le",
+            "pipe:1",
+        ]),
+    )?);
+    assert!(sample_energy(&pcm, 4800, 19200) > 0.01);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Generated sources verify project composition, seeking, independent audio, and export agreement."
+)]
+fn project_timeline_exports_sequence_and_previews_the_same_frames_and_audio() -> TestResult {
+    use scissors_core::types::TimelineSource;
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("project_timeline")?;
+    let red = sandbox.path("red.mp4");
+    let blue = sandbox.path("blue.mp4");
+    let music = sandbox.path("music.wav");
+    for (path, color) in [(&red, "red"), (&blue, "blue")] {
+        run_tool(
+            &tools.ffmpeg,
+            &args(&[
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("color=c={color}:s=160x90:r=30:d=2"),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-y",
+                &path_arg(path),
+            ]),
+        )?;
+    }
+    generate_audio_source(&tools, &music)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.selected_audio_tracks.clear();
+    let mut clip_config = config.clone();
+    clip_config.end_time = Some("1".to_string());
+    config.timeline_sources = vec![
+        TimelineSource {
+            path: path_arg(&red),
+            kind: "video".to_string(),
+            offset_millis: 0,
+            duration_millis: 2000,
+            muted: false,
+            speed: 1.0,
+            hidden: false,
+            config: Box::new(clip_config.clone()),
+        },
+        TimelineSource {
+            path: path_arg(&blue),
+            kind: "video".to_string(),
+            offset_millis: 1000,
+            duration_millis: 2000,
+            muted: false,
+            speed: 1.0,
+            hidden: false,
+            config: Box::new(clip_config.clone()),
+        },
+    ];
+    clip_config.selected_audio_tracks = vec![0];
+    clip_config.audio_volume = 25.0;
+    config.timeline_sources.push(TimelineSource {
+        path: path_arg(&music),
+        kind: "audio".to_string(),
+        offset_millis: 500,
+        duration_millis: 2000,
+        muted: false,
+        speed: 1.0,
+        hidden: false,
+        config: Box::new(clip_config),
+    });
+    let output = sandbox.path("project.mp4");
+    convert(&tools, &red, &output, &config)?;
+    let probe = probe_media(&tools, &output)?;
+    let duration = probe
+        .duration
+        .as_deref()
+        .and_then(scissors_core::utils::parse_time)
+        .unwrap_or_default();
+    assert!((duration - 2.0).abs() < 0.1, "duration={duration}");
+    assert_eq!(probe.audio_tracks.len(), 1);
+    for (time, expected) in [(0.25, Rgb::RED), (1.25, Rgb::BLUE)] {
+        let frame = run_tool_output(
+            &tools.ffmpeg,
+            &args(&[
+                "-ss",
+                &format!("{time}"),
+                "-i",
+                &path_arg(&output),
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "pipe:1",
+            ]),
+        )?;
+        assert_color_near(
+            Rgb::new(frame[0], frame[1], frame[2]),
+            expected,
+            8,
+            "exported clip color",
+        )?;
+        let plan = build_ffmpeg_preview_args(
+            &path_arg(&red),
+            &config,
+            &PreviewFfmpegOptions {
+                start_seconds: time,
+                end_seconds: Some(time + 0.1),
+                source_width: Some(160),
+                source_height: Some(90),
+                max_width: 160,
+                max_height: 90,
+                fps: 30,
+                realtime: false,
+                precise_seek: true,
+                source_is_image: false,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        let frame = run_tool_output(&tools.ffmpeg, &plan.args)?;
+        assert_color_near(
+            Rgb::new(frame[2], frame[1], frame[0]),
+            expected,
+            8,
+            "preview clip color",
+        )?;
+    }
+    let audio_options = scissors_core::preview::PreviewAudioFfmpegOptions {
+        start_seconds: 0.0,
+        end_seconds: Some(2.0),
+        sample_rate: 48000,
+        channels: 1,
+        realtime: false,
+        precise_seek: true,
+        selected_track: u32::MAX,
+    };
+    let plan = scissors_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&red),
+        &config,
+        &audio_options,
+    )
+    .map_err(|error| error.to_string())?;
+    let samples = pcm_samples(&run_tool_output(&tools.ffmpeg, &plan.args)?);
+    assert_eq!(samples.len(), 96_000);
+    assert!(sample_energy(&samples, 4800, 19200) < 0.001);
+    assert!(sample_energy(&samples, 28800, 43200) > 0.005);
+    assert!(sample_energy(&samples, 81600, 91200) < 0.001);
+    config.timeline_sources[2].muted = true;
+    let plan = scissors_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&red),
+        &config,
+        &audio_options,
+    )
+    .map_err(|error| error.to_string())?;
+    let muted = pcm_samples(&run_tool_output(&tools.ffmpeg, &plan.args)?);
+    assert!(sample_energy(&muted, 0, muted.len()) < 0.001);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn project_preview_keeps_a_seeked_later_clip_silent_until_its_offset() -> TestResult {
+    use scissors_core::types::TimelineSource;
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("project_seeked_audio")?;
+    let quiet = sandbox.path("quiet.mp4");
+    let tone = sandbox.path("tone.mp4");
+    for (path, audio) in [
+        (&quiet, "anullsrc=r=48000:cl=mono:d=4"),
+        (&tone, "sine=frequency=440:sample_rate=48000:duration=4"),
+    ] {
+        run_tool(
+            &tools.ffmpeg,
+            &args(&[
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=red:s=160x90:r=30:d=4",
+                "-f",
+                "lavfi",
+                "-i",
+                audio,
+                "-shortest",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-y",
+                &path_arg(path),
+            ]),
+        )?;
+    }
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.selected_audio_tracks.clear();
+    let mut clip_config = config.clone();
+    clip_config.selected_audio_tracks = vec![1];
+    let clip = |path: &Path, offset_millis, start: Option<&str>, end: &str| {
+        let mut config = clip_config.clone();
+        config.start_time = start.map(str::to_string);
+        config.end_time = Some(end.to_string());
+        TimelineSource {
+            path: path_arg(path),
+            kind: "video".to_string(),
+            offset_millis,
+            duration_millis: 4000,
+            muted: false,
+            speed: 1.0,
+            hidden: false,
+            config: Box::new(config),
+        }
+    };
+    // Two halves of a split clip. Played from 0.5s, both inputs are seeked.
+    config.timeline_sources = vec![
+        clip(&quiet, 0, None, "2"),
+        clip(&tone, 2000, Some("2"), "4"),
+    ];
+    let plan = scissors_core::preview::build_ffmpeg_preview_audio_args(
+        &path_arg(&quiet),
+        &config,
+        &scissors_core::preview::PreviewAudioFfmpegOptions {
+            start_seconds: 0.5,
+            end_seconds: Some(4.0),
+            sample_rate: 48000,
+            channels: 1,
+            realtime: false,
+            precise_seek: true,
+            selected_track: u32::MAX,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let samples = pcm_samples(&run_tool_output(&tools.ffmpeg, &plan.args)?);
+    assert_eq!(samples.len(), 168_000);
+    // The second half stays silent until it starts 1.5s into playback.
+    assert!(sample_energy(&samples, 0, 67_200) < 0.001);
+    assert!(sample_energy(&samples, 76_800, 163_200) > 0.05);
+    Ok(())
+}
+
+fn pcm_samples(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect()
+}
+
+fn sample_energy(samples: &[f32], start: usize, end: usize) -> f32 {
+    samples[start..end]
+        .iter()
+        .map(|value| value.abs())
+        .fold(0.0, f32::max)
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn project_track_speed_changes_export_duration_and_keeps_audio() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("project_speed")?;
+    let input = sandbox.path("source.mp4");
+    generate_h264_aac_source(&tools, &input, 2.0, 64, 48)?;
+    let source_track = probe_media(&tools, &input)?.audio_tracks[0].index;
+    for speed in [0.5, 2.0, 20.0] {
+        let mut config = video_config("mp4", "libx264", "aac");
+        config.selected_audio_tracks = vec![source_track];
+        config.timeline_sources = vec![scissors_core::types::TimelineSource {
+            path: path_arg(&input),
+            kind: "video".to_string(),
+            offset_millis: 0,
+            duration_millis: 2000,
+            muted: false,
+            speed,
+            hidden: false,
+            config: Box::new(config.clone()),
+        }];
+        let output = sandbox.path(&format!("speed-{speed}.mp4"));
+        convert(&tools, &input, &output, &config)?;
+        let probe = probe_media(&tools, &output)?;
+        let duration = probe
+            .duration
+            .as_deref()
+            .and_then(scissors_core::utils::parse_time)
+            .unwrap_or_default();
+        assert!(
+            (duration - 2.0 / speed).abs() < 0.1,
+            "speed={speed}, duration={duration}"
+        );
+        assert_eq!(probe.audio_tracks.len(), 1);
+        let pcm = pcm_samples(&run_tool_output(
+            &tools.ffmpeg,
+            &args(&[
+                "-i",
+                &path_arg(&output),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "48000",
+                "-f",
+                "f32le",
+                "pipe:1",
+            ]),
+        )?);
+        assert!(sample_energy(&pcm, 0, pcm.len()) > 0.01, "speed={speed}");
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn transport_stream_reencode_matrix_should_write_packets_streams_and_service_metadata() -> TestResult
+{
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("transport_stream_reencode_matrix")?;
+    let input = sandbox.path("source.mp4");
+    generate_h264_aac_source(&tools, &input, 1.0, 160, 90)?;
+
+    for (container, video_codec, audio_codec, packet_size) in [
+        ("m2t", "mpeg2video", "mp2", 188_u16),
+        ("mts", "libx264", "ac3", 192_u16),
+        ("m2ts", "libx264", "ac3", 192_u16),
+    ] {
+        let output = sandbox.path(&format!("reencoded.{container}"));
+        let mut config = video_config(container, video_codec, audio_codec);
+        config.video_bitrate_mode = "bitrate".to_string();
+        config.video_bitrate = "2500".to_string();
+        config.audio_bitrate = "192".to_string();
+        config.metadata.mode = MetadataMode::Replace;
+        config.metadata.service_name = Some(format!("Scissors {container}"));
+        config.metadata.service_provider = Some("Scissors Integration".to_string());
+        convert(&tools, &input, &output, &config)?;
+
+        let metadata = probe_media(&tools, &output)?;
+        let transport = metadata
+            .transport_stream
+            .ok_or_else(|| format!("{container} did not probe as a transport stream"))?;
+        assert_eq!(transport.packet_size, Some(packet_size));
+        assert_eq!(
+            transport.service_name.as_deref(),
+            Some(format!("Scissors {container}").as_str())
+        );
+        assert_eq!(
+            transport.service_provider.as_deref(),
+            Some("Scissors Integration")
+        );
+        assert_eq!(metadata.subtitle_tracks.len(), 0);
+        let file_size = fs::metadata(&output)
+            .map_err(|error| format!("failed to stat {}: {error}", output.display()))?
+            .len();
+        assert_eq!(file_size % u64::from(packet_size), 0);
+        decode_media(&tools, &output)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn transport_stream_audio_encoder_matrix_should_write_standard_stream_types() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("transport_stream_audio_encoder_matrix")?;
+    let input = sandbox.path("source.mp4");
+    generate_h264_aac_source(&tools, &input, 0.5, 160, 90)?;
+
+    for (container, audio_encoder, expected_codec) in [
+        ("m2t", "mp2", "mp2"),
+        ("m2t", "aac", "aac"),
+        ("m2t", "ac3", "ac3"),
+        ("m2t", "mp3", "mp3"),
+        ("m2t", "libopus", "opus"),
+        ("m2ts", "ac3", "ac3"),
+        ("m2ts", "pcm_bluray", "pcm_bluray"),
+    ] {
+        let capability_encoder = if audio_encoder == "mp3" {
+            "libmp3lame"
+        } else {
+            audio_encoder
+        };
+        if !encoder_available(&tools, capability_encoder)? {
+            eprintln!("skipping unavailable encoder {audio_encoder}");
+            continue;
+        }
+        let output = sandbox.path(&format!("audio-{audio_encoder}.{container}"));
+        let mut config = video_config(container, "libx264", audio_encoder);
+        config.selected_audio_tracks = vec![1];
+        config.video_bitrate_mode = "bitrate".to_string();
+        config.video_bitrate = "1500".to_string();
+        config.audio_bitrate = "192".to_string();
+        convert(&tools, &input, &output, &config)?;
+        let metadata = probe_media(&tools, &output)?;
+        assert_eq!(
+            metadata.audio_codec.as_deref(),
+            Some(expected_codec),
+            "unexpected audio codec for {audio_encoder} in {container}"
+        );
+        decode_media(&tools, &output)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn transport_stream_video_encoder_matrix_should_write_standard_stream_types() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("transport_stream_video_encoder_matrix")?;
+    let input = sandbox.path("source.mp4");
+    generate_h264_aac_source(&tools, &input, 0.25, 160, 90)?;
+
+    for (container, video_encoder, expected_codec, audio_encoder) in [
+        ("m2t", "mpeg2video", "mpeg2video", "mp2"),
+        ("m2t", "libx264", "h264", "aac"),
+        ("m2t", "libx265", "hevc", "aac"),
+        ("m2ts", "mpeg2video", "mpeg2video", "ac3"),
+        ("m2ts", "libx264", "h264", "ac3"),
+        ("m2ts", "libx265", "hevc", "ac3"),
+    ] {
+        if !encoder_available(&tools, video_encoder)? {
+            eprintln!("skipping unavailable encoder {video_encoder}");
+            continue;
+        }
+        let output = sandbox.path(&format!("video-{video_encoder}.{container}"));
+        let mut config = video_config(container, video_encoder, audio_encoder);
+        config.audio_bitrate = "192".to_string();
+        if video_encoder == "mpeg2video" {
+            config.video_bitrate_mode = "bitrate".to_string();
+            config.video_bitrate = "2500".to_string();
+        }
+        convert(&tools, &input, &output, &config)?;
+        let metadata = probe_media(&tools, &output)?;
+        assert_eq!(
+            metadata.video_codec.as_deref(),
+            Some(expected_codec),
+            "unexpected video codec for {video_encoder} in {container}"
+        );
+        decode_media(&tools, &output)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn transport_stream_copy_should_preserve_compatible_video_and_audio() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("transport_stream_copy")?;
+    let standard_input = sandbox.path("h264-aac.mp4");
+    generate_h264_aac_source(&tools, &standard_input, 1.0, 160, 90)?;
+
+    let m2t_output = sandbox.path("copied.m2t");
+    let mut m2t_config = video_config("m2t", "libx264", "aac");
+    m2t_config.processing_mode = "copy".to_string();
+    m2t_config.selected_audio_tracks = vec![1];
+    convert(&tools, &standard_input, &m2t_output, &m2t_config)?;
+    let m2t_metadata = probe_media(&tools, &m2t_output)?;
+    assert_eq!(m2t_metadata.video_codec.as_deref(), Some("h264"));
+    assert_eq!(m2t_metadata.audio_codec.as_deref(), Some("aac"));
+    assert_eq!(
+        m2t_metadata.transport_stream.unwrap().packet_size,
+        Some(188)
+    );
+
+    let bluray_input = sandbox.path("h264-ac3.mkv");
+    generate_h264_ac3_source(&tools, &bluray_input)?;
+    for container in ["mts", "m2ts"] {
+        let output = sandbox.path(&format!("copied.{container}"));
+        let mut config = video_config(container, "libx264", "ac3");
+        config.processing_mode = "copy".to_string();
+        config.selected_audio_tracks = vec![1];
+        convert(&tools, &bluray_input, &output, &config)?;
+        let metadata = probe_media(&tools, &output)?;
+        assert_eq!(metadata.video_codec.as_deref(), Some("h264"));
+        assert_eq!(metadata.audio_codec.as_deref(), Some("ac3"));
+        assert_eq!(metadata.transport_stream.unwrap().packet_size, Some(192));
+        decode_media(&tools, &output)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn transport_stream_metadata_modes_should_round_trip_program_tags() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("transport_stream_metadata_modes")?;
+    let input = sandbox.path("source.mp4");
+    let tagged_source = sandbox.path("tagged-source.m2t");
+    generate_h264_aac_source(&tools, &input, 1.0, 160, 90)?;
+
+    let mut source_config = video_config("m2t", "mpeg2video", "mp2");
+    source_config.video_bitrate_mode = "bitrate".to_string();
+    source_config.video_bitrate = "2500".to_string();
+    source_config.audio_bitrate = "192".to_string();
+    source_config.metadata.mode = MetadataMode::Replace;
+    source_config.metadata.service_name = Some("Original Service".to_string());
+    source_config.metadata.service_provider = Some("Original Provider".to_string());
+    convert(&tools, &input, &tagged_source, &source_config)?;
+
+    for (mode, expected_name, expected_provider) in [
+        (
+            MetadataMode::Preserve,
+            "Original Service",
+            "Original Provider",
+        ),
+        (MetadataMode::Clean, "Service01", "Scissors"),
+        (MetadataMode::Replace, "Replacement", "Replacement Provider"),
+    ] {
+        let output = sandbox.path(&format!(
+            "metadata-{}.m2t",
+            match mode {
+                MetadataMode::Preserve => "preserve",
+                MetadataMode::Clean => "clean",
+                MetadataMode::Replace => "replace",
+            }
+        ));
+        let mut config = video_config("m2t", "mpeg2video", "mp2");
+        config.processing_mode = "copy".to_string();
+        config.metadata.mode = mode.clone();
+        if mode == MetadataMode::Replace {
+            config.metadata.service_name = Some("Replacement".to_string());
+            config.metadata.service_provider = Some("Replacement Provider".to_string());
+        }
+        convert(&tools, &tagged_source, &output, &config)?;
+        let transport = probe_media(&tools, &output)?
+            .transport_stream
+            .ok_or_else(|| "metadata output did not expose program tags".to_string())?;
+        assert_eq!(transport.service_name.as_deref(), Some(expected_name));
+        assert_eq!(
+            transport.service_provider.as_deref(),
+            Some(expected_provider)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn transport_stream_combined_processing_graph_should_preserve_existing_features() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("transport_stream_combined_graph")?;
+    let input = sandbox.path("source.mp4");
+    let overlay = sandbox.path("overlay.ppm");
+    generate_h264_aac_source(&tools, &input, 1.0, 160, 90)?;
+    write_solid_ppm(&overlay, 24, 16, Rgb::RED)?;
+
+    for container in ["m2t", "m2ts"] {
+        let output = sandbox.path(&format!("combined.{container}"));
+        let mut config = video_config(
+            container,
+            if container == "m2t" {
+                "mpeg2video"
+            } else {
+                "libx264"
+            },
+            if container == "m2t" { "mp2" } else { "ac3" },
+        );
+        config.video_bitrate_mode = "bitrate".to_string();
+        config.video_bitrate = "2500".to_string();
+        config.audio_bitrate = "192".to_string();
+        config.start_time = Some("00:00:00.100".to_string());
+        config.end_time = Some("00:00:00.800".to_string());
+        config.crop = Some(CropConfig {
+            enabled: true,
+            x: 8.0,
+            y: 4.0,
+            width: 144.0,
+            height: 80.0,
+            source_width: Some(160.0),
+            source_height: Some(90.0),
+            aspect_ratio: None,
+        });
+        config.resolution = "custom".to_string();
+        config.custom_width = Some("128".to_string());
+        config.custom_height = Some("72".to_string());
+        config.rotation = "180".to_string();
+        config.flip_horizontal = true;
+        config.video_filters.color.brightness = scissors_core::types::FilterValue {
+            enabled: true,
+            value: 5,
+        };
+        config.video_filters.sharpen = scissors_core::types::FilterValue {
+            enabled: true,
+            value: 15,
+        };
+        config.audio_filters.bass = scissors_core::types::FilterValue {
+            enabled: true,
+            value: 2,
+        };
+        config.audio_filters.limiter = scissors_core::types::FilterValue {
+            enabled: true,
+            value: -1,
+        };
+        config.overlay = Some(OverlayConfig {
+            enabled: true,
+            path: path_arg(&overlay),
+            x: 0.5,
+            y: 0.5,
+            width: 0.2,
+            opacity: 0.75,
+            anchor: "center".to_string(),
+        });
+
+        convert(&tools, &input, &output, &config)?;
+        let metadata = probe_media(&tools, &output)?;
+        assert_eq!((metadata.width, metadata.height), (Some(128), Some(72)));
+        let duration = duration_seconds(&metadata)?;
+        assert!((0.4..=1.0).contains(&duration));
+        decode_media(&tools, &output)?;
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn h264_mp4_reencode_should_write_h264_video_and_aac_audio() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("h264_mp4_reencode")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("output.mp4");
+
+    generate_h264_aac_source(&tools, &input, 1.0, 64, 48)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.selected_audio_tracks = vec![1];
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.video_codec.as_deref(), Some("h264"));
+    assert_eq!(metadata.audio_codec.as_deref(), Some("aac"));
+    assert_eq!(metadata.width, Some(64));
+    assert_eq!(metadata.height, Some(48));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn hevc_mkv_reencode_should_write_hevc_video() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("hevc_mkv_reencode")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("output.mkv");
+
+    generate_h264_aac_source(&tools, &input, 0.5, 48, 32)?;
+    let config = video_config("mkv", "libx265", "aac");
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.video_codec.as_deref(), Some("hevc"));
+    assert_eq!(metadata.width, Some(48));
+    assert_eq!(metadata.height, Some(32));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn vp9_webm_reencode_should_write_vp9_video_and_opus_audio() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("vp9_webm_reencode")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("output.webm");
+
+    generate_h264_aac_source(&tools, &input, 0.5, 48, 32)?;
+    let mut config = video_config("webm", "vp9", "libopus");
+    config.selected_audio_tracks = vec![1];
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.video_codec.as_deref(), Some("vp9"));
+    assert_eq!(metadata.audio_codec.as_deref(), Some("opus"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn svt_av1_mp4_reencode_should_accept_frame_preset_and_write_av1_video() -> TestResult {
+    let tools = Toolchain::discover()?;
+    if !encoder_available(&tools, "libsvtav1")? {
+        eprintln!("skipping libsvtav1 media integration test: encoder is unavailable");
+        return Ok(());
+    }
+
+    let sandbox = Sandbox::new("svt_av1_mp4_reencode")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("output.mp4");
+
+    generate_h264_aac_source(&tools, &input, 0.25, 32, 24)?;
+    let mut config = video_config("mp4", "libsvtav1", "aac");
+    config.preset = "ultrafast".to_string();
+    config.crf = 38;
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.video_codec.as_deref(), Some("av1"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn prores_mov_reencode_should_write_prores_422_10bit_video() -> TestResult {
+    let tools = Toolchain::discover()?;
+    if !encoder_available(&tools, "prores")? {
+        eprintln!("skipping prores media integration test: encoder is unavailable");
+        return Ok(());
+    }
+
+    let sandbox = Sandbox::new("prores_mov_reencode")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("output.mov");
+
+    generate_h264_aac_source(&tools, &input, 0.5, 48, 32)?;
+    let config = video_config("mov", "prores", "aac");
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.video_codec.as_deref(), Some("prores"));
+    assert_eq!(metadata.pixel_format.as_deref(), Some("yuv422p10le"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn x264_pixel_format_matrix_should_write_requested_formats() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("x264_pixel_format_matrix")?;
+    let input = sandbox.path("source.mp4");
+    generate_h264_aac_source(&tools, &input, 0.5, 48, 32)?;
+
+    for pixel_format in ["yuv420p", "yuv422p", "yuv444p", "yuv420p10le"] {
+        let output = sandbox.path(&format!("output-{pixel_format}.mp4"));
+        let mut config = video_config("mp4", "libx264", "aac");
+        config.pixel_format = pixel_format.to_string();
+        convert(&tools, &input, &output, &config)
+            .map_err(|error| format!("x264 {pixel_format} output failed: {error}"))?;
+        let metadata = probe_media(&tools, &output)?;
+        assert_eq!(
+            metadata.pixel_format.as_deref(),
+            Some(pixel_format),
+            "x264 should write requested {pixel_format} pixel format"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn audio_container_matrix_should_write_supported_audio_outputs() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("audio_container_matrix")?;
+    let input = sandbox.path("source.wav");
+    generate_audio_source(&tools, &input)?;
+
+    for case in [
+        ("mp3", "mp3", "mp3"),
+        ("m4a", "aac", "aac"),
+        ("wav", "pcm_s16le", "pcm_s16le"),
+        ("flac", "flac", "flac"),
+    ] {
+        let output = sandbox.path(&format!("output.{}", case.0));
+        let mut config = audio_config(case.0, case.1);
+        config.selected_audio_tracks = vec![0];
+        convert(&tools, &input, &output, &config)
+            .map_err(|error| format!("{} audio output failed: {error}", case.0))?;
+        let metadata = probe_media(&tools, &output)?;
+        assert_eq!(
+            metadata.audio_codec.as_deref(),
+            Some(case.2),
+            "{} should produce {} audio",
+            case.0,
+            case.2
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn image_container_matrix_should_write_single_frame_outputs() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("image_container_matrix")?;
+    let input = sandbox.path("quadrants.ppm");
+    write_quadrant_ppm(&input, 64, 48)?;
+
+    for case in [
+        ("png", "png", "png"),
+        ("jpg", "mjpeg", "mjpeg"),
+        ("webp", "libwebp", "webp"),
+        ("bmp", "bmp", "bmp"),
+        ("tiff", "tiff", "tiff"),
+    ] {
+        let output = sandbox.path(&format!("output.{}", case.0));
+        let config = image_config(case.0, case.1);
+        convert(&tools, &input, &output, &config)
+            .map_err(|error| format!("{} image output failed: {error}", case.0))?;
+        let metadata = probe_media(&tools, &output)?;
+        assert_eq!(
+            metadata.media_kind, "image",
+            "{} should probe as image",
+            case.0
+        );
+        assert_eq!(
+            metadata.video_codec.as_deref(),
+            Some(case.2),
+            "{} should produce {} image codec",
+            case.0,
+            case.2
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn gif_output_should_write_palette_gif_video() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("gif_output")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("output.gif");
+
+    generate_h264_aac_source(&tools, &input, 0.75, 48, 32)?;
+    let mut config = video_config("gif", "gif", "aac");
+    config.fps = "6".to_string();
+    config.gif_colors = 32;
+    config.gif_dither = "bayer".to_string();
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.video_codec.as_deref(), Some("gif"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn odd_yuv420p_reencode_should_pad_to_even_dimensions() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("odd_yuv420p_reencode")?;
+    let input = sandbox.path("odd.mov");
+    let output = sandbox.path("output.mp4");
+
+    generate_odd_h264_source(&tools, &input)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.pixel_format = "yuv420p".to_string();
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.width, Some(854));
+    assert_eq!(metadata.height, Some(480));
+    assert_eq!(metadata.pixel_format.as_deref(), Some("yuv420p"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn rotate_90_image_output_should_swap_dimensions_and_move_quadrants() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("rotate_90_image_output")?;
+    let input = sandbox.path("quadrants.ppm");
+    let output = sandbox.path("rotated.png");
+
+    write_quadrant_ppm(&input, 64, 48)?;
+    let mut config = image_config("png", "png");
+    config.rotation = "90".to_string();
+    convert(&tools, &input, &output, &config)?;
+
+    let frame = read_rgb_frame(&tools, &output)?;
+    assert_eq!((frame.width, frame.height), (48, 64));
+    assert_color_near(frame.pixel(2, 2)?, Rgb::BLUE, 2, "top-left")?;
+    assert_color_near(frame.pixel(frame.width - 3, 2)?, Rgb::RED, 2, "top-right")?;
+    assert_color_near(
+        frame.pixel(2, frame.height - 3)?,
+        Rgb::YELLOW,
+        2,
+        "bottom-left",
+    )?;
+    assert_color_near(
+        frame.pixel(frame.width - 3, frame.height - 3)?,
+        Rgb::GREEN,
+        2,
+        "bottom-right",
+    )?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn flip_horizontal_image_output_should_mirror_quadrants() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("flip_horizontal_image_output")?;
+    let input = sandbox.path("quadrants.ppm");
+    let output = sandbox.path("flipped.png");
+
+    write_quadrant_ppm(&input, 64, 48)?;
+    let mut config = image_config("png", "png");
+    config.flip_horizontal = true;
+    convert(&tools, &input, &output, &config)?;
+
+    let frame = read_rgb_frame(&tools, &output)?;
+    assert_color_near(frame.pixel(2, 2)?, Rgb::GREEN, 2, "top-left")?;
+    assert_color_near(frame.pixel(frame.width - 3, 2)?, Rgb::RED, 2, "top-right")?;
+    assert_color_near(
+        frame.pixel(2, frame.height - 3)?,
+        Rgb::YELLOW,
+        2,
+        "bottom-left",
+    )?;
+    assert_color_near(
+        frame.pixel(frame.width - 3, frame.height - 3)?,
+        Rgb::BLUE,
+        2,
+        "bottom-right",
+    )?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn flip_vertical_image_output_should_mirror_quadrants() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("flip_vertical_image_output")?;
+    let input = sandbox.path("quadrants.ppm");
+    let output = sandbox.path("flipped.png");
+
+    write_quadrant_ppm(&input, 64, 48)?;
+    let mut config = image_config("png", "png");
+    config.flip_vertical = true;
+    convert(&tools, &input, &output, &config)?;
+
+    let frame = read_rgb_frame(&tools, &output)?;
+    assert_color_near(frame.pixel(2, 2)?, Rgb::BLUE, 2, "top-left")?;
+    assert_color_near(
+        frame.pixel(frame.width - 3, 2)?,
+        Rgb::YELLOW,
+        2,
+        "top-right",
+    )?;
+    assert_color_near(
+        frame.pixel(2, frame.height - 3)?,
+        Rgb::RED,
+        2,
+        "bottom-left",
+    )?;
+    assert_color_near(
+        frame.pixel(frame.width - 3, frame.height - 3)?,
+        Rgb::GREEN,
+        2,
+        "bottom-right",
+    )?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn crop_image_output_should_emit_selected_region() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("crop_image_output")?;
+    let input = sandbox.path("quadrants.ppm");
+    let output = sandbox.path("cropped.png");
+
+    write_quadrant_ppm(&input, 64, 48)?;
+    let mut config = image_config("png", "png");
+    config.crop = Some(CropConfig {
+        enabled: true,
+        x: 32.0,
+        y: 0.0,
+        width: 32.0,
+        height: 24.0,
+        source_width: Some(64.0),
+        source_height: Some(48.0),
+        aspect_ratio: None,
+    });
+    convert(&tools, &input, &output, &config)?;
+
+    let frame = read_rgb_frame(&tools, &output)?;
+    assert_eq!((frame.width, frame.height), (32, 24));
+    assert_color_near(frame.pixel(2, 2)?, Rgb::GREEN, 2, "cropped top-left")?;
+    assert_color_near(
+        frame.pixel(frame.width - 3, frame.height - 3)?,
+        Rgb::GREEN,
+        2,
+        "cropped bottom-right",
+    )?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn overlay_image_output_should_composite_overlay_at_center() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("overlay_image_output")?;
+    let input = sandbox.path("base.ppm");
+    let overlay = sandbox.path("overlay.ppm");
+    let output = sandbox.path("overlayed.png");
+
+    write_solid_ppm(&input, 64, 48, Rgb::BLACK)?;
+    write_solid_ppm(&overlay, 16, 16, Rgb::RED)?;
+    let mut config = image_config("png", "png");
+    config.overlay = Some(OverlayConfig {
+        enabled: true,
+        path: path_arg(&overlay),
+        x: 0.5,
+        y: 0.5,
+        width: 0.25,
+        opacity: 1.0,
+        anchor: "center".to_string(),
+    });
+    convert(&tools, &input, &output, &config)?;
+
+    let frame = read_rgb_frame(&tools, &output)?;
+    assert_color_near(
+        frame.pixel(frame.width / 2, frame.height / 2)?,
+        Rgb::RED,
+        2,
+        "center",
+    )?;
+    assert_color_near(frame.pixel(2, 2)?, Rgb::BLACK, 2, "corner")?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn custom_resolution_should_pad_to_requested_canvas() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("custom_resolution")?;
+    let input = sandbox.path("quadrants.ppm");
+    let output = sandbox.path("scaled.png");
+
+    write_quadrant_ppm(&input, 64, 32)?;
+    let mut config = image_config("png", "png");
+    config.resolution = "custom".to_string();
+    config.custom_width = Some("80".to_string());
+    config.custom_height = Some("80".to_string());
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.width, Some(80));
+    assert_eq!(metadata.height, Some(80));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn trimmed_reencode_should_shorten_duration() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("trimmed_reencode")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("trimmed.mp4");
+
+    generate_h264_aac_source(&tools, &input, 2.0, 64, 48)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.start_time = Some("00:00:00.250".to_string());
+    config.end_time = Some("00:00:00.750".to_string());
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    let duration = duration_seconds(&metadata)?;
+    assert!(
+        (0.30..=0.80).contains(&duration),
+        "trimmed duration should be close to 0.5s, got {duration}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn cut_segments_should_remove_time_from_trimmed_reencode() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("cut_segments")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("cut.mp4");
+
+    generate_h264_aac_source(&tools, &input, 4.0, 64, 48)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.start_time = Some("00:00:00.500".to_string());
+    config.end_time = Some("00:00:03.500".to_string());
+    config.cut_segments = vec![
+        scissors_core::types::CutSegment {
+            start_time: "00:00:01.000".to_string(),
+            end_time: "00:00:01.500".to_string(),
+        },
+        scissors_core::types::CutSegment {
+            start_time: "00:00:02.500".to_string(),
+            end_time: "00:00:03.000".to_string(),
+        },
+    ];
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    let duration = duration_seconds(&metadata)?;
+    assert!(
+        (1.8..=2.2).contains(&duration),
+        "3s trim minus 1s of cuts should be close to 2s, got {duration}"
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn stream_copy_should_preserve_h264_aac_streams() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("stream_copy")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("copied.mp4");
+
+    generate_h264_aac_source(&tools, &input, 1.0, 64, 48)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.processing_mode = "copy".to_string();
+    config.selected_audio_tracks = vec![1];
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.video_codec.as_deref(), Some("h264"));
+    assert_eq!(metadata.audio_codec.as_deref(), Some("aac"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn selected_audio_track_should_emit_only_requested_track() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("selected_audio_track")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("selected.mp4");
+
+    generate_two_audio_track_source(&tools, &input)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.selected_audio_tracks = vec![2];
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.audio_tracks.len(), 1);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn metadata_replace_should_write_requested_title() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("metadata_replace")?;
+    let input = sandbox.path("source.mp4");
+    let output = sandbox.path("metadata.mp4");
+
+    generate_h264_aac_source(&tools, &input, 0.5, 48, 32)?;
+    let mut config = video_config("mp4", "libx264", "aac");
+    config.metadata = MetadataConfig {
+        mode: MetadataMode::Replace,
+        title: Some("Scissors Media Integration".to_string()),
+        artist: Some("Scissors".to_string()),
+        album: None,
+        genre: None,
+        date: None,
+        comment: None,
+        ..MetadataConfig::default()
+    };
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(
+        metadata.tags.and_then(|tags| tags.title).as_deref(),
+        Some("Scissors Media Integration")
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn audio_normalize_and_mono_wav_should_emit_mono_pcm() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("audio_normalize_mono")?;
+    let input = sandbox.path("source.wav");
+    let output = sandbox.path("mono.wav");
+
+    generate_audio_source(&tools, &input)?;
+    let mut config = audio_config("wav", "pcm_s16le");
+    config.selected_audio_tracks = vec![0];
+    config.audio_normalize = true;
+    config.audio_channels = "mono".to_string();
+    convert(&tools, &input, &output, &config)?;
+
+    let metadata = probe_media(&tools, &output)?;
+    assert_eq!(metadata.audio_codec.as_deref(), Some("pcm_s16le"));
+    assert_eq!(
+        metadata
+            .audio_tracks
+            .first()
+            .map(|track| track.channels.as_str()),
+        Some("1")
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn display_matrix_rotation_should_produce_portrait_preview_frame() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("display_matrix_rotation")?;
+    let base = sandbox.path("base.mp4");
+    let rotated = sandbox.path("rotated.mov");
+
+    generate_h264_aac_source(&tools, &base, 0.25, 160, 90)?;
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-display_rotation:v:0",
+            "90",
+            "-i",
+            &path_arg(&base),
+            "-map",
+            "0:v:0",
+            "-c",
+            "copy",
+            "-y",
+            &path_arg(&rotated),
+        ]),
+    )?;
+
+    let metadata = probe_media(&tools, &rotated)?;
+    let plan = build_ffmpeg_preview_args(
+        &path_arg(&rotated),
+        &video_config("mov", "libx264", "aac"),
+        &PreviewFfmpegOptions {
+            start_seconds: 0.0,
+            end_seconds: Some(0.2),
+            source_width: metadata.width,
+            source_height: metadata.height,
+            max_width: 160,
+            max_height: 160,
+            fps: 12,
+            realtime: false,
+            precise_seek: true,
+            source_is_image: false,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let mut preview_args = plan.args.clone();
+    let output_index = preview_args.len().saturating_sub(1);
+    preview_args.insert(output_index, "-frames:v".to_string());
+    preview_args.insert(output_index + 1, "1".to_string());
+    let frame = run_tool_output(&tools.ffmpeg, &preview_args)?;
+
+    assert_eq!(
+        (
+            metadata.width,
+            metadata.height,
+            plan.width,
+            plan.height,
+            frame.len()
+        ),
+        (Some(90), Some(160), 90, 160, plan.frame_bytes),
+        "preview args: {:?}",
+        plan.args
+    );
+    Ok(())
+}
+
+fn convert(
+    tools: &Toolchain,
+    input: &Path,
+    output: &Path,
+    config: &ConversionConfig,
+) -> TestResult {
+    let input = path_arg(input);
+    let output = path_arg(output);
+    validate_task_input(&input, config).map_err(|error| error.to_string())?;
+    let probe = probe_media(tools, Path::new(&input))?;
+    let args =
+        build_ffmpeg_args(&input, &output, config, &probe).map_err(|error| error.to_string())?;
+    run_tool(&tools.ffmpeg, &args)?;
+
+    let output_path = Path::new(&output);
+    if !output_path.is_file() {
+        return Err(format!(
+            "conversion did not create {}",
+            output_path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn video_config(container: &str, video_codec: &str, audio_codec: &str) -> ConversionConfig {
+    let mut config = base_config(container, video_codec);
+    config.audio_codec = audio_codec.to_string();
+    if audio_codec == "libopus" {
+        config.audio_bitrate = "96".to_string();
+    }
+    config
+}
+
+fn image_config(container: &str, video_codec: &str) -> ConversionConfig {
+    let mut config = base_config(container, video_codec);
+    config.image_jpeg_quality = 85;
+    config.image_webp_quality = 85;
+    config
+}
+
+fn audio_config(container: &str, audio_codec: &str) -> ConversionConfig {
+    let mut config = base_config(container, "libx264");
+    config.audio_codec = audio_codec.to_string();
+    config
+}
+
+fn base_config(container: &str, video_codec: &str) -> ConversionConfig {
+    ConversionConfig {
+        processing_mode: "reencode".to_string(),
+        container: container.to_string(),
+        video_codec: video_codec.to_string(),
+        video_bitrate_mode: "crf".to_string(),
+        video_bitrate: "5000".to_string(),
+        audio_codec: "aac".to_string(),
+        audio_bitrate: "96".to_string(),
+        audio_bitrate_mode: "bitrate".to_string(),
+        audio_quality: "4".to_string(),
+        audio_channels: "original".to_string(),
+        audio_volume: 100.0,
+        audio_normalize: false,
+        video_filters: scissors_core::types::VideoFiltersConfig::default(),
+        audio_filters: scissors_core::types::AudioFiltersConfig::default(),
+        external_audio_tracks: Vec::new(),
+        timeline_sources: Vec::new(),
+        selected_audio_tracks: Vec::new(),
+        resolution: "original".to_string(),
+        custom_width: None,
+        custom_height: None,
+        scaling_algorithm: "bicubic".to_string(),
+        fps: "original".to_string(),
+        crf: 28,
+        quality: 60,
+        preset: "ultrafast".to_string(),
+        start_time: None,
+        end_time: None,
+        cut_segments: Vec::new(),
+        metadata: MetadataConfig::default(),
+        rotation: "0".to_string(),
+        flip_horizontal: false,
+        flip_vertical: false,
+        crop: None,
+        overlay: None,
+        nvenc_spatial_aq: false,
+        nvenc_temporal_aq: false,
+        videotoolbox_allow_sw: false,
+        hw_decode: false,
+        pixel_format: "auto".to_string(),
+        image_jpeg_quality: 85,
+        image_jpeg_huffman: "optimal".to_string(),
+        image_webp_lossless: false,
+        image_webp_quality: 75,
+        image_webp_compression: 4,
+        image_webp_preset: "default".to_string(),
+        image_png_compression: 9,
+        image_png_prediction: "paeth".to_string(),
+        image_tiff_compression: "packbits".to_string(),
+        gif_colors: 256,
+        gif_dither: "sierra2_4a".to_string(),
+        gif_loop: 0,
+    }
+}
+
+fn generate_h264_aac_source(
+    tools: &Toolchain,
+    output: &Path,
+    duration: f64,
+    width: u32,
+    height: u32,
+) -> TestResult {
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("testsrc2=size={width}x{height}:rate=12:duration={duration:.3}"),
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("sine=frequency=440:sample_rate=48000:duration={duration:.3}"),
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "28",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-y",
+            &path_arg(output),
+        ]),
+    )
+}
+
+fn generate_h264_ac3_source(tools: &Toolchain, output: &Path) -> TestResult {
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=160x90:rate=12:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-shortest",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "28",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "ac3",
+            "-b:a",
+            "192k",
+            "-y",
+            &path_arg(output),
+        ]),
+    )
+}
+
+fn decode_media(tools: &Toolchain, input: &Path) -> TestResult {
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            &path_arg(input),
+            "-map",
+            "0:v?",
+            "-map",
+            "0:a?",
+            "-f",
+            "null",
+            "-",
+        ]),
+    )
+}
+
+fn generate_two_audio_track_source(tools: &Toolchain, output: &Path) -> TestResult {
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=64x48:rate=12:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:sample_rate=48000:duration=1",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-map",
+            "2:a:0",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "28",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-y",
+            &path_arg(output),
+        ]),
+    )
+}
+
+fn generate_odd_h264_source(tools: &Toolchain, output: &Path) -> TestResult {
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=853x480:rate=1:duration=1",
+            "-vf",
+            "format=yuv444p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "28",
+            "-pix_fmt",
+            "yuv444p",
+            "-an",
+            "-y",
+            &path_arg(output),
+        ]),
+    )
+}
+
+fn generate_audio_source(tools: &Toolchain, output: &Path) -> TestResult {
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-c:a",
+            "pcm_s16le",
+            "-y",
+            &path_arg(output),
+        ]),
+    )
+}
+
+fn probe_media(tools: &Toolchain, path: &Path) -> Result<ProbeMetadata, String> {
+    let probe_args = ffprobe_json_args(&path_arg(path));
+    let stdout = run_tool_output(&tools.ffprobe, &probe_args)?;
+    let stdout = String::from_utf8(stdout)
+        .map_err(|error| format!("ffprobe stdout was not utf8: {error}"))?;
+    parse_ffprobe_stdout(&path_arg(path), stdout).map_err(|error| error.to_string())
+}
+
+fn read_rgb_frame(tools: &Toolchain, path: &Path) -> Result<RgbFrame, String> {
+    let metadata = probe_media(tools, path)?;
+    let width = metadata
+        .width
+        .ok_or_else(|| format!("{} has no probed width", path.display()))?;
+    let height = metadata
+        .height
+        .ok_or_else(|| format!("{} has no probed height", path.display()))?;
+    let output = run_tool_output(
+        &tools.ffmpeg,
+        &args(&[
+            "-v",
+            "error",
+            "-i",
+            &path_arg(path),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ]),
+    )?;
+    let expected_len = usize::try_from(width)
+        .and_then(|w| usize::try_from(height).map(|h| w * h * 3))
+        .map_err(|error| format!("frame size overflow: {error}"))?;
+    if output.len() != expected_len {
+        return Err(format!(
+            "raw frame length mismatch for {}: got {}, expected {expected_len}",
+            path.display(),
+            output.len()
+        ));
+    }
+    Ok(RgbFrame {
+        width,
+        height,
+        pixels: output,
+    })
+}
+
+fn duration_seconds(metadata: &ProbeMetadata) -> Result<f64, String> {
+    metadata
+        .duration
+        .as_deref()
+        .ok_or_else(|| "metadata has no duration".to_string())?
+        .parse::<f64>()
+        .map_err(|error| format!("duration was not numeric: {error}"))
+}
+
+fn write_quadrant_ppm(path: &Path, width: u32, height: u32) -> TestResult {
+    let mut file = create_ppm(path, width, height)?;
+    for y in 0..height {
+        for x in 0..width {
+            let color = match (x < width / 2, y < height / 2) {
+                (true, true) => Rgb::RED,
+                (false, true) => Rgb::GREEN,
+                (true, false) => Rgb::BLUE,
+                (false, false) => Rgb::YELLOW,
+            };
+            file.write_all(&[color.red, color.green, color.blue])
+                .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+fn write_solid_ppm(path: &Path, width: u32, height: u32, color: Rgb) -> TestResult {
+    let mut file = create_ppm(path, width, height)?;
+    for _ in 0..width * height {
+        file.write_all(&[color.red, color.green, color.blue])
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn create_ppm(path: &Path, width: u32, height: u32) -> Result<File, String> {
+    let mut file = File::create(path)
+        .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
+    write!(file, "P6\n{width} {height}\n255\n")
+        .map_err(|error| format!("failed to write {} header: {error}", path.display()))?;
+    Ok(file)
+}
+
+fn assert_color_near(actual: Rgb, expected: Rgb, tolerance: u8, label: &str) -> TestResult {
+    let tolerance = i16::from(tolerance);
+    for (channel, actual, expected) in [
+        ("red", actual.red, expected.red),
+        ("green", actual.green, expected.green),
+        ("blue", actual.blue, expected.blue),
+    ] {
+        let delta = (i16::from(actual) - i16::from(expected)).abs();
+        if delta > tolerance {
+            return Err(format!(
+                "{label} {channel} channel mismatch: got {actual}, expected {expected} +/- {tolerance}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn discover_tool(tool: &str, env_var: &str) -> Result<PathBuf, String> {
+    if let Some(value) = env::var_os(env_var)
+        && !value.is_empty()
+    {
+        let path = PathBuf::from(value);
+        verify_tool(&path)?;
+        return Ok(path);
+    }
+
+    for candidate in bundled_tool_candidates(tool) {
+        if candidate.is_file() {
+            verify_tool(&candidate)?;
+            return Ok(candidate);
+        }
+    }
+
+    if let Some(path) = find_on_path(tool) {
+        verify_tool(&path)?;
+        return Ok(path);
+    }
+
+    Err(format!(
+        "{tool} was not found. Set {env_var} or install {tool} on PATH."
+    ))
+}
+
+fn bundled_tool_candidates(tool: &str) -> Vec<PathBuf> {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map_or_else(|| PathBuf::from(".."), Path::to_path_buf);
+    let binaries = workspace_root
+        .join("scissors-app")
+        .join("resources")
+        .join("binaries");
+    let suffixes: &[&str] = match (env::consts::OS, env::consts::ARCH) {
+        ("macos", "aarch64") => &["aarch64-apple-darwin"],
+        ("macos", "x86_64") => &["x86_64-apple-darwin"],
+        ("linux", "x86_64") => &["x86_64-unknown-linux-gnu"],
+        ("windows", "x86_64") => &["x86_64-pc-windows-msvc.exe"],
+        _ => &[],
+    };
+
+    suffixes
+        .iter()
+        .map(|suffix| binaries.join(format!("{tool}-{suffix}")))
+        .collect()
+}
+
+fn find_on_path(tool: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    let tool_names = path_tool_names(tool);
+    env::split_paths(&path)
+        .flat_map(|dir| tool_names.iter().map(move |tool_name| dir.join(tool_name)))
+        .find(|candidate| candidate.is_file())
+}
+
+fn path_tool_names(tool: &str) -> Vec<String> {
+    let has_exe_extension = Path::new(tool)
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"));
+    if cfg!(windows) && !has_exe_extension {
+        vec![format!("{tool}.exe"), tool.to_string()]
+    } else {
+        vec![tool.to_string()]
+    }
+}
+
+fn verify_tool(path: &Path) -> TestResult {
+    let status = Command::new(path)
+        .arg("-version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| format!("failed to run {} -version: {error}", path.display()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{} -version exited with {status}", path.display()))
+    }
+}
+
+fn encoder_available(tools: &Toolchain, encoder: &str) -> Result<bool, String> {
+    let output = run_tool_output(&tools.ffmpeg, &args(&["-hide_banner", "-encoders"]))?;
+    let output = String::from_utf8(output)
+        .map_err(|error| format!("ffmpeg -encoders output was not utf8: {error}"))?;
+    Ok(output.lines().any(|line| {
+        line.split_whitespace()
+            .nth(1)
+            .is_some_and(|name| name == encoder)
+    }))
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn cropdetect_finds_letterbox_bars_across_samples() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("cropdetect_letterbox")?;
+    let source = sandbox.path("letterboxed.mp4");
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=640x272:rate=24:duration=4,pad=640:360:0:44:black",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            &path_arg(&source),
+        ]),
+    )?;
+
+    assert_eq!(
+        detect_bars(&tools, &source, Some(4.0))?,
+        Some(scissors_core::cropdetect::DetectedCrop {
+            x: 0,
+            y: 44,
+            width: 640,
+            height: 272,
+        })
+    );
+    Ok(())
+}
+
+fn detect_bars(
+    tools: &Toolchain,
+    source: &Path,
+    duration: Option<f64>,
+) -> TestResult<Option<scissors_core::cropdetect::DetectedCrop>> {
+    let samples = scissors_core::cropdetect::sample_times(duration)
+        .into_iter()
+        .map(|seek| {
+            let output = Command::new(&tools.ffmpeg)
+                .args(scissors_core::cropdetect::cropdetect_args(
+                    &path_arg(source),
+                    seek,
+                ))
+                .output()
+                .map_err(|error| format!("failed to run cropdetect: {error}"))?;
+            Ok(scissors_core::cropdetect::parse_cropdetect_output(
+                &String::from_utf8_lossy(&output.stderr),
+            ))
+        })
+        .collect::<TestResult<Vec<_>>>()?;
+    Ok(scissors_core::cropdetect::merge_samples(samples))
+}
+
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn cropdetect_finds_bars_in_ten_bit_video_and_still_images() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("cropdetect_ten_bit_image")?;
+    let ten_bit = sandbox.path("letterboxed-10bit.mkv");
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=640x272:rate=24:duration=4,pad=640:360:0:44:black",
+            "-c:v",
+            "libx265",
+            "-pix_fmt",
+            "yuv420p10le",
+            "-y",
+            &path_arg(&ten_bit),
+        ]),
+    )?;
+    let image = sandbox.path("pillarboxed.png");
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=480x360:rate=1:duration=1,pad=640:360:80:0:black",
+            "-frames:v",
+            "1",
+            "-y",
+            &path_arg(&image),
+        ]),
+    )?;
+
+    assert_eq!(
+        detect_bars(&tools, &ten_bit, Some(4.0))?,
+        Some(scissors_core::cropdetect::DetectedCrop {
+            x: 0,
+            y: 44,
+            width: 640,
+            height: 272,
+        })
+    );
+    assert_eq!(
+        detect_bars(&tools, &image, None)?,
+        Some(scissors_core::cropdetect::DetectedCrop {
+            x: 80,
+            y: 0,
+            width: 480,
+            height: 360,
+        })
+    );
+    Ok(())
+}
+
+fn run_tool(tool: &Path, args: &[String]) -> TestResult {
+    run_tool_output(tool, args).map(|_| ())
+}
+
+fn run_tool_output(tool: &Path, args: &[String]) -> Result<Vec<u8>, String> {
+    let output = Command::new(tool)
+        .args(args)
+        .output()
+        .map_err(|error| format!("failed to run {}: {error}", command_label(tool, args)))?;
+    if output.status.success() {
+        return Ok(output.stdout);
+    }
+
+    Err(format!(
+        "{} exited with {}\nstdout:\n{}\nstderr:\n{}",
+        command_label(tool, args),
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ))
+}
+
+fn args(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_string()).collect()
+}
+
+fn path_arg(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn command_label(tool: &Path, args: &[String]) -> String {
+    std::iter::once(tool.as_os_str())
+        .chain(args.iter().map(OsStr::new))
+        .map(|part| part.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn sanitize_name(name: &str) -> String {
+    name.chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect()
+}
+#[test]
+#[ignore = "requires FFmpeg/FFprobe; run with --ignored"]
+fn exports_omit_source_subtitles_in_copy_and_reencode_modes() -> TestResult {
+    let tools = Toolchain::discover()?;
+    let sandbox = Sandbox::new("omit_subtitles")?;
+    let input = sandbox.path("source.mp4");
+    let subtitle = sandbox.path("captions.srt");
+    fs::write(&subtitle, "1\n00:00:00,000 --> 00:00:00,900\nCaptions\n")
+        .map_err(|error| error.to_string())?;
+    generate_subtitled_source(&tools, &input, &subtitle)?;
+    assert_eq!(probe_media(&tools, &input)?.subtitle_tracks.len(), 1);
+    for mode in ["copy", "reencode"] {
+        let mut config = video_config("mp4", "libx264", "aac");
+        config.processing_mode = mode.to_string();
+        config.selected_audio_tracks = vec![1];
+        let output = sandbox.path(&format!("{mode}.mp4"));
+        convert(&tools, &input, &output, &config)?;
+        let metadata = probe_media(&tools, &output)?;
+        assert!(metadata.subtitle_tracks.is_empty());
+        assert_eq!(metadata.video_codec.as_deref(), Some("h264"));
+        assert_eq!(metadata.audio_tracks.len(), 1);
+        decode_media(&tools, &output)?;
+    }
+    Ok(())
+}
+fn generate_subtitled_source(tools: &Toolchain, output: &Path, subtitle: &Path) -> TestResult {
+    run_tool(
+        &tools.ffmpeg,
+        &args(&[
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=64x48:rate=12:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-i",
+            &path_arg(subtitle),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-map",
+            "2:s:0",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "28",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-c:s",
+            "mov_text",
+            "-y",
+            &path_arg(output),
+        ]),
+    )
+}

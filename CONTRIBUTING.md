@@ -1,15 +1,15 @@
-# Contributing to Frame
+# Contributing to Scissors
 
-Thank you for your interest in contributing to **Frame**. This document covers
+Thank you for your interest in contributing to **Scissors**. This document covers
 the current project structure, local setup, checks, and pull request standards.
 
 ## Technical Stack
 
 - **Application:** Rust native desktop app built with GPUI-CE.
 - **Core Engine:** FFmpeg and FFprobe runtime binaries.
-- **Shared Logic:** `frame-core` for conversion arguments, probing data,
+- **Shared Logic:** `scissors-core` for conversion arguments, probing data,
   compatibility rules, filters, and validation.
-- **Native UI:** `frame-app` for the application shell, GPUI views, app state,
+- **Native UI:** `scissors-app` for the application shell, GPUI views, app state,
   dialogs, bundled assets, and runtime integration.
 - **Automation:** `cargo xtask` for local builds, running the app, FFmpeg setup,
   and checks.
@@ -18,7 +18,7 @@ the current project structure, local setup, checks, and pull request standards.
 
 ### Prerequisites
 
-To build and run Frame locally, you will need:
+To build and run Scissors locally, you will need:
 
 1. **Rust:** [Install Rust](https://www.rust-lang.org/tools/install)
 2. **Platform toolchain:** install the C/C++ build tools and native desktop
@@ -36,7 +36,7 @@ Install Xcode Command Line Tools:
 xcode-select --install
 ```
 
-Frame's GPUI shader build also requires the Metal compiler from a full Xcode
+Scissors's GPUI shader build also requires the Metal compiler from a full Xcode
 installation. Ensure Xcode is the active developer directory, then verify the
 compiler is available:
 
@@ -100,7 +100,7 @@ Install:
 
 1. **Set up FFmpeg binaries:**
 
-   The application looks for FFmpeg and FFprobe in `frame-app/resources/binaries/`
+   The application looks for FFmpeg and FFprobe in `scissors-app/resources/binaries/`
    during local development. Download the platform-specific tools with:
 
    ```bash
@@ -119,25 +119,25 @@ Install:
    cargo xtask build --release
    ```
 
-The executable is `target/release/frame`, or `target/release/frame.exe` on Windows.
-To use an existing FFmpeg installation, set `FRAME_FFMPEG_PATH` and
-`FRAME_FFPROBE_PATH`, or set `FRAME_USE_SYSTEM_MEDIA_TOOLS=1` to resolve both tools
+The executable is `target/release/scissors`, or `target/release/scissors.exe` on Windows.
+To use an existing FFmpeg installation, set `SCISSORS_FFMPEG_PATH` and
+`SCISSORS_FFPROBE_PATH`, or set `SCISSORS_USE_SYSTEM_MEDIA_TOOLS=1` to resolve both tools
 from `PATH`.
 
 ## Development Workflow
 
 ### Project Structure
 
-- `frame-app/`: native GPUI-CE application, views, app state, dialogs, runtime
+- `scissors-app/`: native GPUI-CE application, views, app state, dialogs, runtime
   binary lookup, bundled assets, native app identity, and app icons.
-- `frame-app/src/app/`: `FrameRoot`, workspace/logs rendering, settings panels,
+- `scissors-app/src/app/`: `ScissorsRoot`, workspace/logs rendering, settings panels,
   preview shell, import flow, conversion actions, and UI primitives.
-- `frame-app/src/file_queue/`, `frame-app/src/settings/`, `frame-app/src/preview/`,
-  and `frame-app/src/conversion_runner/`: tested domain logic kept outside
+- `scissors-app/src/file_queue/`, `scissors-app/src/settings/`, `scissors-app/src/preview/`,
+  and `scissors-app/src/conversion_runner/`: tested domain logic kept outside
   rendering code where possible.
-- `frame-core/`: shared conversion/probe logic, FFmpeg argument construction,
+- `scissors-core/`: shared conversion/probe logic, FFmpeg argument construction,
   filters, media compatibility rules, and conversion event types.
-- `frame-core/media-rules.json`: source of truth for container, codec, stream,
+- `scissors-core/media-rules.json`: source of truth for container, codec, stream,
   and pixel format compatibility.
 - `tooling/xtask/`: local run/build commands, FFmpeg setup, and quality checks.
 - `CHANGELOG.md`: historical product changes.
@@ -146,16 +146,16 @@ from `PATH`.
 
 - **Rust formatting:** run `cargo fmt` for touched crates before submitting.
 - **Rust linting:** keep `cargo clippy --all-targets -- -D warnings` clean.
-- **Architecture:** use Material 3 tokens in `frame-app/src/material/` and
-  components in `frame-app/src/app/m3/`.
-- **Conversion Logic:** add FFmpeg behavior in `frame-core` first, then bridge it
-  into `frame-app` through typed settings/configuration code.
-- **Media Compatibility:** update `frame-core/media-rules.json` and focused tests
+- **Architecture:** use Material 3 tokens in `scissors-app/src/material/` and
+  components in `scissors-app/src/app/m3/`.
+- **Conversion Logic:** add FFmpeg behavior in `scissors-core` first, then bridge it
+  into `scissors-app` through typed settings/configuration code.
+- **Media Compatibility:** update `scissors-core/media-rules.json` and focused tests
   when adding formats, codecs, stream-copy rules, or pixel formats.
 - **Runtime Binaries:** do not commit downloaded files from
-  `frame-app/resources/binaries/`.
-- **Application Icons:** keep native icons under `frame-app/resources/app-icons/`.
-  `frame-app/build.rs` prepares Linux icons and embeds Windows resources.
+  `scissors-app/resources/binaries/`.
+- **Application Icons:** keep native icons under `scissors-app/resources/app-icons/`.
+  `scissors-app/build.rs` prepares Linux icons and embeds Windows resources.
 
 ### Testing & Quality Control
 
@@ -192,7 +192,7 @@ from the Logs view when conversion behavior is involved.
 
 ## Financial Support
 
-If you want to support the long-term maintenance and development of Frame, use
+If you want to support the long-term maintenance and development of Scissors, use
 [GitHub Sponsors](https://github.com/sponsors/66HEX).
 
 ---

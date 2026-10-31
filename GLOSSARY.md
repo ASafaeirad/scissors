@@ -1,6 +1,6 @@
-# Frame
+# Scissors
 
-Frame combines imported media into an editable project.
+Scissors combines imported media into an editable project.
 
 ## Language
 

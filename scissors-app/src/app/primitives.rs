@@ -1,0 +1,411 @@
+use super::{
+    App, BoxShadow, InteractiveElement, IntoElement, MouseButton, Rgba, StatefulInteractiveElement,
+    Styled, Window, div, hover_motion, mix_color, point, px, retarget_hover_motion, svg, theme,
+};
+
+#[derive(Clone, Copy)]
+pub(super) enum ButtonVariant {
+    Default,
+    Secondary,
+    Ghost,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct ButtonColors {
+    pub(super) background: theme::RgbaToken,
+    pub(super) hover_background: theme::RgbaToken,
+    pub(super) active_background: theme::RgbaToken,
+    pub(super) foreground: theme::RgbaToken,
+    pub(super) hover_foreground: theme::RgbaToken,
+    pub(super) opacity: f32,
+}
+
+pub(super) struct AnimatedButtonColors {
+    pub(super) background: Rgba,
+    pub(super) foreground: Rgba,
+    pub(super) motion: ButtonMotion,
+}
+
+pub(super) struct ButtonMotion {
+    pub(super) hover_transition: gpui::Transition<f32>,
+    pressed: gpui::Entity<bool>,
+}
+
+pub(super) const fn button_colors(
+    variant: ButtonVariant,
+    selected: bool,
+    enabled: bool,
+    palette: &'static theme::ThemePalette,
+) -> ButtonColors {
+    let active_variant = matches!(variant, ButtonVariant::Default) || selected;
+    if !enabled {
+        let (background, foreground, opacity) = if active_variant {
+            (
+                palette.border_subtle.with_alpha(0.10),
+                palette.text_primary.with_alpha(0.50),
+                1.0,
+            )
+        } else if matches!(variant, ButtonVariant::Ghost) {
+            (palette.transparent, palette.text_muted, 0.5)
+        } else {
+            (
+                palette.fill_subtle,
+                palette.text_primary.with_alpha(0.50),
+                0.5,
+            )
+        };
+        return ButtonColors {
+            background,
+            hover_background: background,
+            active_background: background,
+            foreground,
+            hover_foreground: foreground,
+            opacity,
+        };
+    }
+
+    if active_variant {
+        ButtonColors {
+            background: palette.border_subtle,
+            hover_background: palette.border_subtle.with_alpha(0.18),
+            active_background: palette.border_subtle.with_alpha(0.18),
+            foreground: palette.text_primary,
+            hover_foreground: palette.text_primary,
+            opacity: 1.0,
+        }
+    } else if matches!(variant, ButtonVariant::Ghost) {
+        ButtonColors {
+            background: palette.transparent,
+            hover_background: palette.fill_subtle,
+            active_background: palette.fill_selected,
+            foreground: palette.text_muted,
+            hover_foreground: palette.text_primary,
+            opacity: 1.0,
+        }
+    } else {
+        ButtonColors {
+            background: palette.fill_subtle,
+            hover_background: palette.fill_selected,
+            active_background: palette.fill_selected,
+            foreground: palette.text_primary,
+            hover_foreground: palette.text_primary,
+            opacity: 1.0,
+        }
+    }
+}
+
+pub(super) fn animated_button_colors(
+    id: impl Into<String>,
+    colors: ButtonColors,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnimatedButtonColors {
+    let motion = button_motion(id, window, cx);
+    let hover_progress = *motion.hover_transition.evaluate(window, cx);
+    AnimatedButtonColors {
+        background: mix_color(colors.background, colors.hover_background, hover_progress),
+        foreground: mix_color(colors.foreground, colors.hover_foreground, hover_progress),
+        motion,
+    }
+}
+
+pub(super) fn button_motion(
+    id: impl Into<String>,
+    window: &mut Window,
+    cx: &mut App,
+) -> ButtonMotion {
+    let id = id.into();
+    ButtonMotion {
+        hover_transition: hover_motion(id.clone(), window, cx),
+        // GPUI refreshes after mouse-down, so pressed state must outlive render closures.
+        pressed: window.use_keyed_state(format!("{id}-pressed"), cx, |_window, _cx| false),
+    }
+}
+
+pub(super) fn apply_button_motion(
+    button: gpui::Stateful<gpui::Div>,
+    motion: ButtonMotion,
+    enabled: bool,
+) -> gpui::Stateful<gpui::Div> {
+    let hover_transition = motion.hover_transition.clone();
+    let pressed = motion.pressed.clone();
+    let button = button.on_hover(move |hover, _window, cx| {
+        let pressed = *pressed.read(cx);
+        if let Some(target) = button_motion_hover_target(enabled, *hover, pressed) {
+            retarget_hover_motion(&hover_transition, target, cx);
+        }
+    });
+
+    let pressed = motion.pressed.clone();
+    let button = button.on_mouse_down(MouseButton::Left, move |_, window, cx| {
+        if enabled {
+            set_button_pressed(&pressed, true, cx);
+        }
+        button_mouse_down(enabled, window, cx);
+    });
+
+    let pressed = motion.pressed.clone();
+    let button = button.capture_any_mouse_up(move |event, _window, cx| {
+        if event.button == MouseButton::Left {
+            set_button_pressed(&pressed, false, cx);
+            // Release before click listeners run: they may stop propagation while updating the
+            // selected state, which would prevent a bubble-phase mouse-up handler from running.
+        }
+    });
+
+    let hover_transition = motion.hover_transition;
+    let pressed = motion.pressed;
+    button.on_mouse_up_out(MouseButton::Left, move |_, _window, cx| {
+        set_button_pressed(&pressed, false, cx);
+        retarget_hover_motion(&hover_transition, false, cx);
+    })
+}
+
+fn set_button_pressed(pressed: &gpui::Entity<bool>, is_pressed: bool, cx: &mut App) {
+    if *pressed.read(cx) != is_pressed {
+        pressed.update(cx, |pressed, cx| {
+            *pressed = is_pressed;
+            cx.notify();
+        });
+    }
+}
+
+const fn button_motion_hover_target(enabled: bool, hovered: bool, pressed: bool) -> Option<bool> {
+    if pressed {
+        None
+    } else {
+        Some(enabled && hovered)
+    }
+}
+
+pub(super) fn button_mouse_down(enabled: bool, window: &mut Window, cx: &mut App) {
+    if enabled {
+        window.prevent_default();
+    } else {
+        cx.stop_propagation();
+    }
+}
+
+pub(super) fn icon_svg(path: &'static str, size: f32, icon_color: Rgba) -> impl IntoElement {
+    svg()
+        .path(path)
+        .w(theme::ui_rem(size))
+        .h(theme::ui_rem(size))
+        .text_color(icon_color)
+}
+
+pub(super) const fn frame_highlight_px() -> f32 {
+    if cfg!(target_os = "macos") { 0.5 } else { 1.0 }
+}
+
+pub(super) fn input_highlight_shadows(palette: &theme::ThemePalette) -> Vec<BoxShadow> {
+    let highlight_px = frame_highlight_px();
+
+    if palette.is_light() {
+        light_control_depth_shadows(palette, true)
+    } else {
+        vec![
+            BoxShadow {
+                color: color(palette.shadow.with_alpha(0.20)).into(),
+                offset: point(px(0.0), px(highlight_px)),
+                blur_radius: px(0.0),
+                spread_radius: px(0.0),
+                inset: true,
+            },
+            BoxShadow {
+                color: color(palette.border_subtle).into(),
+                offset: point(px(0.0), px(-highlight_px)),
+                blur_radius: px(0.0),
+                spread_radius: px(0.0),
+                inset: true,
+            },
+        ]
+    }
+}
+
+pub(super) fn button_highlight_shadows(palette: &theme::ThemePalette) -> Vec<BoxShadow> {
+    if palette.is_light() {
+        return light_control_depth_shadows(palette, true);
+    }
+
+    let highlight_px = frame_highlight_px();
+
+    vec![
+        BoxShadow {
+            color: color(palette.border_subtle).into(),
+            offset: point(px(0.0), px(highlight_px)),
+            blur_radius: px(0.0),
+            spread_radius: px(0.0),
+            inset: true,
+        },
+        BoxShadow {
+            color: color(palette.fill_subtle).into(),
+            offset: point(px(0.0), px(0.0)),
+            blur_radius: px(0.0),
+            spread_radius: px(highlight_px),
+            inset: true,
+        },
+    ]
+}
+
+fn light_control_depth_shadows(palette: &theme::ThemePalette, inset: bool) -> Vec<BoxShadow> {
+    let highlight_px = frame_highlight_px();
+
+    vec![
+        BoxShadow {
+            color: color(palette.shadow.with_alpha(0.06)).into(),
+            offset: point(px(0.0), px(1.0)),
+            blur_radius: px(1.0),
+            spread_radius: px(-0.5),
+            inset,
+        },
+        BoxShadow {
+            color: color(palette.shadow.with_alpha(0.06)).into(),
+            offset: point(px(0.0), px(3.0)),
+            blur_radius: px(3.0),
+            spread_radius: px(-1.5),
+            inset,
+        },
+        BoxShadow {
+            color: color(palette.shadow.with_alpha(0.06)).into(),
+            offset: point(px(0.0), px(6.0)),
+            blur_radius: px(6.0),
+            spread_radius: px(-3.0),
+            inset,
+        },
+        BoxShadow {
+            color: color(palette.surface.with_alpha(0.08)).into(),
+            offset: point(px(0.0), px(-highlight_px)),
+            blur_radius: px(0.0),
+            spread_radius: px(0.0),
+            inset,
+        },
+        BoxShadow {
+            color: color(palette.shadow.with_alpha(0.08)).into(),
+            offset: point(px(0.0), px(0.0)),
+            blur_radius: px(0.0),
+            spread_radius: px(highlight_px),
+            inset,
+        },
+    ]
+}
+
+pub(super) fn panel_bottom_separator(palette: &theme::ThemePalette) -> gpui::Div {
+    let separator = div().absolute().left_0().right_0().bottom_0();
+
+    if palette.is_light() {
+        separator
+            .h(px(frame_highlight_px()))
+            .bg(color(palette.border_subtle))
+    } else {
+        separator
+            .h(px(1.0))
+            .bg(color(palette.canvas))
+            .shadow(horizontal_separator_shadows(palette))
+    }
+}
+
+pub(super) trait ScissorsSurface {
+    fn card_surface(self, palette: &theme::ThemePalette) -> Self;
+}
+
+impl ScissorsSurface for gpui::Div {
+    fn card_surface(self, palette: &theme::ThemePalette) -> Self {
+        self.rounded(theme::ui_rem(theme::RADIUS_LG))
+            .bg(color(if palette.is_light() {
+                palette.surface
+            } else {
+                palette.fill_subtle
+            }))
+            .shadow(card_surface_shadows(palette))
+    }
+}
+
+pub(super) fn card_surface_shadows(palette: &theme::ThemePalette) -> Vec<BoxShadow> {
+    let highlight_px = frame_highlight_px();
+
+    if palette.is_light() {
+        light_control_depth_shadows(palette, false)
+    } else {
+        vec![
+            BoxShadow {
+                color: color(palette.shadow.with_alpha(0.10)).into(),
+                offset: point(px(0.0), px(4.0)),
+                blur_radius: px(6.0),
+                spread_radius: px(-1.0),
+                inset: false,
+            },
+            BoxShadow {
+                color: color(palette.shadow.with_alpha(0.10)).into(),
+                offset: point(px(0.0), px(2.0)),
+                blur_radius: px(4.0),
+                spread_radius: px(-2.0),
+                inset: false,
+            },
+            BoxShadow {
+                color: color(palette.fill_selected).into(),
+                offset: point(px(0.0), px(highlight_px)),
+                blur_radius: px(0.0),
+                spread_radius: px(0.0),
+                inset: true,
+            },
+            BoxShadow {
+                color: color(palette.fill_subtle).into(),
+                offset: point(px(0.0), px(0.0)),
+                blur_radius: px(0.0),
+                spread_radius: px(highlight_px),
+                inset: true,
+            },
+        ]
+    }
+}
+
+pub(super) fn horizontal_separator_shadows(palette: &theme::ThemePalette) -> Vec<BoxShadow> {
+    let (highlight, offset_y) = if palette.is_light() {
+        (palette.border_subtle, frame_highlight_px())
+    } else {
+        // Dark separators intentionally pair their canvas base with a full-pixel light edge.
+        (palette.fill_subtle, 1.0)
+    };
+
+    vec![BoxShadow {
+        color: color(highlight).into(),
+        offset: point(px(0.0), px(offset_y)),
+        blur_radius: px(0.0),
+        spread_radius: px(0.0),
+        inset: false,
+    }]
+}
+
+pub(super) const fn color(token: theme::RgbaToken) -> Rgba {
+    Rgba {
+        r: token.red,
+        g: token.green,
+        b: token.blue,
+        a: token.alpha,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn button_motion_hover_target_ignores_synthetic_changes_while_pressed() {
+        let cases = [
+            (true, true, false, Some(true)),
+            (true, false, false, Some(false)),
+            (false, true, false, Some(false)),
+            (true, true, true, None),
+            (true, false, true, None),
+        ];
+
+        for (enabled, hovered, pressed, expected) in cases {
+            assert_eq!(
+                button_motion_hover_target(enabled, hovered, pressed),
+                expected,
+                "hover target mismatch for enabled={enabled}, hovered={hovered}, pressed={pressed}"
+            );
+        }
+    }
+}
