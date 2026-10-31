@@ -1,0 +1,610 @@
+mod accessibility;
+mod chrome;
+mod components;
+mod conversion;
+mod crop_detect;
+mod decode_cache;
+mod export_dialog;
+mod files;
+mod filmstrip;
+mod fixtures;
+mod fps_meter;
+mod hotkeys;
+mod input;
+mod m3;
+mod media_assets;
+mod metadata;
+mod motion;
+mod preview_actions;
+mod preview_panel;
+mod primitives;
+mod project;
+mod project_file;
+mod project_history;
+mod project_timeline;
+mod project_tracks;
+mod render;
+mod runtime;
+mod settings_actions;
+mod settings_panel;
+mod state;
+#[cfg(test)]
+mod tests;
+mod track_speed;
+mod waveform;
+mod workspace;
+pub use runtime::{init_app, open_scissors_window, scissors_window_options};
+
+use accessibility::{ScissorsFocusKey, ScissorsFocusRegistry};
+use chrome::{AppSettingsSheetProps, app_settings_sheet, drag_drop_overlay};
+use input::{ScissorsTextInputKind, ScissorsTextInputUiState};
+use motion::{
+    INTERACTION_MOTION_DURATION, SURFACE_MOTION_DURATION, hover_motion, mix_color, mix_scalar,
+    motion_is_hidden, motion_target, retarget_hover_motion, selected_motion, set_motion_target,
+    settings_sheet_right_inset,
+};
+use preview_panel::{
+    FlipAxis, PreviewCanvasRenderState, PreviewCropRenderState, PreviewMediaRenderState,
+    PreviewOverlayRenderState, PreviewPanelProps, crop_aspect_id, crop_base_dimensions,
+    crop_rect_from_settings, crop_rect_is_full, crop_settings_from_rect, default_crop_rect,
+    full_crop_rect, is_known_crop_aspect, next_rotation, preview_crop_controls_enabled,
+    preview_crop_source_dimensions, preview_duration_seconds, preview_playback_state,
+    preview_source_media_kind, preview_transform_controls_enabled, timeline_keyboard_time_for_key,
+    timeline_slider_percent_from_bounds,
+};
+use primitives::color;
+use workspace::{welcome_view, workspace_view};
+
+#[cfg(target_os = "linux")]
+use crate::LINUX_WINDOW_FRAME_INSET;
+use crate::{
+    ActiveView, CONTENT_PADDING, PANEL_HEADER_HEIGHT, PREVIEW_PLAYHEAD_KNOB_SIZE,
+    PREVIEW_TIMELINE_CLIP_HANDLE_WIDTH, PREVIEW_TIMELINE_CLIP_INSET,
+    PREVIEW_TIMELINE_CONTROL_HEIGHT, PREVIEW_TIMELINE_LABEL_WIDTH, PREVIEW_TIMELINE_LANE_HEIGHT,
+    PREVIEW_TIMELINE_ROW_GAP, PREVIEW_TIMELINE_RULER_HEIGHT, PREVIEW_TOOLBAR_BUTTON_SIZE,
+    PREVIEW_TOOLBAR_ICON_SIZE, PREVIEW_TOOLBAR_OFFSET, SETTINGS_CONTROL_HEIGHT,
+    SETTINGS_PANEL_PADDING, SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE, ScissorsAppState,
+    VisualFixture, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
+    app_info::{SCISSORS_APP_ID, SCISSORS_APP_VERSION},
+    app_persistence::{AppPersistence, AppSettings},
+    appearance::{AppearanceSettings, ColorTheme, ScalePreset},
+    assets::{self},
+    capabilities::{detect_available_encoders, detect_available_filters},
+    conversion_events::{ConversionEventState, LogLine, all_conversions_settled},
+    conversion_runner::{
+        ConversionProcessController, conversion_task_from_file, run_conversion_batch_with_control,
+    },
+    file_filters::{
+        discover_supported_source_paths, filter_supported_source_paths,
+        is_supported_overlay_image_path,
+    },
+    file_queue::{FileItem, FileQueue, FileStatus},
+    native_dialogs::{
+        output_folder_dialog, overlay_image_dialog, pick_output_folder, pick_overlay_image_file,
+        pick_project_file, pick_project_save_path, pick_source_files, pick_source_folder,
+        project_open_dialog, project_save_dialog, source_file_dialog, source_folder_dialog,
+    },
+    notifications::{AppNotifier, conversion_finished_notification_for_task_ids},
+    preview::{
+        ASPECT_OPTIONS, CropRect, DragHandle, MAX_OVERLAY_WIDTH, MIN_OVERLAY_WIDTH, MediaSnapshot,
+        MetadataStatus as PreviewMetadataStatus, OverlayDragHandle, OverlayDragPoint,
+        OverlayModeChange, OverlaySizeDirection, PlaybackMediaCommand, Point as PreviewPoint,
+        PreviewControlAvailability, PreviewControlInput, PreviewMediaKind, PreviewOverlay,
+        PreviewOverlayState, PreviewPlaybackState, PreviewRotation, SourceMediaKind, TimelineClip,
+        TimelineDragTarget, adjust_rect_to_ratio, aspect_value, clamp_rect, format_time,
+        parse_time_to_seconds, preview_control_availability, transform_crop_rect,
+    },
+    preview_engine::{
+        DEFAULT_PREVIEW_FPS, DEFAULT_PREVIEW_MAX_HEIGHT, DEFAULT_PREVIEW_MAX_WIDTH,
+        MIN_PREVIEW_DIMENSION, PreviewCommand, PreviewRenderPresentation, PreviewSession,
+        PreviewSessionConfig, PreviewSourceKind as EnginePreviewSourceKind, PreviewTransform,
+    },
+    settings::{
+        ConversionConfig, CropSettings, MetadataField, OverlaySettings, PresetDefinition,
+        PresetNotice, PresetNoticeTone, ProcessingMode, SettingsTab, SourceKind, SourceMetadata,
+        SourceTags, apply_audio_bitrate, apply_audio_bitrate_mode, apply_audio_channels,
+        apply_audio_codec, apply_audio_normalize, apply_audio_quality, apply_audio_volume,
+        apply_crf, apply_custom_height, apply_custom_width, apply_cut_segments, apply_fps,
+        apply_gif_colors, apply_gif_dither, apply_gif_loop, apply_hw_decode,
+        apply_image_jpeg_huffman, apply_image_jpeg_quality, apply_image_png_compression,
+        apply_image_png_prediction, apply_image_tiff_compression, apply_image_webp_compression,
+        apply_image_webp_lossless, apply_image_webp_preset, apply_image_webp_quality,
+        apply_metadata_field, apply_metadata_mode, apply_nvenc_spatial_aq, apply_nvenc_temporal_aq,
+        apply_output_container, apply_pixel_format, apply_preset, apply_processing_mode,
+        apply_quality, apply_resolution, apply_scaling_algorithm, apply_trim_times,
+        apply_video_bitrate, apply_video_bitrate_mode, apply_video_codec, apply_video_preset,
+        apply_videotoolbox_allow_sw, audio_codec_options, audio_codec_supports_vbr,
+        create_custom_preset, default_presets, image_jpeg_huffman_options,
+        image_png_prediction_options, image_tiff_compression_options, image_webp_preset_options,
+        initialize_output_config, is_gif_container, is_hardware_video_codec, is_nvenc_video_codec,
+        is_videotoolbox_video_codec, metadata_field_options, metadata_field_value,
+        metadata_mode_description, metadata_mode_options, normalize_output_config,
+        output_container_options, output_processing_mode_options, resolution_options,
+        resolve_active_settings_tab, sanitize_output_name, scaling_algorithm_options,
+        video_codec_options, video_pixel_format_options, visible_settings_tabs,
+    },
+    source_metadata::{
+        MetadataStatus, SourceMetadataEntry, SourceMetadataStore, probe_source_metadata,
+    },
+    theme, visual_fixture_from_env_value,
+};
+use gpui::{
+    App, Bounds, BoxShadow, ClickEvent, ClipboardItem, Context, DispatchPhase, DragMoveEvent,
+    Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths,
+    FileDropEvent, FocusHandle, GlobalElementId, InteractiveElement, IntoElement, KeyBinding,
+    LayoutId, Lerp, Menu, MenuItem, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ObjectFit, PaintQuad, PinchEvent, Pixels, Point, Position, Render, RenderImage, Rgba,
+    ScrollHandle, ScrollStrategy, ScrollWheelEvent, ShapedLine, SharedString,
+    StatefulInteractiveElement, Style, Task, TextRenderingMode, TextRun, TitlebarOptions,
+    TransformationMatrix, UTF16Selection, UniformListScrollHandle, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
+    actions, canvas, deferred, div, ease_in_out, fill, hsla, img, point, prelude::*, px, radians,
+    relative, size, svg, uniform_list,
+};
+use scissors_core::capabilities::{AvailableEncoders, AvailableFilters};
+use scissors_core::events::ConversionEvent;
+#[cfg(test)]
+use scissors_core::types::DEFAULT_MAX_CONCURRENCY;
+use std::{
+    ops::Range,
+    path::PathBuf,
+    sync::{
+        Arc,
+        mpsc::{self, TryRecvError},
+    },
+    time::{Duration, Instant},
+};
+
+actions!(
+    scissors_app,
+    [
+        Quit,
+        TextInputBackspace,
+        TextInputDelete,
+        TextInputLeft,
+        TextInputRight,
+        TextInputSelectLeft,
+        TextInputSelectRight,
+        TextInputHome,
+        TextInputEnd,
+        TextInputSelectAll,
+        TextInputCopy,
+        TextInputCut,
+        TextInputPaste,
+        TextInputCommit,
+        TextInputCancel,
+        IncreaseUiScale,
+        DecreaseUiScale,
+        ResetUiScale,
+        ToggleFpsMeter,
+        SaveProject,
+        SaveProjectAs,
+        OpenProject,
+        OpenSettings,
+    ]
+);
+
+const ROOT_DROP_GROUP: &str = "scissors-root-drop-target";
+const DEFAULT_CROP_X: f64 = 0.1;
+const DEFAULT_CROP_Y: f64 = 0.1;
+const DEFAULT_CROP_SIZE: f64 = 0.8;
+const CROP_HANDLE_SIZE: f32 = 10.0;
+const SCISSORS_TEXT_INPUT_CONTEXT: &str = "ScissorsTextInput";
+const SCISSORS_TIMECODE_INPUT_CONTEXT: &str = "ScissorsTimecodeInput";
+const SCISSORS_TIMECODE_TEXT_INPUT_CONTEXT: &str = "ScissorsTextInput ScissorsTimecodeInput";
+const TEXT_INPUT_CARET_WIDTH: f32 = 1.5;
+const TEXT_INPUT_CARET_BASE_HEIGHT: f32 = theme::TEXT_INPUT_CARET_BASE_HEIGHT;
+const TEXT_INPUT_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+const TEXT_INPUT_BLINK_PAUSE: Duration = Duration::from_millis(300);
+const TIMECODE_PRECISION_SECONDS: f64 = 0.001;
+const PREVIEW_CANVAS_DEFAULT_ZOOM: f64 = 1.0;
+const PREVIEW_CANVAS_INITIAL_CONTAIN_SCALE: f64 = 0.9;
+const PREVIEW_CANVAS_MIN_ZOOM: f64 = 0.25;
+const PREVIEW_CANVAS_MAX_ZOOM: f64 = 8.0;
+const PREVIEW_CANVAS_ZOOM_STEP: f64 = 1.18;
+const PREVIEW_CANVAS_MAX_PAN: f64 = 2.0;
+const PREVIEW_CANVAS_LERP_FACTOR: f64 = 0.2;
+const PREVIEW_CANVAS_VISUAL_SETTLE_EPSILON: f64 = 0.5;
+const PREVIEW_CANVAS_PAN_SNAP_EPSILON: f64 = 0.01;
+const PREVIEW_CANVAS_ZOOM_SNAP_EPSILON: f64 = PREVIEW_CANVAS_PAN_SNAP_EPSILON / 10_000.0;
+const PREVIEW_ADAPTIVE_SCALE: f64 = 1.15;
+const PREVIEW_DIMENSION_QUANTUM: u32 = 64;
+const PREVIEW_MIN_ADAPTIVE_WIDTH: u32 = 640;
+const PREVIEW_MIN_ADAPTIVE_HEIGHT: u32 = 360;
+const PREVIEW_DIMENSION_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(120);
+const PREVIEW_FILTER_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(120);
+const PREVIEW_FRAME_TICK_INTERVAL: Duration = Duration::from_millis(16);
+const TRIM_PREVIEW_SEEK_INTERVAL: Duration = Duration::from_millis(50);
+const TRIM_PREVIEW_SEEK_EPSILON_SECONDS: f64 = 1.0 / 240.0;
+
+#[derive(Default)]
+struct TitlebarDragState {
+    should_move: bool,
+}
+
+pub struct ScissorsRoot {
+    active_view: ActiveView,
+    appearance: AppearanceSettings,
+    titlebar_drag: TitlebarDragState,
+    fps_meter: Option<fps_meter::FpsMeter>,
+    focus_registry: ScissorsFocusRegistry,
+    file_queue: FileQueue,
+    project: project::Project,
+    conversion_events: ConversionEventState,
+    is_processing: bool,
+    settings_ui: SettingsUiState,
+    tooltip_ui: TooltipUiState,
+    drag_drop_ui: DragDropUiState,
+    default_output_directory: Option<std::path::PathBuf>,
+    text_input_ui: ScissorsTextInputUiState,
+    source_metadata: SourceMetadataStore,
+    conversion_processes: ConversionProcessController,
+    available_encoders: AvailableEncoders,
+    available_filters: AvailableFilters,
+    active_conversion_task_ids: Vec<String>,
+    notifier: AppNotifier,
+    presets: Vec<PresetDefinition>,
+    preview_ui: PreviewUiState,
+    next_file_sequence: u64,
+    persistence: Option<AppPersistence>,
+    /// Set only by the `m3-gallery` visual fixture.
+    m3_gallery: Option<m3::M3GalleryState>,
+    workspace_ui: workspace::WorkspaceState,
+    media_assets: media_assets::MediaAssetsState,
+    export_ui: export_dialog::ExportUiState,
+}
+
+#[derive(Default)]
+struct DragDropUiState {
+    is_open: bool,
+    is_present: bool,
+}
+
+struct SettingsUiState {
+    is_open: bool,
+    is_present: bool,
+    active_tab: SettingsTab,
+    output_directory_error: Option<String>,
+    appearance_error: Option<String>,
+    app_settings_scroll_handle: ScrollHandle,
+    appearance_observer_registered: bool,
+
+    preset_name_draft: String,
+    preset_notice: Option<PresetNotice>,
+    next_custom_preset_sequence: u64,
+}
+
+#[derive(Default)]
+struct TooltipUiState {
+    hovered_id: Option<String>,
+    visible_id: Option<String>,
+    warm_until: Option<Instant>,
+    hover_epoch: u64,
+}
+
+impl Default for SettingsUiState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            is_present: false,
+            active_tab: SettingsTab::VideoFilters,
+            output_directory_error: None,
+            appearance_error: None,
+            app_settings_scroll_handle: ScrollHandle::new(),
+            appearance_observer_registered: false,
+
+            preset_name_draft: String::new(),
+            preset_notice: None,
+            next_custom_preset_sequence: 0,
+        }
+    }
+}
+
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Preview UI state tracks independent modes and one-shot flags."
+)]
+struct PreviewUiState {
+    canvas_file_id: Option<String>,
+    canvas: PreviewCanvasState,
+    canvas_bounds: Option<Bounds<Pixels>>,
+    crop_file_id: Option<String>,
+    crop_mode: bool,
+    draft_crop: Option<CropRect>,
+    crop_aspect: String,
+    crop_drag: Option<PreviewCropDragState>,
+    crop_detect: crop_detect::CropDetectState,
+    overlay_file_id: Option<String>,
+    overlay: PreviewOverlayState,
+    overlay_dimensions_key: Option<String>,
+    pending_overlay_dimensions_key: Option<String>,
+    overlay_image_dimensions: Option<PreviewOverlayImageDimensions>,
+    overlay_opacity_slider_bounds: Option<Bounds<Pixels>>,
+    timeline_track_bounds: Option<Bounds<Pixels>>,
+    project_timeline_view: Option<project_timeline::TimelineView>,
+    first_clip_zoomed: bool,
+    /// Clip moves and trims snap to clip edges and the playhead.
+    timeline_snap: bool,
+    timeline_menu: Option<project_timeline::TimelineMenu>,
+    playback_file_id: Option<String>,
+    playback: PreviewPlaybackState,
+    active_preview_dimensions: Option<PreviewRuntimeDimensions>,
+    preview_dimensions_debounce_until: Option<Instant>,
+    filter_preview_debounce_until: Option<Instant>,
+    runtime_key: Option<PreviewRuntimeKey>,
+    pending_runtime_key: Option<PreviewRuntimeKey>,
+    render_presentation: PreviewRenderPresentation,
+    rendered_presentation: PreviewRenderPresentation,
+    session: Option<Arc<PreviewSession>>,
+    trim_preview_seek: TrimPreviewSeekState,
+    media_command_generation: u64,
+    render_generation: u64,
+    render_image: Option<Arc<RenderImage>>,
+    runtime_error: Option<String>,
+    frame_tick_active: bool,
+}
+
+impl Default for PreviewUiState {
+    fn default() -> Self {
+        Self {
+            canvas_file_id: None,
+            canvas: PreviewCanvasState::default(),
+            canvas_bounds: None,
+            crop_file_id: None,
+            crop_mode: false,
+            draft_crop: None,
+            crop_aspect: "free".to_string(),
+            crop_drag: None,
+            crop_detect: crop_detect::CropDetectState::Idle,
+            overlay_file_id: None,
+            overlay: PreviewOverlayState::new(),
+            overlay_dimensions_key: None,
+            pending_overlay_dimensions_key: None,
+            overlay_image_dimensions: None,
+            overlay_opacity_slider_bounds: None,
+            timeline_track_bounds: None,
+            project_timeline_view: None,
+            first_clip_zoomed: false,
+            timeline_snap: true,
+            timeline_menu: None,
+            playback_file_id: None,
+            playback: PreviewPlaybackState::new(false),
+            active_preview_dimensions: None,
+            preview_dimensions_debounce_until: None,
+            filter_preview_debounce_until: None,
+            runtime_key: None,
+            pending_runtime_key: None,
+            render_presentation: PreviewRenderPresentation::default(),
+            rendered_presentation: PreviewRenderPresentation::default(),
+            session: None,
+            trim_preview_seek: TrimPreviewSeekState::default(),
+            media_command_generation: 0,
+            render_generation: 0,
+            render_image: None,
+            runtime_error: None,
+            frame_tick_active: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct TrimPreviewSeekState {
+    restore_seconds: Option<f64>,
+    pending_seconds: Option<f64>,
+    last_sent_seconds: Option<f64>,
+    worker_active: bool,
+    pause_before_next_seek: bool,
+    finish_after_restore: bool,
+    generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TrimPreviewSeekRequest {
+    seconds: f64,
+    pause_first: bool,
+}
+
+impl TrimPreviewSeekState {
+    const fn is_active(&self) -> bool {
+        self.restore_seconds.is_some()
+            || self.pending_seconds.is_some()
+            || self.worker_active
+            || self.finish_after_restore
+    }
+
+    fn reset(&mut self) {
+        let next_generation = self.generation.saturating_add(1);
+        *self = Self {
+            generation: next_generation,
+            ..Self::default()
+        };
+    }
+
+    fn begin_drag(&mut self, restore_seconds: f64) {
+        if self.finish_after_restore {
+            self.reset();
+        }
+        self.restore_seconds.get_or_insert(restore_seconds);
+        self.finish_after_restore = false;
+    }
+
+    const fn pause_before_next_seek(&mut self) {
+        self.pause_before_next_seek = true;
+    }
+
+    const fn queue(&mut self, seconds: f64) {
+        self.pending_seconds = Some(seconds);
+    }
+
+    fn take_next(&mut self) -> Option<TrimPreviewSeekRequest> {
+        loop {
+            let seconds = self.pending_seconds.take()?;
+            let is_restore = self.finish_after_restore
+                && self
+                    .restore_seconds
+                    .is_some_and(|restore| Self::seconds_match(restore, seconds));
+            if !is_restore
+                && self
+                    .last_sent_seconds
+                    .is_some_and(|last| Self::seconds_match(last, seconds))
+            {
+                continue;
+            }
+
+            self.last_sent_seconds = Some(seconds);
+            let request = TrimPreviewSeekRequest {
+                seconds,
+                pause_first: self.pause_before_next_seek,
+            };
+            self.pause_before_next_seek = false;
+            return Some(request);
+        }
+    }
+
+    fn finish(&mut self) -> bool {
+        let Some(restore_seconds) = self.restore_seconds else {
+            self.reset();
+            return false;
+        };
+        self.pending_seconds = Some(restore_seconds);
+        self.finish_after_restore = true;
+        true
+    }
+
+    fn complete_restore(&mut self, seconds: f64) -> bool {
+        if self.finish_after_restore
+            && self
+                .restore_seconds
+                .is_some_and(|restore| Self::seconds_match(restore, seconds))
+        {
+            self.reset();
+            return true;
+        }
+        false
+    }
+
+    fn seconds_match(first: f64, second: f64) -> bool {
+        (first - second).abs() < TRIM_PREVIEW_SEEK_EPSILON_SECONDS
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PreviewCanvasState {
+    current_zoom: f64,
+    target_zoom: f64,
+    current_pan_x: f64,
+    current_pan_y: f64,
+    target_pan_x: f64,
+    target_pan_y: f64,
+    auto_fit_pending: bool,
+    last_animation_tick: Option<Instant>,
+}
+
+impl Default for PreviewCanvasState {
+    fn default() -> Self {
+        Self {
+            current_zoom: PREVIEW_CANVAS_DEFAULT_ZOOM,
+            target_zoom: PREVIEW_CANVAS_DEFAULT_ZOOM,
+            current_pan_x: 0.0,
+            current_pan_y: 0.0,
+            target_pan_x: 0.0,
+            target_pan_y: 0.0,
+            auto_fit_pending: true,
+            last_animation_tick: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::app) enum PreviewCanvasZoomDirection {
+    In,
+    Out,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::app) struct PreviewOverlayImageDimensions {
+    width: u32,
+    height: u32,
+}
+
+impl PreviewOverlayImageDimensions {
+    pub(in crate::app) fn height_over_width(self) -> f64 {
+        if self.width == 0 {
+            return 1.0;
+        }
+
+        f64::from(self.height) / f64::from(self.width)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PreviewCropDragState {
+    handle: DragHandle,
+    start_rect: CropRect,
+    start_point: PreviewPoint,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreviewRuntimeKey {
+    file_id: String,
+    path: String,
+    source_kind: EnginePreviewSourceKind,
+    source_width: Option<u32>,
+    source_height: Option<u32>,
+    duration_millis: u64,
+    preview_dimensions: PreviewRuntimeDimensions,
+    visual_hash: u64,
+    audio_hash: u64,
+}
+
+impl PreviewRuntimeKey {
+    fn can_reconfigure_to(&self, next: &Self) -> bool {
+        self.file_id == next.file_id
+            && self.path == next.path
+            && self.source_kind == next.source_kind
+            && self.source_width == next.source_width
+            && self.source_height == next.source_height
+            && self.duration_millis == next.duration_millis
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PreviewRuntimeDimensions {
+    max_width: u32,
+    max_height: u32,
+}
+
+#[derive(Clone, Debug)]
+struct PreviewRuntimeRequest {
+    key: PreviewRuntimeKey,
+    config: PreviewSessionConfig,
+    presentation: PreviewRenderPresentation,
+}
+
+#[derive(Clone, Copy)]
+struct SettingsRenderState<'a> {
+    palette: &'static theme::ThemePalette,
+    active_tab: SettingsTab,
+    tooltip_visible_id: Option<&'a str>,
+    config: &'a ConversionConfig,
+    metadata: Option<&'a SourceMetadata>,
+    metadata_status: MetadataStatus,
+    metadata_error: Option<&'a str>,
+    settings_disabled: bool,
+    video_width_focus: Option<&'a FocusHandle>,
+    video_height_focus: Option<&'a FocusHandle>,
+    metadata_focuses: SettingsMetadataInputFocuses<'a>,
+    available_filters: &'a AvailableFilters,
+}
+
+#[derive(Clone, Copy)]
+struct SettingsMetadataInputFocuses<'a> {
+    title: Option<&'a FocusHandle>,
+    artist: Option<&'a FocusHandle>,
+    album: Option<&'a FocusHandle>,
+    genre: Option<&'a FocusHandle>,
+    date: Option<&'a FocusHandle>,
+    comment: Option<&'a FocusHandle>,
+    service_name: Option<&'a FocusHandle>,
+    service_provider: Option<&'a FocusHandle>,
+}

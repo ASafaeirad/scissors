@@ -1,29 +1,29 @@
 # Visual Fixtures
 
-Frame includes runtime visual fixtures for manual GPUI review. They seed the app
+Scissors includes runtime visual fixtures for manual GPUI review. They seed the app
 with deterministic state so contributors can inspect UI surfaces without finding
 matching media files, waiting for conversions.
 
-The source of truth is `frame-app/src/lib.rs` for fixture names and
-`frame-app/src/app/fixtures.rs` for seeded state.
+The source of truth is `scissors-app/src/lib.rs` for fixture names and
+`scissors-app/src/app/fixtures.rs` for seeded state.
 
 ## Running a Fixture
 
-Set `FRAME_GPUI_VISUAL_FIXTURE` before launching the app:
+Set `SCISSORS_GPUI_VISUAL_FIXTURE` before launching the app:
 
 ```bash
 ```
 
 Any fixture can be combined with a supported interface scale using
-`FRAME_GPUI_UI_SCALE`. Values may be written as `80` or `80%`; supported
+`SCISSORS_GPUI_UI_SCALE`. Values may be written as `80` or `80%`; supported
 presets are `80`, `90`, `100`, `110`, `125`, `150`, `175`, and `200`.
-Use `FRAME_VISUAL_THEME=dark|light` to override the persisted color theme for
+Use `SCISSORS_VISUAL_THEME=dark|light` to override the persisted color theme for
 the fixture process without writing the override back to settings.
 
 ```bash
-FRAME_GPUI_VISUAL_FIXTURE=settings-video-filters \
-FRAME_GPUI_UI_SCALE=200 \
-FRAME_VISUAL_THEME=light \
+SCISSORS_GPUI_VISUAL_FIXTURE=settings-video-filters \
+SCISSORS_GPUI_UI_SCALE=200 \
+SCISSORS_VISUAL_THEME=light \
 cargo xtask run
 ```
 
@@ -37,16 +37,16 @@ It replaces unit assertions against the internal order of `BoxShadow` layers
 and raw button color tokens with a review of the rendered result.
 
 ```bash
-FRAME_GPUI_VISUAL_FIXTURE=app-settings \
-FRAME_GPUI_UI_SCALE=100 \
-FRAME_VISUAL_THEME=dark \
+SCISSORS_GPUI_VISUAL_FIXTURE=app-settings \
+SCISSORS_GPUI_UI_SCALE=100 \
+SCISSORS_VISUAL_THEME=dark \
 cargo xtask run
 ```
 
 ```bash
-FRAME_GPUI_VISUAL_FIXTURE=app-settings \
-FRAME_GPUI_UI_SCALE=100 \
-FRAME_VISUAL_THEME=light \
+SCISSORS_GPUI_VISUAL_FIXTURE=app-settings \
+SCISSORS_GPUI_UI_SCALE=100 \
+SCISSORS_VISUAL_THEME=light \
 cargo xtask run
 ```
 
@@ -77,7 +77,7 @@ the final GPUI rendering.
 | `export-dialog` | Export dialog for a ready video with a stereo audio track, a custom size, and the audio and advanced sections open | M3 dialog, scrim and focus trap, preset library, format cards, custom width and height fields with the aspect link, frame rate and quality controls, audio channels, codec radios and bitrate field, encoder and pixel format radios, encoding speed slider, file name field, summary panel, and footer actions. |
 | `export-progress` | Export dialog at 30% with the FFmpeg output shown | Progress headline, time-left estimate, cancel action, the "Show FFmpeg output" switch, output panel header and copy button, Roboto Mono log lines, and the log scrollbar. |
 | `m3-gallery` | Material 3 component gallery modeled on the video editor timeline design | M3 color roles, Roboto type scale, buttons, icon buttons, chips, switches, sliders, segmented button, select cards, radio items, text fields, linear progress, dialog, navigation rail, and floating toolbar, six media cards, timeline ruler, playhead, and clip lanes in both themes while migrating screens to `app::m3`. |
-| `project-timeline` | One library source reused on V1 and V2, plus audio clips on A1 and A2 | Toolbar (play, timecode, undo/redo, split, delete, snap, zoom slider, Fit), track headers with hide/mute/lock and the track menu, timecode ruler with playhead handle, scrollbar, status line, library import/add controls, instance selection, movement within and across tracks, trim handles, selected track speed at 2x, video thumbnails over a waveform band of the selected audio track (decoded from `/tmp/frame_project_fixture/video.mp4` when present), and project timeline in both themes. Check Ctrl+wheel and touchpad pinch zoom, horizontal or Shift+wheel panning, and Fit. Zoom must keep the visible start time fixed and leave output duration unchanged; moving and trimming clips must keep the view scale stable. |
+| `project-timeline` | One library source reused on V1 and V2, plus audio clips on A1 and A2 | Toolbar (play, timecode, undo/redo, split, delete, snap, zoom slider, Fit), track headers with hide/mute/lock and the track menu, timecode ruler with playhead handle, scrollbar, status line, library import/add controls, instance selection, movement within and across tracks, trim handles, selected track speed at 2x, video thumbnails over a waveform band of the selected audio track (decoded from `/tmp/scissors_project_fixture/video.mp4` when present), and project timeline in both themes. Check Ctrl+wheel and touchpad pinch zoom, horizontal or Shift+wheel panning, and Fit. Zoom must keep the visible start time fixed and leave output duration unchanged; moving and trimming clips must keep the view scale stable. |
 | `preview-multitrack` | Video timeline with music and a muted voice track | Shared ruler, audio clip positions, add audio, mute and remove controls in both themes. |
 | `preview-ready` | Workspace with a selected ready video source | M3 workspace navigation, media card library, floating playback controls, separate trim timeline, empty frame handling, and source video state. |
 | `preview-crop` | Preview panel with crop mode enabled | Crop aspect bar, crop overlay geometry, crop handles, preview toolbar coexistence, and canvas framing while editing crop bounds. |
@@ -96,8 +96,8 @@ When adding or changing a visual fixture:
 
 1. Add the enum case in `VisualFixture`.
 2. Add the environment key in `visual_fixture_from_env_value`.
-3. Seed the state in `FrameRoot::apply_visual_fixture`.
-4. Add or update focused coverage in `frame-app/src/app/tests.rs`.
+3. Seed the state in `ScissorsRoot::apply_visual_fixture`.
+4. Add or update focused coverage in `scissors-app/src/app/tests.rs`.
 5. Update this document with the fixture key and the scenario it covers.
 
 Keep fixture data realistic enough to exercise layout pressure: long labels,

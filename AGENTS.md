@@ -2,23 +2,23 @@
 
 ## UI: use the Material 3 design system
 
-Frame is migrating its GPUI interface to Material Design 3. **New UI and any UI you touch
-should use the M3 tokens and components**, not the legacy Frame ones.
+Scissors is migrating its GPUI interface to Material Design 3. **New UI and any UI you touch
+should use the M3 tokens and components**, not the legacy Scissors ones.
 
 | Use | Instead of |
 | --- | --- |
 | `crate::material` tokens (`material::scheme(color_theme)`, `typography::*`, `shape::*`, `spacing::*`, `Elevation`, `motion::*`) | `theme::ThemePalette`, `theme::RADIUS_*`, `theme::TEXT_*` |
-| `app::m3` components (`Button`, `IconButton`, `Chip`, `Switch`, `Slider`, `SegmentedButton`, `SelectCard`, `Radio`/`RadioItem`, `TextField`, `LinearProgress`, `Dialog`/`scrim`, `NavigationRail`, `toolbar`) | `app::components` (`frame_text_button`, `frame_icon_button`, `frame_slider`, …) |
+| `app::m3` components (`Button`, `IconButton`, `Chip`, `Switch`, `Slider`, `SegmentedButton`, `SelectCard`, `Radio`/`RadioItem`, `TextField`, `LinearProgress`, `Dialog`/`scrim`, `NavigationRail`, `toolbar`) | `app::components` (`scissors_text_button`, `scissors_icon_button`, `scissors_slider`, …) |
 | `material::Symbol` (Material Symbols, outlined and filled) | `assets::ICON_*` Hugeicons |
 | `M3Text::m3_type(typography::ROLE)` (Roboto) | `text_size(theme::ui_rem(theme::TEXT_*))` |
 
 ### Where things live
 
-- `frame-app/src/material/`: tokens only, no GPUI rendering. Baseline M3 scheme (source color
+- `scissors-app/src/material/`: tokens only, no GPUI rendering. Baseline M3 scheme (source color
   `#6750A4`), light and dark.
-- `frame-app/src/app/m3/`: GPUI components built on those tokens. Read the module doc in
+- `scissors-app/src/app/m3/`: GPUI components built on those tokens. Read the module doc in
   `m3/mod.rs` first.
-- `frame-app/assets/icons/material/`: bundled symbol SVGs. To add one, follow the header
+- `scissors-app/assets/icons/material/`: bundled symbol SVGs. To add one, follow the header
   comment in `material/icons.rs` (download both styles, add one line to `symbols!`).
 - Source design: the claude.ai/design "Material 3 Design System" project. Its readme covers
   content and visual rules (sentence case, roles over raw colors, filled icon = selected).
@@ -26,7 +26,7 @@ should use the M3 tokens and components**, not the legacy Frame ones.
 ### Rules
 
 - Read colors from `ColorScheme` roles and pair every fill with its `on_*` role. Never hardcode
-  colors; `cargo xtask ci` rejects color literals under `frame-app/src/app/`.
+  colors; `cargo xtask ci` rejects color literals under `scissors-app/src/app/`.
 - Pass lengths through `theme::ui_rem(...)` so they follow the user's UI scale.
 - Depth comes from `surface_container*` roles first; use `elevation_shadows` sparingly.
 - Components use builders that end in `.build(scheme, window, cx)` and return a
@@ -43,9 +43,9 @@ should use the M3 tokens and components**, not the legacy Frame ones.
 ### Verifying UI changes
 
 ```bash
-FRAME_GPUI_VISUAL_FIXTURE=m3-gallery FRAME_VISUAL_THEME=dark cargo xtask run
-FRAME_GPUI_VISUAL_FIXTURE=m3-gallery FRAME_VISUAL_THEME=light cargo xtask run
-cargo test -p frame-app --lib -- material:: m3::
+SCISSORS_GPUI_VISUAL_FIXTURE=m3-gallery SCISSORS_VISUAL_THEME=dark cargo xtask run
+SCISSORS_GPUI_VISUAL_FIXTURE=m3-gallery SCISSORS_VISUAL_THEME=light cargo xtask run
+cargo test -p scissors-app --lib -- material:: m3::
 cargo xtask ci   # the full gate: fmt, tests, clippy -D warnings, theme literal audit
 ```
 

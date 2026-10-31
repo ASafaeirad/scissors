@@ -1,0 +1,1069 @@
+use std::{
+    collections::HashSet,
+    fs,
+    fs::File,
+    io::{self, Write},
+    path::{Path, PathBuf},
+};
+
+use directories::{BaseDirs, ProjectDirs};
+use scissors_core::types::DEFAULT_MAX_CONCURRENCY;
+use serde::{Deserialize, Deserializer, Serialize};
+use thiserror::Error;
+
+use crate::{
+    appearance::{AppearanceSettings, ColorTheme, ScalePreset},
+    settings::PresetDefinition,
+};
+
+const APP_SETTINGS_VERSION: u32 = 5;
+const SETTINGS_FILE_NAME: &str = "settings.json";
+const LEGACY_APP_SETTINGS_FILE_NAME: &str = "app-settings.dat";
+const LEGACY_PRESETS_FILE_NAME: &str = "presets.dat";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppSettings {
+    pub appearance: AppearanceSettings,
+    pub max_concurrency: usize,
+    pub default_output_directory: Option<PathBuf>,
+    pub custom_presets: Vec<PresetDefinition>,
+}
+
+impl AppSettings {
+    #[must_use]
+    pub fn from_runtime(
+        appearance: AppearanceSettings,
+        max_concurrency: usize,
+        default_output_directory: Option<PathBuf>,
+        presets: &[PresetDefinition],
+    ) -> Self {
+        Self {
+            appearance,
+            max_concurrency: valid_max_concurrency(max_concurrency),
+            default_output_directory,
+            custom_presets: normalize_custom_presets(
+                presets
+                    .iter()
+                    .filter(|preset| !preset.built_in)
+                    .cloned()
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            appearance: AppearanceSettings::default(),
+            max_concurrency: DEFAULT_MAX_CONCURRENCY,
+            default_output_directory: None,
+            custom_presets: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppPersistence {
+    settings_path: PathBuf,
+    previous_settings_path: Option<PathBuf>,
+}
+
+impl AppPersistence {
+    /// Builds a persistence handle for Scissors' platform config directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AppPersistenceError::ConfigDirectoryUnavailable`] when the
+    /// operating system does not expose a usable config directory.
+    pub fn platform() -> Result<Self, AppPersistenceError> {
+        let project_dirs = ProjectDirs::from("", "", "Scissors")
+            .ok_or(AppPersistenceError::ConfigDirectoryUnavailable)?;
+        let mut persistence =
+            Self::from_settings_path(project_dirs.config_dir().join(SETTINGS_FILE_NAME));
+        // Read existing Frame settings until Scissors saves its own settings.
+        persistence.previous_settings_path = ProjectDirs::from("", "", "Frame")
+            .map(|dirs| dirs.config_dir().join(SETTINGS_FILE_NAME));
+        Ok(persistence)
+    }
+
+    #[must_use]
+    pub fn from_settings_path(path: impl Into<PathBuf>) -> Self {
+        Self {
+            settings_path: path.into(),
+            previous_settings_path: None,
+        }
+    }
+
+    #[must_use]
+    pub fn settings_path(&self) -> &Path {
+        &self.settings_path
+    }
+
+    /// Loads persisted app settings, including legacy settings files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the settings file cannot be read, decoded, or
+    /// migrated from the legacy format.
+    pub fn load(&self) -> Result<AppSettings, AppPersistenceError> {
+        let bytes = match fs::read(&self.settings_path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if let Some(path) = &self.previous_settings_path {
+                    return Self::from_settings_path(path).load();
+                }
+                return self.load_legacy();
+            }
+            Err(error) => {
+                return Err(AppPersistenceError::io(
+                    AppPersistenceOperation::ReadSettings,
+                    &self.settings_path,
+                    error,
+                ));
+            }
+        };
+
+        let persisted: PersistedAppSettings = serde_json::from_slice(&bytes)?;
+        Ok(persisted.into_app_settings())
+    }
+
+    /// Saves app settings atomically to the configured settings path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the settings cannot be encoded, the config
+    /// directory cannot be created, or the temp file cannot replace the target.
+    pub fn save(&self, settings: &AppSettings) -> Result<(), AppPersistenceError> {
+        let persisted = PersistedAppSettings::from_app_settings(settings);
+        let json = serde_json::to_vec_pretty(&persisted)?;
+
+        write_bytes_atomically_with_context(&self.settings_path, &json)
+            .map_err(AppPersistenceError::from_atomic_write)?;
+
+        Ok(())
+    }
+
+    fn load_legacy(&self) -> Result<AppSettings, AppPersistenceError> {
+        let mut settings = AppSettings::default();
+        let legacy_settings_path = self
+            .settings_path
+            .with_file_name(LEGACY_APP_SETTINGS_FILE_NAME);
+
+        match fs::read(&legacy_settings_path) {
+            Ok(bytes) => {
+                let legacy: LegacyAppSettings = serde_json::from_slice(&bytes)?;
+                if let Some(max_concurrency) = legacy.max_concurrency {
+                    settings.max_concurrency = valid_max_concurrency(max_concurrency);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(AppPersistenceError::io(
+                    AppPersistenceOperation::ReadLegacySettings,
+                    &legacy_settings_path,
+                    error,
+                ));
+            }
+        }
+
+        let legacy_presets_path = self.settings_path.with_file_name(LEGACY_PRESETS_FILE_NAME);
+        match fs::read(&legacy_presets_path) {
+            Ok(bytes) => {
+                let legacy: LegacyPresetStore = serde_json::from_slice(&bytes)?;
+                settings.custom_presets = normalize_custom_presets(legacy.presets);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(AppPersistenceError::io(
+                    AppPersistenceOperation::ReadLegacySettings,
+                    &legacy_presets_path,
+                    error,
+                ));
+            }
+        }
+
+        Ok(settings)
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum AppPersistenceError {
+    #[error("config directory is unavailable")]
+    ConfigDirectoryUnavailable,
+    #[error("failed to {operation} at {path}: {source}")]
+    Io {
+        operation: AppPersistenceOperation,
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("failed to parse app settings: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+impl AppPersistenceError {
+    fn io(operation: AppPersistenceOperation, path: &Path, source: io::Error) -> Self {
+        Self::Io {
+            operation,
+            path: redacted_path(path),
+            source,
+        }
+    }
+
+    fn from_atomic_write(error: AtomicWriteError) -> Self {
+        Self::io(error.operation, &error.path, error.source)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AppPersistenceOperation {
+    ReadSettings,
+    ReadLegacySettings,
+    CreateSettingsDirectory,
+    CreateTemporaryFile,
+    WriteTemporaryFile,
+    SyncTemporaryFile,
+    ReplaceSettingsFile,
+}
+
+impl std::fmt::Display for AppPersistenceOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ReadSettings => "read app settings",
+            Self::ReadLegacySettings => "read legacy app settings",
+            Self::CreateSettingsDirectory => "create the settings directory",
+            Self::CreateTemporaryFile => "create the temporary settings file",
+            Self::WriteTemporaryFile => "write the temporary settings file",
+            Self::SyncTemporaryFile => "sync the temporary settings file",
+            Self::ReplaceSettingsFile => "replace the settings file",
+        })
+    }
+}
+
+#[derive(Debug)]
+struct AtomicWriteError {
+    operation: AppPersistenceOperation,
+    path: PathBuf,
+    source: io::Error,
+}
+
+impl AtomicWriteError {
+    fn new(operation: AppPersistenceOperation, path: &Path, source: io::Error) -> Self {
+        Self {
+            operation,
+            path: path.to_path_buf(),
+            source,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+struct PersistedAppSettings {
+    version: u32,
+    ui_scale_percent: u16,
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    color_theme: Option<String>,
+    follow_system_theme: bool,
+    #[serde(deserialize_with = "deserialize_optional_string")]
+    accent_color: Option<String>,
+    max_concurrency: usize,
+    default_output_directory: Option<PathBuf>,
+    custom_presets: Vec<PresetDefinition>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct LegacyAppSettings {
+    max_concurrency: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct LegacyPresetStore {
+    presets: Vec<PresetDefinition>,
+}
+
+impl PersistedAppSettings {
+    fn from_app_settings(settings: &AppSettings) -> Self {
+        Self {
+            version: APP_SETTINGS_VERSION,
+            ui_scale_percent: settings.appearance.ui_scale.percent(),
+            color_theme: Some(settings.appearance.color_theme.persisted().to_string()),
+            follow_system_theme: settings.appearance.follow_system_theme,
+            accent_color: Some(settings.appearance.accent_color.hex()),
+            max_concurrency: valid_max_concurrency(settings.max_concurrency),
+            default_output_directory: settings.default_output_directory.clone(),
+            custom_presets: normalize_custom_presets(settings.custom_presets.clone()),
+        }
+    }
+
+    fn into_app_settings(self) -> AppSettings {
+        AppSettings {
+            appearance: AppearanceSettings {
+                ui_scale: ScalePreset::from_percent(self.ui_scale_percent).unwrap_or_default(),
+                color_theme: ColorTheme::from_persisted(self.color_theme.as_deref()),
+                follow_system_theme: self.follow_system_theme,
+                accent_color: self
+                    .accent_color
+                    .as_deref()
+                    .and_then(crate::appearance::AccentColor::from_hex)
+                    .unwrap_or_default(),
+            },
+            max_concurrency: valid_max_concurrency(self.max_concurrency),
+            default_output_directory: self.default_output_directory,
+            custom_presets: normalize_custom_presets(self.custom_presets),
+        }
+    }
+}
+
+impl Default for PersistedAppSettings {
+    fn default() -> Self {
+        Self {
+            version: APP_SETTINGS_VERSION,
+            ui_scale_percent: ScalePreset::Percent100.percent(),
+            color_theme: None,
+            follow_system_theme: false,
+            accent_color: None,
+            max_concurrency: DEFAULT_MAX_CONCURRENCY,
+            default_output_directory: None,
+            custom_presets: Vec::new(),
+        }
+    }
+}
+
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value.as_str().map(str::to_string))
+}
+
+const fn valid_max_concurrency(value: usize) -> usize {
+    if value == 0 {
+        DEFAULT_MAX_CONCURRENCY
+    } else {
+        value
+    }
+}
+
+fn normalize_custom_presets(presets: Vec<PresetDefinition>) -> Vec<PresetDefinition> {
+    let mut seen_ids = HashSet::new();
+
+    presets
+        .into_iter()
+        .filter_map(|mut preset| {
+            preset.id = preset.id.trim().to_string();
+            preset.name = preset.name.trim().to_string();
+            preset.built_in = false;
+
+            if preset.id.is_empty() || preset.name.is_empty() || !seen_ids.insert(preset.id.clone())
+            {
+                return None;
+            }
+
+            Some(preset)
+        })
+        .collect()
+}
+
+pub(crate) fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), io::Error> {
+    write_bytes_atomically_with_context(path, bytes).map_err(|error| error.source)
+}
+
+fn write_bytes_atomically_with_context(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| {
+            AtomicWriteError::new(
+                AppPersistenceOperation::CreateSettingsDirectory,
+                parent,
+                source,
+            )
+        })?;
+    }
+
+    let temp_path = temp_path_for(path);
+    let mut file = File::create(&temp_path).map_err(|source| {
+        AtomicWriteError::new(
+            AppPersistenceOperation::CreateTemporaryFile,
+            &temp_path,
+            source,
+        )
+    })?;
+    file.write_all(bytes).map_err(|source| {
+        AtomicWriteError::new(
+            AppPersistenceOperation::WriteTemporaryFile,
+            &temp_path,
+            source,
+        )
+    })?;
+    file.sync_all().map_err(|source| {
+        AtomicWriteError::new(
+            AppPersistenceOperation::SyncTemporaryFile,
+            &temp_path,
+            source,
+        )
+    })?;
+    drop(file);
+    replace_file(&temp_path, path).map_err(|source| {
+        AtomicWriteError::new(AppPersistenceOperation::ReplaceSettingsFile, path, source)
+    })?;
+
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        let _ = File::open(parent).and_then(|directory| directory.sync_all());
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_file(temp_path: &Path, final_path: &Path) -> Result<(), io::Error> {
+    fs::rename(temp_path, final_path)
+}
+
+#[cfg(windows)]
+fn replace_file(temp_path: &Path, final_path: &Path) -> Result<(), io::Error> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{
+        Win32::Storage::FileSystem::{
+            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        },
+        core::PCWSTR,
+    };
+
+    let temp_path = temp_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let final_path = final_path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+
+    // SAFETY: Both UTF-16 buffers are NUL-terminated and remain alive for the call.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(temp_path.as_ptr()),
+            PCWSTR(final_path.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(io::Error::other)
+}
+
+fn temp_path_for(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map_or_else(|| SETTINGS_FILE_NAME.to_string(), ToString::to_string);
+    path.with_file_name(format!("{file_name}.tmp"))
+}
+
+fn redacted_path(path: &Path) -> String {
+    BaseDirs::new()
+        .and_then(|base_dirs| {
+            path.strip_prefix(base_dirs.home_dir())
+                .ok()
+                .map(|relative| Path::new("$HOME").join(relative))
+        })
+        .unwrap_or_else(|| path.to_path_buf())
+        .display()
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::*;
+    use crate::settings::{ConversionConfig, PresetDefinition};
+
+    static TEST_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn load_returns_defaults_when_settings_file_is_missing() {
+        let persistence = AppPersistence::from_settings_path(test_settings_path());
+
+        let settings = persistence
+            .load()
+            .expect("missing settings should load as defaults");
+
+        assert_eq!(settings, AppSettings::default());
+    }
+
+    #[test]
+    fn load_error_identifies_the_read_operation_and_path() {
+        let path = test_settings_path();
+        fs::create_dir_all(&path).expect("settings path fixture should be a directory");
+
+        let error = AppPersistence::from_settings_path(&path)
+            .load()
+            .expect_err("reading a directory as settings should fail")
+            .to_string();
+
+        assert!(error.starts_with("failed to read app settings at "));
+        assert!(error.contains(path.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn legacy_load_error_identifies_the_file_that_failed() {
+        let path = test_settings_path();
+        let legacy_path = path.with_file_name(LEGACY_APP_SETTINGS_FILE_NAME);
+        fs::create_dir_all(&legacy_path).expect("legacy path fixture should be a directory");
+
+        let error = AppPersistence::from_settings_path(path)
+            .load()
+            .expect_err("reading a directory as legacy settings should fail")
+            .to_string();
+
+        assert!(error.starts_with("failed to read legacy app settings at "));
+        assert!(error.contains(legacy_path.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn save_error_identifies_a_blocked_settings_directory() {
+        let path = test_settings_path();
+        let parent = path
+            .parent()
+            .expect("test path should have parent")
+            .to_path_buf();
+        fs::create_dir_all(parent.parent().expect("test path should have grandparent"))
+            .expect("test root should be created");
+        fs::write(&parent, b"not a directory").expect("directory blocker should be written");
+
+        let error = AppPersistence::from_settings_path(path)
+            .save(&AppSettings::default())
+            .expect_err("a blocked settings directory should fail")
+            .to_string();
+
+        assert!(error.starts_with("failed to create the settings directory at "));
+        assert!(error.contains(parent.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn save_error_identifies_a_blocked_temporary_file() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        let temp_path = temp_path_for(&path);
+        fs::create_dir(&temp_path).expect("temporary file blocker should be created");
+
+        let error = AppPersistence::from_settings_path(path)
+            .save(&AppSettings::default())
+            .expect_err("a blocked temporary file should fail")
+            .to_string();
+
+        assert!(error.starts_with("failed to create the temporary settings file at "));
+        assert!(error.contains(temp_path.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn write_error_identifies_the_temporary_file() {
+        let path = temp_path_for(&test_settings_path());
+        let error = AppPersistenceError::io(
+            AppPersistenceOperation::WriteTemporaryFile,
+            &path,
+            io::Error::new(io::ErrorKind::WriteZero, "test write failure"),
+        )
+        .to_string();
+
+        assert!(error.starts_with("failed to write the temporary settings file at "));
+        assert!(error.contains(path.to_string_lossy().as_ref()));
+        assert!(error.ends_with(": test write failure"));
+    }
+
+    #[test]
+    fn replacement_failure_keeps_the_existing_target_and_identifies_it() {
+        let path = test_settings_path();
+        fs::create_dir_all(&path).expect("settings target fixture should be a directory");
+        let marker_path = path.join("keep-me");
+        fs::write(&marker_path, b"existing data").expect("target marker should be written");
+
+        let error = AppPersistence::from_settings_path(&path)
+            .save(&AppSettings::default())
+            .expect_err("replacing a directory should fail")
+            .to_string();
+
+        assert!(error.starts_with("failed to replace the settings file at "));
+        assert!(error.contains(path.to_string_lossy().as_ref()));
+        assert_eq!(
+            fs::read(marker_path).expect("existing target should remain untouched"),
+            b"existing data"
+        );
+    }
+
+    #[test]
+    fn paths_inside_the_home_directory_do_not_expose_the_home_path() {
+        let home = BaseDirs::new().expect("home directory should be available");
+        let path = home.home_dir().join("Library/Scissors/settings.json");
+
+        let displayed = redacted_path(&path);
+
+        assert_eq!(
+            displayed,
+            Path::new("$HOME")
+                .join("Library/Scissors/settings.json")
+                .display()
+                .to_string()
+        );
+        assert!(!displayed.contains(home.home_dir().to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn renamed_app_loads_previous_settings_until_new_settings_are_saved() {
+        let previous = AppPersistence::from_settings_path(test_settings_path());
+        let old_settings = AppSettings {
+            max_concurrency: 2,
+            ..AppSettings::default()
+        };
+        previous
+            .save(&old_settings)
+            .expect("save previous settings");
+
+        let mut current = AppPersistence::from_settings_path(test_settings_path());
+        current.previous_settings_path = Some(previous.settings_path().to_path_buf());
+        assert_eq!(
+            current.load().expect("load previous settings"),
+            old_settings
+        );
+        assert!(!current.settings_path().exists());
+
+        let new_settings = AppSettings {
+            max_concurrency: 3,
+            ..AppSettings::default()
+        };
+        current.save(&new_settings).expect("save new settings");
+        assert_eq!(current.load().expect("load new settings"), new_settings);
+        assert_eq!(
+            previous.load().expect("keep previous settings"),
+            old_settings
+        );
+    }
+
+    #[test]
+    fn save_round_trips_max_concurrency_and_custom_presets() {
+        let persistence = AppPersistence::from_settings_path(test_settings_path());
+        let settings = AppSettings {
+            appearance: AppearanceSettings {
+                ui_scale: ScalePreset::Percent125,
+                color_theme: ColorTheme::Light,
+                follow_system_theme: false,
+                accent_color: crate::appearance::AccentColor::default(),
+            },
+            max_concurrency: 4,
+            default_output_directory: Some(PathBuf::from("/tmp/scissors-output")),
+            custom_presets: vec![PresetDefinition::custom(
+                "custom-preset-1".to_string(),
+                "Review MP4".to_string(),
+                ConversionConfig {
+                    video_bitrate: "9000".to_string(),
+                    ..ConversionConfig::default()
+                },
+            )],
+        };
+
+        persistence
+            .save(&settings)
+            .expect("settings should be saved");
+        let loaded = persistence.load().expect("settings should be loaded");
+
+        assert_eq!(loaded, settings);
+    }
+
+    #[test]
+    fn load_and_save_old_settings_preserves_preferences_and_drops_update_fields() {
+        let persistence = AppPersistence::from_settings_path(test_settings_path());
+        fs::create_dir_all(persistence.settings_path().parent().unwrap()).unwrap();
+        fs::write(
+            persistence.settings_path(),
+            r#"{
+                "version": 5,
+                "uiScalePercent": 125,
+                "colorTheme": "light",
+                "maxConcurrency": 7,
+                "defaultOutputDirectory": "/tmp/scissors-output",
+                "customPresets": [{
+                    "id": "custom-preset-1", "name": "Review",
+                    "config": {"container": "mkv"}
+                }],
+                "autoUpdateCheck": true,
+                "updateChannel": "stable",
+                "skippedUpdateVersion": "0.33.1",
+                "lastUpdateCheckAt": 1800000000
+            }"#,
+        )
+        .unwrap();
+
+        let settings = persistence.load().unwrap();
+        assert_eq!(settings.appearance.ui_scale, ScalePreset::Percent125);
+        assert_eq!(settings.appearance.color_theme, ColorTheme::Light);
+        assert_eq!(settings.max_concurrency, 7);
+        assert_eq!(
+            settings.default_output_directory,
+            Some(PathBuf::from("/tmp/scissors-output"))
+        );
+        assert_eq!(settings.custom_presets[0].config.container, "mkv");
+
+        persistence.save(&settings).unwrap();
+        assert_eq!(persistence.load().unwrap(), settings);
+        let json: serde_json::Value =
+            serde_json::from_slice(&fs::read(persistence.settings_path()).unwrap()).unwrap();
+        for field in [
+            "autoUpdateCheck",
+            "updateChannel",
+            "skippedUpdateVersion",
+            "lastUpdateCheckAt",
+        ] {
+            assert!(
+                json.get(field).is_none(),
+                "obsolete field {field} was saved"
+            );
+        }
+    }
+
+    #[test]
+    fn every_supported_ui_scale_round_trips() {
+        for ui_scale in ScalePreset::ALL {
+            let settings = AppSettings {
+                appearance: AppearanceSettings {
+                    ui_scale,
+                    color_theme: ColorTheme::Dark,
+                    follow_system_theme: false,
+                    accent_color: crate::appearance::AccentColor::default(),
+                },
+                ..AppSettings::default()
+            };
+
+            let loaded = PersistedAppSettings::from_app_settings(&settings).into_app_settings();
+
+            assert_eq!(loaded.appearance, settings.appearance);
+        }
+    }
+
+    #[test]
+    fn load_accepts_settings_without_default_output_directory() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        fs::write(
+            &path,
+            r#"{"version":2,"maxConcurrency":4,"customPresets":[],"autoUpdateCheck":true,"updateChannel":"stable","skippedUpdateVersion":null,"lastUpdateCheckAt":null}"#,
+        )
+        .expect("settings fixture should be written");
+
+        let settings = AppPersistence::from_settings_path(path)
+            .load()
+            .expect("settings should load");
+
+        assert_eq!(settings.default_output_directory, None);
+    }
+
+    #[test]
+    fn load_replaces_zero_max_concurrency_with_default() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        fs::write(
+            &path,
+            r#"{"version":1,"maxConcurrency":0,"customPresets":[]}"#,
+        )
+        .expect("settings fixture should be written");
+
+        let settings = AppPersistence::from_settings_path(path)
+            .load()
+            .expect("settings should load");
+
+        assert_eq!(settings.max_concurrency, DEFAULT_MAX_CONCURRENCY);
+    }
+
+    #[test]
+    fn load_version_three_settings_defaults_appearance_without_losing_existing_values() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        fs::write(
+            &path,
+            r#"{"version":3,"maxConcurrency":7,"customPresets":[],"autoUpdateCheck":false}"#,
+        )
+        .expect("settings fixture should be written");
+
+        let settings = AppPersistence::from_settings_path(path)
+            .load()
+            .expect("version three settings should load");
+
+        assert_eq!(settings.appearance, AppearanceSettings::default());
+        assert_eq!(settings.max_concurrency, 7);
+    }
+
+    #[test]
+    fn load_normalizes_invalid_ui_scale_without_resetting_other_settings() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        fs::write(
+            &path,
+            r#"{"version":4,"uiScalePercent":0,"maxConcurrency":5,"customPresets":[]}"#,
+        )
+        .expect("settings fixture should be written");
+
+        let settings = AppPersistence::from_settings_path(path)
+            .load()
+            .expect("settings should load");
+
+        assert_eq!(settings.appearance.ui_scale, ScalePreset::Percent100);
+        assert_eq!(settings.max_concurrency, 5);
+    }
+
+    #[test]
+    fn load_version_four_settings_defaults_theme_without_losing_existing_values() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        fs::write(
+            &path,
+            r#"{"version":4,"uiScalePercent":125,"maxConcurrency":7,"customPresets":[]}"#,
+        )
+        .expect("settings fixture should be written");
+
+        let settings = AppPersistence::from_settings_path(path)
+            .load()
+            .expect("version four settings should load");
+
+        assert_eq!(settings.appearance.color_theme, ColorTheme::Dark);
+        assert_eq!(settings.appearance.ui_scale, ScalePreset::Percent125);
+        assert_eq!(settings.max_concurrency, 7);
+    }
+
+    #[test]
+    fn custom_accent_round_trips_and_invalid_or_missing_values_use_blue() {
+        let mut settings = AppSettings::default();
+        settings.appearance.accent_color =
+            crate::appearance::AccentColor::from_hex("#006A60").unwrap();
+        let persisted = PersistedAppSettings::from_app_settings(&settings);
+        let json = serde_json::to_value(persisted).unwrap();
+        assert_eq!(json["accentColor"], "#006A60");
+        let loaded: PersistedAppSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(loaded.into_app_settings().appearance, settings.appearance);
+        for json in [
+            r"{}",
+            r##"{"accentColor":"#xyzxyz"}"##,
+            r#"{"accentColor":42}"#,
+            r#"{"accentColor":null}"#,
+        ] {
+            let persisted: PersistedAppSettings = serde_json::from_str(json).unwrap();
+            assert_eq!(
+                persisted.into_app_settings().appearance.accent_color,
+                crate::appearance::AccentColor::default()
+            );
+        }
+    }
+
+    #[test]
+    fn system_theme_preference_round_trips_with_resolved_color_theme() {
+        let persistence = AppPersistence::from_settings_path(test_settings_path());
+        let mut settings = AppSettings::default();
+        settings.appearance.follow_system_theme = true;
+        settings.appearance.color_theme = ColorTheme::Light;
+        persistence.save(&settings).unwrap();
+        assert_eq!(persistence.load().unwrap().appearance, settings.appearance);
+    }
+
+    #[test]
+    fn every_supported_color_theme_round_trips() {
+        for color_theme in ColorTheme::ALL {
+            let settings = AppSettings {
+                appearance: AppearanceSettings {
+                    ui_scale: ScalePreset::Percent100,
+                    color_theme,
+                    follow_system_theme: false,
+                    accent_color: crate::appearance::AccentColor::default(),
+                },
+                ..AppSettings::default()
+            };
+
+            let persisted = PersistedAppSettings::from_app_settings(&settings);
+            let json = serde_json::to_value(&persisted).expect("settings should serialize");
+            assert_eq!(json["colorTheme"], color_theme.persisted());
+            let loaded = persisted.into_app_settings();
+
+            assert_eq!(loaded.appearance.color_theme, color_theme);
+        }
+    }
+
+    #[test]
+    fn load_missing_or_null_color_theme_defaults_only_theme() {
+        for color_field in ["", r#","colorTheme":null"#] {
+            let path = test_settings_path();
+            let parent = path.parent().expect("test path should have parent");
+            fs::create_dir_all(parent).expect("test directory should be created");
+            fs::write(
+                &path,
+                format!(
+                    r#"{{"version":5,"uiScalePercent":175{color_field},"maxConcurrency":8,"customPresets":[]}}"#
+                ),
+            )
+            .expect("settings fixture should be written");
+
+            let settings = AppPersistence::from_settings_path(path)
+                .load()
+                .expect("settings should load");
+
+            assert_eq!(settings.appearance.color_theme, ColorTheme::Dark);
+            assert_eq!(settings.appearance.ui_scale, ScalePreset::Percent175);
+            assert_eq!(settings.max_concurrency, 8);
+        }
+    }
+
+    #[test]
+    fn load_unknown_color_theme_defaults_only_theme() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        fs::write(
+            &path,
+            r#"{"version":5,"uiScalePercent":150,"colorTheme":"future","maxConcurrency":6,"customPresets":[]}"#,
+        )
+        .expect("settings fixture should be written");
+
+        let settings = AppPersistence::from_settings_path(path)
+            .load()
+            .expect("settings should load");
+
+        assert_eq!(settings.appearance.color_theme, ColorTheme::Dark);
+        assert_eq!(settings.appearance.ui_scale, ScalePreset::Percent150);
+        assert_eq!(settings.max_concurrency, 6);
+    }
+
+    #[test]
+    fn load_wrong_type_color_theme_defaults_only_theme() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        fs::write(
+            &path,
+            r#"{"version":5,"uiScalePercent":110,"colorTheme":42,"maxConcurrency":3,"customPresets":[]}"#,
+        )
+        .expect("settings fixture should be written");
+
+        let settings = AppPersistence::from_settings_path(path)
+            .load()
+            .expect("settings should load");
+
+        assert_eq!(settings.appearance.color_theme, ColorTheme::Dark);
+        assert_eq!(settings.appearance.ui_scale, ScalePreset::Percent110);
+        assert_eq!(settings.max_concurrency, 3);
+    }
+
+    #[test]
+    fn load_reads_camel_case_presets_and_fills_missing_config_defaults() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        fs::write(
+            &path,
+            r#"{
+                "version": 1,
+                "maxConcurrency": 3,
+                "customPresets": [{
+                    "id": "custom-preset-2",
+                    "name": "Legacy",
+                    "builtIn": true,
+                    "config": {
+                        "container": "webm",
+                        "metadata": { "mode": "clean" }
+                    }
+                }]
+            }"#,
+        )
+        .expect("settings fixture should be written");
+
+        let settings = AppPersistence::from_settings_path(path)
+            .load()
+            .expect("settings should load");
+
+        assert_eq!(settings.max_concurrency, 3);
+        assert_eq!(settings.custom_presets[0].config.container, "webm");
+        assert_eq!(
+            settings.custom_presets[0].config.metadata.mode,
+            crate::settings::MetadataMode::Clean
+        );
+        assert!(!settings.custom_presets[0].built_in);
+    }
+
+    #[test]
+    fn load_falls_back_to_legacy_tauri_store_files_when_new_settings_are_missing() {
+        let path = test_settings_path();
+        let parent = path.parent().expect("test path should have parent");
+        fs::create_dir_all(parent).expect("test directory should be created");
+        fs::write(
+            path.with_file_name(LEGACY_APP_SETTINGS_FILE_NAME),
+            r#"{"maxConcurrency":5,"autoUpdateCheck":true}"#,
+        )
+        .expect("legacy app settings fixture should be written");
+        fs::write(
+            path.with_file_name(LEGACY_PRESETS_FILE_NAME),
+            r#"{"presets":[{
+                "id":"custom-preset-8",
+                "name":"Legacy Review",
+                "builtIn":false,
+                "config":{"container":"mkv"}
+            }]}"#,
+        )
+        .expect("legacy presets fixture should be written");
+
+        let settings = AppPersistence::from_settings_path(path)
+            .load()
+            .expect("legacy settings should load");
+
+        assert_eq!(settings.max_concurrency, 5);
+        assert_eq!(settings.custom_presets[0].id, "custom-preset-8");
+        assert_eq!(settings.custom_presets[0].config.container, "mkv");
+    }
+
+    #[test]
+    fn from_runtime_persists_only_custom_presets() {
+        let settings = AppSettings::from_runtime(
+            AppearanceSettings::default(),
+            3,
+            Some(PathBuf::from("/tmp/scissors-output")),
+            &[
+                PresetDefinition::built_in(
+                    "balanced-mp4",
+                    "Balanced MP4",
+                    ConversionConfig::default(),
+                ),
+                PresetDefinition::custom(
+                    " custom-preset-1 ".to_string(),
+                    " Review MP4 ".to_string(),
+                    ConversionConfig::default(),
+                ),
+            ],
+        );
+
+        assert_eq!(settings.custom_presets.len(), 1);
+        assert_eq!(settings.custom_presets[0].id, "custom-preset-1");
+        assert_eq!(settings.custom_presets[0].name, "Review MP4");
+        assert!(!settings.custom_presets[0].built_in);
+    }
+
+    fn test_settings_path() -> PathBuf {
+        let sequence = TEST_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_millis();
+
+        std::env::temp_dir()
+            .join("scissors-app-persistence-tests")
+            .join(format!("{}-{millis}-{sequence}", std::process::id()))
+            .join(SETTINGS_FILE_NAME)
+    }
+}

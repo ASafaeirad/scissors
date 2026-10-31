@@ -1,5 +1,5 @@
 name: Bug report
-description: Report reproducible Frame behavior that differs from what you expected.
+description: Report reproducible Scissors behavior that differs from what you expected.
 title: "[Bug]: "
 body:
   - type: markdown
@@ -8,10 +8,10 @@ body:
         Please share the smallest reproducible case you can. Clear details make it easier to confirm what is happening.
 
   - type: input
-    id: frame-version
+    id: scissors-version
     attributes:
-      label: Frame version
-      description: Use the version in frame-app/Cargo.toml and include your Git commit.
+      label: Scissors version
+      description: Use the version in scissors-app/Cargo.toml and include your Git commit.
       placeholder: e.g. 0.31.1
     validations:
       required: true
@@ -49,9 +49,9 @@ body:
     id: steps-to-reproduce
     attributes:
       label: Steps to reproduce
-      description: Start from opening Frame and include the settings needed to trigger the problem.
+      description: Start from opening Scissors and include the settings needed to trigger the problem.
       placeholder: |
-        1. Open Frame
+        1. Open Scissors
         2. Add ...
         3. Choose ...
         4. Observe ...
@@ -78,7 +78,7 @@ body:
     id: ffmpeg-logs
     attributes:
       label: FFmpeg logs
-      description: For conversion bugs, paste the relevant output from Frame's Logs view. Otherwise, write N/A.
+      description: For conversion bugs, paste the relevant output from Scissors's Logs view. Otherwise, write N/A.
       render: shell
     validations:
       required: true
