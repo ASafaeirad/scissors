@@ -263,7 +263,7 @@ impl FrameRoot {
     }
 
     fn toggle_timeline_snap(&mut self) {
-        if self.is_processing || self.update_installation_in_progress() {
+        if self.is_processing {
             return;
         }
         self.preview_ui.timeline_snap = !self.preview_ui.timeline_snap;
