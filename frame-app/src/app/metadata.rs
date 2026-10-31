@@ -75,7 +75,6 @@ impl FrameRoot {
                 match result {
                     Ok(metadata) => {
                         if normalize_selected_config
-                            && !root.update_installation_in_progress()
                             && let Some(file) = root
                                 .project
                                 .library

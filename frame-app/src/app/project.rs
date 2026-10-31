@@ -177,7 +177,7 @@ impl FrameRoot {
         offset_millis: Option<u64>,
         track: Option<usize>,
     ) -> bool {
-        if self.is_processing || self.update_installation_in_progress() {
+        if self.is_processing {
             return false;
         }
         let Some(mut file) = self.project.library.file_by_id(source_id).cloned() else {
@@ -265,7 +265,7 @@ impl FrameRoot {
     }
 
     pub(super) fn remove_library_source(&mut self, id: &str) -> bool {
-        if self.is_processing || self.update_installation_in_progress() {
+        if self.is_processing {
             return false;
         }
         // Instances keep their own path and metadata when a library entry is removed.
@@ -278,7 +278,6 @@ impl FrameRoot {
 
     pub(super) fn remove_project_clip(&mut self, id: &str) -> bool {
         if self.is_processing
-            || self.update_installation_in_progress()
             || self.project_clip_locked(id)
             || self.file_queue.file_by_id(id).is_none()
         {
@@ -296,7 +295,7 @@ impl FrameRoot {
     }
 
     pub(super) fn split_project_clip_at_playhead(&mut self) -> bool {
-        if self.is_processing || self.update_installation_in_progress() || self.export_ui.open {
+        if self.is_processing || self.export_ui.open {
             return false;
         }
         let Some(id) = self.file_queue.selected_file_id() else {
@@ -340,7 +339,7 @@ impl FrameRoot {
     /// Cuts the clip under the playhead on the selected clip's track, removing the part
     /// before the playhead (`leading`) or after it. The rest of the clip stays in place.
     pub(super) fn cut_project_track_at_playhead(&mut self, leading: bool) -> bool {
-        if self.is_processing || self.update_installation_in_progress() || self.export_ui.open {
+        if self.is_processing || self.export_ui.open {
             return false;
         }
         let Some(track) = self.file_queue.selected_file_id().and_then(|id| {
@@ -483,11 +482,7 @@ impl FrameRoot {
         initial_start: f64,
         initial_offset: u64,
     ) -> bool {
-        if self.is_processing
-            || self.update_installation_in_progress()
-            || !project_time.is_finite()
-            || self.project_clip_locked(id)
-        {
+        if self.is_processing || !project_time.is_finite() || self.project_clip_locked(id) {
             return false;
         }
         let Some(index) = self.project.clips.iter().position(|clip| clip.id == id) else {
@@ -537,11 +532,7 @@ impl FrameRoot {
     }
 
     pub(super) fn set_project_clip_speed(&mut self, id: &str, speed: f64) -> bool {
-        if self.is_processing
-            || self.update_installation_in_progress()
-            || !speed.is_finite()
-            || !(0.5..=20.0).contains(&speed)
-        {
+        if self.is_processing || !speed.is_finite() || !(0.5..=20.0).contains(&speed) {
             return false;
         }
         let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) else {
@@ -560,10 +551,7 @@ impl FrameRoot {
 
     /// Moves a clip without recording history. Callers record once per gesture.
     pub(super) fn move_project_clip(&mut self, id: &str, offset_millis: u64) -> bool {
-        if self.is_processing
-            || self.update_installation_in_progress()
-            || self.project_clip_locked(id)
-        {
+        if self.is_processing || self.project_clip_locked(id) {
             return false;
         }
         let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) else {

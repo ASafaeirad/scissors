@@ -96,9 +96,7 @@ impl FrameRoot {
     }
 
     pub(in crate::app) fn text_input_disabled(&self, _kind: FrameTextInputKind) -> bool {
-        self.update_installation_in_progress()
-            || self.file_queue.selected_file_locked()
-            || (self.project.enabled && self.is_processing)
+        self.file_queue.selected_file_locked() || (self.project.enabled && self.is_processing)
     }
 
     pub(in crate::app) fn text_input_value(&self, kind: FrameTextInputKind) -> String {

@@ -33,14 +33,12 @@ mod state;
 #[cfg(test)]
 mod tests;
 mod track_speed;
-mod update_actions;
-mod update_session;
 mod waveform;
 mod workspace;
 pub use runtime::{frame_window_options, init_app, open_frame_window};
 
 use accessibility::{FrameFocusKey, FrameFocusRegistry};
-use chrome::{AppSettingsSheetProps, app_settings_sheet, drag_drop_overlay, update_dialog};
+use chrome::{AppSettingsSheetProps, app_settings_sheet, drag_drop_overlay};
 use input::{FrameTextInputKind, FrameTextInputUiState};
 use logs_panel::logs_view;
 use motion::{
@@ -68,10 +66,8 @@ use crate::{
     PREVIEW_TIMELINE_CONTROL_HEIGHT, PREVIEW_TIMELINE_LABEL_WIDTH, PREVIEW_TIMELINE_LANE_HEIGHT,
     PREVIEW_TIMELINE_ROW_GAP, PREVIEW_TIMELINE_RULER_HEIGHT, PREVIEW_TOOLBAR_BUTTON_SIZE,
     PREVIEW_TOOLBAR_ICON_SIZE, PREVIEW_TOOLBAR_OFFSET, SETTINGS_CONTROL_HEIGHT,
-    SETTINGS_PANEL_PADDING, SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE,
-    TITLEBAR_ACTION_ICON_SIZE, TITLEBAR_BUTTON_HEIGHT, TITLEBAR_ICON_BUTTON_SIZE,
-    TITLEBAR_ICON_SIZE, VisualFixture, WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH,
-    active_view_from_env_value,
+    SETTINGS_PANEL_PADDING, SETTINGS_TAB_BUTTON_SIZE, SETTINGS_TAB_ICON_SIZE, VisualFixture,
+    WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH, active_view_from_env_value,
     app_info::{FRAME_APP_ID, FRAME_APP_VERSION},
     app_persistence::{AppPersistence, AppSettings},
     appearance::{AppearanceSettings, ColorTheme, ScalePreset},
@@ -86,7 +82,6 @@ use crate::{
         is_supported_overlay_image_path,
     },
     file_queue::{FileItem, FileQueue, FileStatus},
-    format_total_size,
     native_dialogs::{
         output_folder_dialog, overlay_image_dialog, pick_output_folder, pick_overlay_image_file,
         pick_project_file, pick_project_save_path, pick_source_files, pick_source_folder,
@@ -134,17 +129,12 @@ use crate::{
     source_metadata::{
         MetadataStatus, SourceMetadataEntry, SourceMetadataStore, probe_source_metadata,
     },
-    theme,
-    update_runtime::{
-        build_update_client, unix_timestamp, update_check_is_due, updates_disabled_explanation,
-    },
-    visual_fixture_from_env_value,
+    theme, visual_fixture_from_env_value,
 };
 use frame_core::capabilities::{AvailableEncoders, AvailableFilters};
 use frame_core::events::ConversionEvent;
 #[cfg(test)]
 use frame_core::types::DEFAULT_MAX_CONCURRENCY;
-use frame_updater::{DownloadProgress, UpdateChannel, UpdateCheck, UpdateInfo, UpdatePackage};
 use gpui::{
     App, Bounds, BoxShadow, ClickEvent, ClipboardItem, Context, DispatchPhase, DragMoveEvent,
     Element, ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths,
@@ -197,7 +187,6 @@ actions!(
     ]
 );
 
-const FILE_LIST_ACTION_ICON_SIZE: f32 = 16.0;
 const LOG_LINE_NUMBER_WIDTH: f32 = 32.0;
 const LOG_LINE_HEIGHT: f32 = 24.0;
 const LOG_SCROLL_BUTTON_OFFSET: f32 = 10.0;
@@ -237,8 +226,6 @@ const PREVIEW_FILTER_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(120);
 const PREVIEW_FRAME_TICK_INTERVAL: Duration = Duration::from_millis(16);
 const TRIM_PREVIEW_SEEK_INTERVAL: Duration = Duration::from_millis(50);
 const TRIM_PREVIEW_SEEK_EPSILON_SECONDS: f64 = 1.0 / 240.0;
-const UPDATE_INSTALL_WAIT_MESSAGE: &str =
-    "Finish or cancel active conversions before installing the update.";
 
 #[derive(Default)]
 struct TitlebarDragState {
@@ -276,11 +263,6 @@ pub struct FrameRoot {
     preview_ui: PreviewUiState,
     next_file_sequence: u64,
     persistence: Option<AppPersistence>,
-    auto_update_check: bool,
-    update_channel: UpdateChannel,
-    skipped_update_version: Option<String>,
-    last_update_check_at: Option<u64>,
-    update_ui: UpdateUiState,
     /// Set only by the `m3-gallery` visual fixture.
     m3_gallery: Option<m3::M3GalleryState>,
     workspace_ui: workspace::WorkspaceState,
@@ -314,57 +296,6 @@ struct TooltipUiState {
     visible_id: Option<String>,
     warm_until: Option<Instant>,
     hover_epoch: u64,
-}
-
-#[derive(Clone, Debug)]
-struct UpdateUiState {
-    status: UpdateStatus,
-    dialog_open: bool,
-    dialog_present: bool,
-    dialog_info: Option<Box<UpdateInfo>>,
-    release_notes_scroll_handle: ScrollHandle,
-    status_dismiss_epoch: u64,
-}
-
-impl Default for UpdateUiState {
-    fn default() -> Self {
-        Self {
-            status: UpdateStatus::default(),
-            dialog_open: false,
-            dialog_present: false,
-            dialog_info: None,
-            release_notes_scroll_handle: ScrollHandle::new(),
-            status_dismiss_epoch: 0,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-enum UpdateStatus {
-    #[default]
-    Idle,
-    Checking,
-    UpToDate,
-    Available(Box<UpdateInfo>),
-    Downloading {
-        version: String,
-        progress_percent: Option<u8>,
-        received_bytes: u64,
-        total_bytes: Option<u64>,
-    },
-    ReadyToInstall(Box<UpdatePackage>),
-    Installing,
-    Disabled(String),
-    Error(String),
-}
-
-impl UpdateStatus {
-    const fn is_busy(&self) -> bool {
-        matches!(
-            self,
-            Self::Checking | Self::Downloading { .. } | Self::Installing
-        )
-    }
 }
 
 impl Default for SettingsUiState {

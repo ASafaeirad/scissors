@@ -74,7 +74,7 @@ impl FrameRoot {
     }
 
     pub(super) fn undo_timeline_edit(&mut self) -> bool {
-        if self.is_processing || self.update_installation_in_progress() {
+        if self.is_processing {
             return false;
         }
         let Some(snapshot) = self.project.history.undo.pop() else {
@@ -87,7 +87,7 @@ impl FrameRoot {
     }
 
     pub(super) fn redo_timeline_edit(&mut self) -> bool {
-        if self.is_processing || self.update_installation_in_progress() {
+        if self.is_processing {
             return false;
         }
         let Some(snapshot) = self.project.history.redo.pop() else {

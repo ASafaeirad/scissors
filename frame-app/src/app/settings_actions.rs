@@ -11,7 +11,7 @@ impl FrameRoot {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.settings_ui.is_open && !self.update_installation_in_progress() {
+        if !self.settings_ui.is_open {
             self.open_app_settings();
             cx.notify();
         }
@@ -105,7 +105,7 @@ impl FrameRoot {
     }
 
     pub(in crate::app) fn set_appearance(&mut self, appearance: AppearanceSettings) -> bool {
-        if self.update_installation_in_progress() || self.appearance == appearance {
+        if self.appearance == appearance {
             return false;
         }
 
@@ -156,9 +156,6 @@ impl FrameRoot {
         &mut self,
         path: std::path::PathBuf,
     ) -> Result<(), crate::app_persistence::AppPersistenceError> {
-        if self.update_installation_in_progress() {
-            return Err(crate::app_persistence::AppPersistenceError::InstallationInProgress);
-        }
         let previous = self.default_output_directory.replace(path);
         if let Err(error) = self.persist_app_settings() {
             self.default_output_directory = previous;
@@ -169,8 +166,7 @@ impl FrameRoot {
     }
 
     pub(super) fn save_preset_from_draft(&mut self) -> bool {
-        if self.update_installation_in_progress()
-            || (self.project.enabled && self.is_processing)
+        if (self.project.enabled && self.is_processing)
             || (!self.editing_project_output() && self.file_queue.selected_file_locked())
         {
             return false;
@@ -215,9 +211,6 @@ impl FrameRoot {
     }
 
     pub(super) fn delete_preset(&mut self, preset_id: &str) -> bool {
-        if self.update_installation_in_progress() {
-            return false;
-        }
         let Some(index) = self
             .presets
             .iter()
@@ -248,8 +241,7 @@ impl FrameRoot {
     }
 
     pub(super) fn apply_preset_to_selected(&mut self, preset_id: &str) -> bool {
-        if self.update_installation_in_progress()
-            || (self.project.enabled && self.is_processing)
+        if (self.project.enabled && self.is_processing)
             || (!self.editing_project_output() && self.file_queue.selected_file_locked())
         {
             return false;

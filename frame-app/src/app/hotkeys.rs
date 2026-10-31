@@ -26,7 +26,6 @@ impl FrameRoot {
             || window.focused(cx).is_some() && !root_focus.is_focused(window) && !timeline_shortcut
             || self.active_view != ActiveView::Workspace
             || self.settings_ui.is_present
-            || self.update_ui.dialog_present
             || self.drag_drop_ui.is_present
         {
             return;

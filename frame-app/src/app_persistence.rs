@@ -8,7 +8,6 @@ use std::{
 
 use directories::{BaseDirs, ProjectDirs};
 use frame_core::types::DEFAULT_MAX_CONCURRENCY;
-use frame_updater::UpdateChannel;
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
@@ -28,27 +27,15 @@ pub struct AppSettings {
     pub max_concurrency: usize,
     pub default_output_directory: Option<PathBuf>,
     pub custom_presets: Vec<PresetDefinition>,
-    pub auto_update_check: bool,
-    pub update_channel: UpdateChannel,
-    pub skipped_update_version: Option<String>,
-    pub last_update_check_at: Option<u64>,
 }
 
 impl AppSettings {
     #[must_use]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Persistence snapshots explicitly include each independent runtime settings domain."
-    )]
     pub fn from_runtime(
         appearance: AppearanceSettings,
         max_concurrency: usize,
         default_output_directory: Option<PathBuf>,
         presets: &[PresetDefinition],
-        auto_update_check: bool,
-        update_channel: UpdateChannel,
-        skipped_update_version: Option<String>,
-        last_update_check_at: Option<u64>,
     ) -> Self {
         Self {
             appearance,
@@ -61,10 +48,6 @@ impl AppSettings {
                     .cloned()
                     .collect(),
             ),
-            auto_update_check,
-            update_channel,
-            skipped_update_version,
-            last_update_check_at,
         }
     }
 }
@@ -76,10 +59,6 @@ impl Default for AppSettings {
             max_concurrency: DEFAULT_MAX_CONCURRENCY,
             default_output_directory: None,
             custom_presets: Vec::new(),
-            auto_update_check: true,
-            update_channel: UpdateChannel::Stable,
-            skipped_update_version: None,
-            last_update_check_at: None,
         }
     }
 }
@@ -169,9 +148,6 @@ impl AppPersistence {
                 if let Some(max_concurrency) = legacy.max_concurrency {
                     settings.max_concurrency = valid_max_concurrency(max_concurrency);
                 }
-                if let Some(auto_update_check) = legacy.auto_update_check {
-                    settings.auto_update_check = auto_update_check;
-                }
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => {
@@ -207,8 +183,6 @@ impl AppPersistence {
 pub enum AppPersistenceError {
     #[error("config directory is unavailable")]
     ConfigDirectoryUnavailable,
-    #[error("update installation is in progress")]
-    InstallationInProgress,
     #[error("failed to {operation} at {path}: {source}")]
     Io {
         operation: AppPersistenceOperation,
@@ -289,17 +263,12 @@ struct PersistedAppSettings {
     max_concurrency: usize,
     default_output_directory: Option<PathBuf>,
     custom_presets: Vec<PresetDefinition>,
-    auto_update_check: bool,
-    update_channel: UpdateChannel,
-    skipped_update_version: Option<String>,
-    last_update_check_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct LegacyAppSettings {
     max_concurrency: Option<usize>,
-    auto_update_check: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -319,10 +288,6 @@ impl PersistedAppSettings {
             max_concurrency: valid_max_concurrency(settings.max_concurrency),
             default_output_directory: settings.default_output_directory.clone(),
             custom_presets: normalize_custom_presets(settings.custom_presets.clone()),
-            auto_update_check: settings.auto_update_check,
-            update_channel: settings.update_channel,
-            skipped_update_version: settings.skipped_update_version.clone(),
-            last_update_check_at: settings.last_update_check_at,
         }
     }
 
@@ -341,10 +306,6 @@ impl PersistedAppSettings {
             max_concurrency: valid_max_concurrency(self.max_concurrency),
             default_output_directory: self.default_output_directory,
             custom_presets: normalize_custom_presets(self.custom_presets),
-            auto_update_check: self.auto_update_check,
-            update_channel: self.update_channel,
-            skipped_update_version: self.skipped_update_version,
-            last_update_check_at: self.last_update_check_at,
         }
     }
 }
@@ -360,10 +321,6 @@ impl Default for PersistedAppSettings {
             max_concurrency: DEFAULT_MAX_CONCURRENCY,
             default_output_directory: None,
             custom_presets: Vec::new(),
-            auto_update_check: true,
-            update_channel: UpdateChannel::Stable,
-            skipped_update_version: None,
-            last_update_check_at: None,
         }
     }
 }
@@ -672,10 +629,6 @@ mod tests {
                     ..ConversionConfig::default()
                 },
             )],
-            auto_update_check: false,
-            update_channel: UpdateChannel::Stable,
-            skipped_update_version: Some("0.2.0".to_string()),
-            last_update_check_at: Some(1_800_000_000),
         };
 
         persistence
@@ -684,6 +637,57 @@ mod tests {
         let loaded = persistence.load().expect("settings should be loaded");
 
         assert_eq!(loaded, settings);
+    }
+
+    #[test]
+    fn load_and_save_old_settings_preserves_preferences_and_drops_update_fields() {
+        let persistence = AppPersistence::from_settings_path(test_settings_path());
+        fs::create_dir_all(persistence.settings_path().parent().unwrap()).unwrap();
+        fs::write(
+            persistence.settings_path(),
+            r#"{
+                "version": 5,
+                "uiScalePercent": 125,
+                "colorTheme": "light",
+                "maxConcurrency": 7,
+                "defaultOutputDirectory": "/tmp/frame-output",
+                "customPresets": [{
+                    "id": "custom-preset-1", "name": "Review",
+                    "config": {"container": "mkv"}
+                }],
+                "autoUpdateCheck": true,
+                "updateChannel": "stable",
+                "skippedUpdateVersion": "0.33.1",
+                "lastUpdateCheckAt": 1800000000
+            }"#,
+        )
+        .unwrap();
+
+        let settings = persistence.load().unwrap();
+        assert_eq!(settings.appearance.ui_scale, ScalePreset::Percent125);
+        assert_eq!(settings.appearance.color_theme, ColorTheme::Light);
+        assert_eq!(settings.max_concurrency, 7);
+        assert_eq!(
+            settings.default_output_directory,
+            Some(PathBuf::from("/tmp/frame-output"))
+        );
+        assert_eq!(settings.custom_presets[0].config.container, "mkv");
+
+        persistence.save(&settings).unwrap();
+        assert_eq!(persistence.load().unwrap(), settings);
+        let json: serde_json::Value =
+            serde_json::from_slice(&fs::read(persistence.settings_path()).unwrap()).unwrap();
+        for field in [
+            "autoUpdateCheck",
+            "updateChannel",
+            "skippedUpdateVersion",
+            "lastUpdateCheckAt",
+        ] {
+            assert!(
+                json.get(field).is_none(),
+                "obsolete field {field} was saved"
+            );
+        }
     }
 
     #[test]
@@ -758,7 +762,6 @@ mod tests {
 
         assert_eq!(settings.appearance, AppearanceSettings::default());
         assert_eq!(settings.max_concurrency, 7);
-        assert!(!settings.auto_update_check);
     }
 
     #[test]
@@ -982,7 +985,6 @@ mod tests {
             .expect("legacy settings should load");
 
         assert_eq!(settings.max_concurrency, 5);
-        assert!(settings.auto_update_check);
         assert_eq!(settings.custom_presets[0].id, "custom-preset-8");
         assert_eq!(settings.custom_presets[0].config.container, "mkv");
     }
@@ -1005,10 +1007,6 @@ mod tests {
                     ConversionConfig::default(),
                 ),
             ],
-            true,
-            UpdateChannel::Stable,
-            None,
-            Some(1_800_000_000),
         );
 
         assert_eq!(settings.custom_presets.len(), 1);

@@ -21,8 +21,6 @@ pub(crate) mod runtime_environment;
 pub mod settings;
 pub mod source_metadata;
 pub mod theme;
-pub mod update_runtime;
-pub(crate) mod update_session;
 
 use file_queue::FileQueue;
 use numeric::u64_to_f64;
@@ -114,7 +112,6 @@ pub enum VisualFixture {
     SettingsMetadata,
     SettingsPresets,
     SettingsVideoFilters,
-    UpdateAvailable,
     WorkspaceAudio,
     WorkspaceEmpty,
     WorkspaceImage,
@@ -138,7 +135,6 @@ pub fn visual_fixture_from_env_value(value: Option<&str>) -> Option<VisualFixtur
         Some("settings-metadata") => Some(VisualFixture::SettingsMetadata),
         Some("settings-presets") => Some(VisualFixture::SettingsPresets),
         Some("settings-video-filters") => Some(VisualFixture::SettingsVideoFilters),
-        Some("update-available") => Some(VisualFixture::UpdateAvailable),
         Some("workspace-audio") => Some(VisualFixture::WorkspaceAudio),
         Some("workspace-empty") => Some(VisualFixture::WorkspaceEmpty),
         Some("workspace-image") => Some(VisualFixture::WorkspaceImage),
@@ -449,7 +445,6 @@ mod tests {
                     "settings-video-filters",
                     VisualFixture::SettingsVideoFilters,
                 ),
-                ("update-available", VisualFixture::UpdateAvailable),
                 ("workspace-audio", VisualFixture::WorkspaceAudio),
                 ("workspace-empty", VisualFixture::WorkspaceEmpty),
                 ("workspace-image", VisualFixture::WorkspaceImage),

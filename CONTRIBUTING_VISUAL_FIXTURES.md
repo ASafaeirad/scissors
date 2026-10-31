@@ -2,7 +2,7 @@
 
 Frame includes runtime visual fixtures for manual GPUI review. They seed the app
 with deterministic state so contributors can inspect UI surfaces without finding
-matching media files, waiting for conversions, or triggering update checks.
+matching media files, waiting for conversions.
 
 The source of truth is `frame-app/src/lib.rs` for fixture names and
 `frame-app/src/app/fixtures.rs` for seeded state.
@@ -12,7 +12,6 @@ The source of truth is `frame-app/src/lib.rs` for fixture names and
 Set `FRAME_GPUI_VISUAL_FIXTURE` before launching the app:
 
 ```bash
-FRAME_GPUI_VISUAL_FIXTURE=update-available cargo xtask run
 ```
 
 Any fixture can be combined with a supported interface scale using
@@ -87,7 +86,6 @@ the final GPUI rendering.
 | `settings-images` | Image settings tab with a selected PNG source | Image output controls, custom image dimensions, image-source metadata, and non-video settings visibility. |
 | `settings-metadata` | Metadata tab with source tags and output metadata drafts | Source metadata presentation, editable metadata fields, long value wrapping, and tag/value alignment. |
 | `settings-presets` | Export dialog with an edited built-in preset, a custom preset, and a name draft | Grouped preset library, saving current options, custom preset deletion, and preset form spacing. |
-| `update-available` | Update dialog with release notes and a platform asset | Update dialog layout, release notes markdown rendering, scroll behavior, close animation, footer actions, and platform-specific asset copy. |
 | `workspace-empty` | Empty workspace | Welcome/import screen, empty project timeline, primary and secondary import actions, and first-run visual balance. |
 | `workspace-audio` | Workspace with a selected audio source | Library card for audio media, audio metadata display, preview controls hidden for audio-only sources, and audio conversion defaults. |
 | `workspace-image` | Workspace with a selected image source | Library card for image media, image metadata display, image preview state, and image conversion defaults. |
@@ -103,5 +101,5 @@ When adding or changing a visual fixture:
 5. Update this document with the fixture key and the scenario it covers.
 
 Keep fixture data realistic enough to exercise layout pressure: long labels,
-multiple tracks, release notes, logs, or metadata values should be included when
+multiple tracks, logs, or metadata values should be included when
 the target UI needs wrapping, scrolling, or dense row treatment.

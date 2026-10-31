@@ -78,8 +78,7 @@ impl Element for FileDropLifecycleProbe {
 
 impl FrameRoot {
     pub(super) fn select_workspace_file(&mut self, id: &str) -> bool {
-        !(self.update_installation_in_progress() || self.project.enabled && self.is_processing)
-            && self.file_queue.select_existing_file(id)
+        !(self.project.enabled && self.is_processing) && self.file_queue.select_existing_file(id)
     }
 
     pub(super) const fn open_drag_drop_overlay(&mut self) -> bool {
@@ -145,13 +144,7 @@ impl FrameRoot {
             let paths = cx
                 .background_spawn(async move { discover_supported_source_paths(paths) })
                 .await;
-            let Ok(imports) = this.update(cx, |root, _cx| {
-                if root.update_installation_in_progress() {
-                    Vec::new()
-                } else {
-                    root.allocate_file_imports(paths)
-                }
-            }) else {
+            let Ok(imports) = this.update(cx, |root, _cx| root.allocate_file_imports(paths)) else {
                 return;
             };
             if imports.is_empty() {
@@ -172,9 +165,6 @@ impl FrameRoot {
                 .collect::<Vec<_>>();
 
             this.update(cx, |root, cx| {
-                if root.update_installation_in_progress() {
-                    return;
-                }
                 root.project.enabled = true;
                 root.active_view = ActiveView::Workspace;
                 if root.project.library.add_files(files) > 0 {

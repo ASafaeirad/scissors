@@ -117,11 +117,6 @@ impl FrameRoot {
             preview_ui: PreviewUiState::default(),
             next_file_sequence: 0,
             persistence,
-            auto_update_check: persisted_settings.auto_update_check,
-            update_channel: persisted_settings.update_channel,
-            skipped_update_version: persisted_settings.skipped_update_version,
-            last_update_check_at: persisted_settings.last_update_check_at,
-            update_ui: UpdateUiState::default(),
             m3_gallery: None,
             workspace_ui: workspace::WorkspaceState::default(),
             media_assets: media_assets::MediaAssetsState::default(),
@@ -157,7 +152,7 @@ impl FrameRoot {
         &mut self,
         update: impl FnOnce(&mut ConversionConfig) -> bool,
     ) -> bool {
-        if self.update_installation_in_progress() || (self.project.enabled && self.is_processing) {
+        if self.project.enabled && self.is_processing {
             return false;
         }
         let before = (self.project.enabled
@@ -207,10 +202,6 @@ impl FrameRoot {
             1,
             self.default_output_directory.clone(),
             &self.presets,
-            self.auto_update_check,
-            self.update_channel,
-            self.skipped_update_version.clone(),
-            self.last_update_check_at,
         ))
     }
 }

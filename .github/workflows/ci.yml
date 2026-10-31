@@ -1,5 +1,3 @@
-# Generated from xtask::workflows::ci
-# Rebuild with `cargo xtask workflows`.
 name: ci
 on:
   pull_request:
@@ -29,7 +27,7 @@ jobs:
     - name: steps::setup_linux
       run: |
         sudo apt-get update
-        sudo apt-get install -y clang desktop-file-utils libasound2-dev libdrm-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+        sudo apt-get install -y clang libasound2-dev libdrm-dev libfontconfig1-dev libfreetype6-dev libx11-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
     - name: security::validate_workflow_syntax
       run: |
         mkdir -p target/actionlint
@@ -57,7 +55,7 @@ jobs:
           --ignore RUSTSEC-2026-0370 \
           --ignore RUSTSEC-2026-0371 \
           --ignore RUSTSEC-2026-0372
-    - name: ci::run_documented_gate
+    - name: ci::checks
       run: cargo xtask ci
     - name: ci::setup_ffmpeg
       run: cargo xtask setup-ffmpeg

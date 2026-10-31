@@ -9,19 +9,16 @@ The app intentionally stays self-contained here: local Frame UI wrappers are bui
 ## Source Layout
 
 - `src/main.rs` is only the GPUI entrypoint.
-- `src/app_info.rs` owns app identity constants shared by runtime and package
-  metadata.
+- `src/app_info.rs` owns app identity constants used by the runtime.
 - `src/app/` owns `FrameRoot`, window runtime, shell rendering, import/conversion/metadata workflows, and UI panels.
 - `src/app/input/`, `src/app/preview_panel/`, and `src/app/settings_panel/` split the largest GPUI UI surfaces into focused submodules.
 - `src/file_queue/`, `src/settings/`, `src/preview/`, and `src/conversion_runner/` contain tested domain logic outside rendering code.
 - `src/assets/` embeds only files from `frame-app/assets/`.
-- `resources/app-icons/` contains the native desktop package icon set consumed
-  by `build.rs`, `cargo bundle`, and Linux packaging.
+- `resources/app-icons/` contains the native app icons consumed by `build.rs`.
 - `resources/binaries/` is an ignored local setup output for FFmpeg and
-  FFprobe. Production package scripts copy the target platform binaries into
-  the native bundle.
+  FFprobe.
 
-Build output stays under the workspace `target/` directory and is ignored by `.gitignore`. macOS-specific native-window glue is limited to hiding AppKit's standard titlebar buttons so the custom Frame controls are the only visible traffic lights. Windows icons are embedded by `build.rs`; release packages should be produced through `cargo xtask bundle macos`, `cargo xtask bundle linux`, or `cargo xtask bundle windows` so runtime binaries and desktop metadata are installed together where applicable.
+Build output stays under the workspace `target/` directory and is ignored by `.gitignore`. macOS-specific native-window glue is limited to hiding AppKit's standard titlebar buttons so the custom Frame controls are the only visible traffic lights. Windows icons are embedded by `build.rs`. Run locally with `cargo xtask run`, or build an optimized executable with `cargo xtask build --release`.
 
 Enable **Show FPS meter** under **Settings > Diagnostics** to toggle UI
 performance diagnostics. You can also press `F12` or choose **Show/hide FPS meter**
