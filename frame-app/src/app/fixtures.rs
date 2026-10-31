@@ -1,39 +1,6 @@
 use super::*;
 
 use crate::settings::{CutSegment, DeinterlaceMode, FilterStrength};
-use frame_updater::{PlatformAssetKey, UpdateAsset};
-use semver::Version;
-
-const UPDATE_AVAILABLE_RELEASE_NOTES: &str = r"
-# Frame 0.30.0
-
-### Added
-
-- **Native GPUI Application:** Rebuilt Frame as a Rust-native GPUI-CE desktop app, replacing the previous Tauri/Svelte shell while keeping the main workspace, preview, settings, queue, and logs workflows in a single native application.
-- **Rust Workspace Architecture:** Added dedicated `frame-app`, `frame-core`, and `frame-updater` crates so FFmpeg argument generation, media probing, compatibility rules, queue control, and update logic can be tested and shipped outside the UI layer.
-- **Native Packaging Pipeline:** Added Rust-based release tooling, macOS/Linux/Windows bundle scripts, Linux desktop metadata, Windows resource embedding, and generated GitHub Actions workflows for building release artifacts.
-- **Signed Update System:** Added a signed-manifest updater with platform-specific assets, SHA-256 verification, Ed25519 manifest signatures, install planning, and a bundled update helper for replacing installed builds.
-- **GPUI Preview and Editing Surface:** Added a native preview panel with crop, transform, trim timeline, overlay controls, zoom handling, and FFmpeg-backed frame extraction for video, image, and audio workflows.
-- **Native Settings and Metadata Panels:** Added GPUI settings surfaces for source details, output selection, video, audio, images, subtitles, metadata, and presets using the shared media compatibility model.
-- **Image Encoding Controls:** Added format-specific still-image encoding controls for JPEG, WebP, PNG, and TIFF, including JPEG quality/Huffman mode, WebP lossy/lossless mode, quality/compression/presets, PNG compression/prediction, and TIFF compression selection with Rust-side validation and FFmpeg argument mapping.
-
-### Changed
-
-- **Application Runtime:** Moved the production app from a webview-based Tauri runtime to a native Rust/GPUI runtime, reducing the JavaScript frontend boundary and making Rust the primary application layer.
-- **Conversion Flow:** Reworked import, queue, progress, cancellation, pause/resume, logging, and notification handling around native Rust state and process controllers while preserving FFmpeg-based conversion behavior.
-- **Media Compatibility:** Centralized container, codec, stream, pixel-format, image, subtitle, and metadata rules in `frame-core` so UI option availability and conversion validation use the same Rust model.
-- **Documentation:** Updated the project documentation around the GPUI-CE stack, Rust workspace layout, native packaging scripts, bundled FFmpeg runtime setup, and signed update manifest flow.
-
-### Removed
-
-- **Tauri/Svelte Application Shell:** Removed the previous `src-tauri` backend, SvelteKit frontend, Tauri capabilities/configuration, webview services, stores, components, routes, and JavaScript build toolchain.
-- **Frontend Localization System:** Removed the previous Svelte-era locale dictionaries and i18n extraction/sync guardrail scripts.
-- **Legacy Web Preview Pipeline:** Removed the Pixi/WebGPU web preview implementation in favor of the GPUI/FFmpeg-backed native preview implementation.
-- **FFmpeg Log Syntax Highlighting:** Removed the previous web-based FFmpeg log syntax highlighting from the Logs view during the native GPUI rewrite.
-- **ML Upscaling Runtime:** Removed the bundled RealESRGAN model assets and Tauri upscaling worker path from the production app.
-- **Legacy App Icon Sets:** Removed unused Tauri mobile/store icon resources, keeping the desktop package icon set consumed by the native bundle scripts.
-";
-
 impl FrameRoot {
     pub(super) fn apply_visual_fixture(&mut self, fixture: Option<VisualFixture>) {
         match fixture {
@@ -81,7 +48,6 @@ impl FrameRoot {
                 self.apply_settings_video_filters_fixture();
             }
             Some(VisualFixture::ExportDialog) => self.apply_export_dialog_fixture(),
-            Some(VisualFixture::UpdateAvailable) => self.apply_update_available_fixture(),
             Some(VisualFixture::WorkspaceAudio) => self.apply_workspace_audio_fixture(),
             Some(VisualFixture::WorkspaceEmpty) => self.apply_workspace_empty_fixture(),
             Some(VisualFixture::WorkspaceImage) => self.apply_workspace_image_fixture(),
@@ -156,27 +122,6 @@ impl FrameRoot {
         self.project.history.clear();
         // Show the fitted layout, not the first-clip zoom that the setup above triggered.
         self.preview_ui.project_timeline_view = None;
-    }
-
-    pub(super) fn apply_update_available_fixture(&mut self) {
-        let Ok(asset_key) = PlatformAssetKey::current() else {
-            return;
-        };
-        let update = Box::new(UpdateInfo {
-            version: Version::new(0, 30, 0),
-            channel: UpdateChannel::Stable,
-            asset_key,
-            asset: update_available_fixture_asset(asset_key),
-            release_notes_url: Some(
-                "https://github.com/66HEX/frame/releases/tag/v0.30.0".to_string(),
-            ),
-            release_notes_markdown: Some(UPDATE_AVAILABLE_RELEASE_NOTES.to_string()),
-        });
-
-        self.update_ui.status = UpdateStatus::Available(update.clone());
-        self.update_ui.dialog_info = Some(update);
-        self.update_ui.dialog_open = true;
-        self.update_ui.dialog_present = true;
     }
 
     pub(super) fn apply_workspace_empty_fixture(&mut self) {
@@ -471,25 +416,5 @@ impl FrameRoot {
                 ..SourceMetadata::default()
             },
         );
-    }
-}
-
-fn update_available_fixture_asset(asset_key: PlatformAssetKey) -> UpdateAsset {
-    let file_name = match asset_key {
-        PlatformAssetKey::MacosAarch64 | PlatformAssetKey::MacosX8664 => "Frame-fixture.app.zip",
-        PlatformAssetKey::WindowsX8664 => "Frame-fixture.exe",
-        PlatformAssetKey::LinuxX8664 | PlatformAssetKey::LinuxAarch64 => {
-            "frame-fixture-linux.tar.gz"
-        }
-    };
-
-    UpdateAsset {
-        target_triple: asset_key.target_triple().to_string(),
-        kind: asset_key.asset_kind(),
-        file_name: file_name.to_string(),
-        url: format!("https://example.com/{file_name}"),
-        size_bytes: 1,
-        sha256: "0".repeat(64),
-        installer_args: Vec::new(),
     }
 }

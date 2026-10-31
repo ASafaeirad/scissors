@@ -4,7 +4,6 @@ use super::preview_panel::{
     PreviewEditToolbarFocus, PreviewEditToolbarFocuses, PreviewToolFocuses, PreviewViewportFocuses,
 };
 use super::*;
-use crate::app::chrome::UpdateDialogView;
 
 impl Render for FrameRoot {
     #[expect(
@@ -236,8 +235,7 @@ impl Render for FrameRoot {
                 content.child(workspace_view(
                     super::media_assets::MediaAssetsProps {
                         state: &self.media_assets,
-                        delete_enabled: !self.update_installation_in_progress()
-                            && (!self.project.enabled || !self.is_processing),
+                        delete_enabled: !self.project.enabled || !self.is_processing,
                     },
                     &self.file_queue,
                     &settings,
@@ -359,7 +357,7 @@ impl Render for FrameRoot {
             }))
             .on_drag_move(cx.listener(
                 |root, _event: &DragMoveEvent<ExternalPaths>, _window, cx| {
-                    if !root.update_installation_in_progress() && root.open_drag_drop_overlay() {
+                    if root.open_drag_drop_overlay() {
                         cx.notify();
                     }
                 },
@@ -368,7 +366,6 @@ impl Render for FrameRoot {
             .child(FileDropLifecycleProbe { owner: cx.entity() });
 
         if self.settings_ui.is_present {
-            let update_install_ready = self.can_install_downloaded_update();
             let theme_option_focuses = ["light", "dark", "system"].map(|name| {
                 self.ensure_focus(
                     FrameFocusKey::Control(format!("app-settings-theme-{name}")),
@@ -399,49 +396,11 @@ impl Render for FrameRoot {
                 true,
                 cx,
             );
-            let auto_update_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-auto-update-check".to_string()),
-                true,
-                cx,
-            );
             let fps_meter_focus = self.ensure_focus(
                 FrameFocusKey::Control("app-settings-fps-meter".to_string()),
                 true,
                 cx,
             );
-            let check_now_enabled = !self.update_ui.status.is_busy();
-            let check_now_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-update-check-now".to_string()),
-                check_now_enabled,
-                cx,
-            );
-            let download_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-update-download".to_string()),
-                matches!(&self.update_ui.status, UpdateStatus::Available(_)),
-                cx,
-            );
-            let skip_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-update-skip".to_string()),
-                matches!(&self.update_ui.status, UpdateStatus::Available(_)),
-                cx,
-            );
-            let install_focus = self.ensure_focus(
-                FrameFocusKey::Control("app-settings-update-install".to_string()),
-                update_install_ready,
-                cx,
-            );
-            let last_focus = match &self.update_ui.status {
-                UpdateStatus::Available(_) => &skip_focus,
-                UpdateStatus::ReadyToInstall(_) if update_install_ready => &install_focus,
-                UpdateStatus::ReadyToInstall(_)
-                | UpdateStatus::UpToDate
-                | UpdateStatus::Disabled(_)
-                | UpdateStatus::Error(_)
-                | UpdateStatus::Idle => &check_now_focus,
-                UpdateStatus::Checking
-                | UpdateStatus::Downloading { .. }
-                | UpdateStatus::Installing => &auto_update_focus,
-            };
             let panel_focus = self.ensure_focus(
                 FrameFocusKey::Control("app-settings-panel".to_string()),
                 false,
@@ -469,20 +428,12 @@ impl Render for FrameRoot {
                     scroll_handle: &self.settings_ui.app_settings_scroll_handle,
                     theme_focuses: &theme_option_focuses,
                     ui_scale_focuses: &ui_scale_option_focuses,
-                    auto_update_check: self.auto_update_check,
                     show_fps_meter: self.fps_meter.is_some(),
-                    update_status: &self.update_ui.status,
-                    update_install_ready,
                     output_directory_focus: &output_directory_focus,
-                    auto_update_focus: &auto_update_focus,
                     fps_meter_focus: &fps_meter_focus,
-                    check_now_focus: &check_now_focus,
-                    download_focus: &download_focus,
-                    skip_focus: &skip_focus,
-                    install_focus: &install_focus,
                     panel_focus: &panel_focus,
                     close_focus: &close_focus,
-                    last_focus,
+                    last_focus: &fps_meter_focus,
                 },
                 window,
                 cx,
@@ -501,37 +452,6 @@ impl Render for FrameRoot {
             root = root.child(drag_drop_overlay(
                 self.drag_drop_ui.is_open,
                 palette,
-                window,
-                cx,
-            ));
-        }
-
-        if self.update_ui.dialog_present {
-            let update_install_ready = self.can_install_downloaded_update();
-            let panel_focus = self.ensure_focus(
-                FrameFocusKey::Control("update-dialog-panel".to_string()),
-                false,
-                cx,
-            );
-            let close_focus = self.ensure_focus(
-                FrameFocusKey::Control("update-dialog-close".to_string()),
-                !self.update_ui.status.is_busy(),
-                cx,
-            );
-            if self.update_ui.dialog_open && !panel_focus.contains_focused(window, cx) {
-                close_focus.focus(window, cx);
-            }
-            root = root.child(update_dialog(
-                self.update_ui.dialog_open,
-                UpdateDialogView {
-                    status: &self.update_ui.status,
-                    info: self.update_ui.dialog_info.as_deref(),
-                    install_ready: update_install_ready,
-                    release_notes_scroll_handle: &self.update_ui.release_notes_scroll_handle,
-                    panel_focus: &panel_focus,
-                    close_focus: &close_focus,
-                    palette,
-                },
                 window,
                 cx,
             ));

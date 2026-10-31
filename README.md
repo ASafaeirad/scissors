@@ -25,37 +25,6 @@ source probing, compatibility validation, task control, and progress parsing.
 </div>
 <br />
 
-> [!WARNING]
-> **Unsigned Application Notice**
-> Since the application is currently not Developer ID or certificate signed, your
-> operating system may flag it:
->
-> - **macOS:** Release artifacts are ad-hoc signed but not notarized. The system
->   can flag the app and bundled binaries with a quarantine attribute. To run the
->   app, remove the attribute manually after installing it:
->   ```bash
->   xattr -dr com.apple.quarantine /Applications/Frame.app
->   ```
-> - **Windows:** Windows SmartScreen may prevent the application from starting.
->   Click **"More info"** and then **"Run anyway"** to proceed.
-
-## GitHub Sponsors
-
-If Frame helps you, consider supporting the project on GitHub Sponsors:
-
-[**Sponsor Frame**](https://github.com/sponsors/66HEX)
-
-Current funding goals:
-
-- **Apple Developer Program:** `$99/year` to sign and notarize macOS builds.
-- **Microsoft code-signing certificate:** estimated `$300-$700/year` to sign
-  Windows builds and reduce SmartScreen friction.
-
-Sponsor contributions are used first for these release-signing costs.
-
-See [GitHub Sponsors](https://github.com/sponsors/66HEX) for full sponsorship
-details, tier suggestions, and a launch checklist.
-
 ## Features
 
 ### Media Conversion Core
@@ -79,9 +48,9 @@ details, tier suggestions, and a launch checklist.
   - `libsvtav1` (SVT-AV1)
   - `mpeg2video` (MPEG-2 Video for transport streams)
   - `gif` palette output
-  - **Hardware Acceleration:** macOS bundles include VideoToolbox encoders
-    (`h264_videotoolbox`, `hevc_videotoolbox`); Windows bundles include NVIDIA
-    NVENC encoders (`h264_nvenc`, `hevc_nvenc`, `av1_nvenc`). Linux bundles use
+  - **Hardware Acceleration:** macOS FFmpeg downloads include VideoToolbox encoders
+    (`h264_videotoolbox`, `hevc_videotoolbox`); Windows FFmpeg downloads include NVIDIA
+    NVENC encoders (`h264_nvenc`, `hevc_nvenc`, `av1_nvenc`). Linux FFmpeg downloads use
     software encoders.
 - **Image Encoders:** `png`, `mjpeg` (JPEG), `libwebp` (WebP), `bmp`, `tiff`.
 - **Audio Encoders:** `aac`, `ac3`, `libopus`, `mp3`, `mp2`, `alac`, `flac`,
@@ -114,8 +83,8 @@ details, tier suggestions, and a launch checklist.
 - **Real-time Telemetry:** FFmpeg progress and log events are parsed and shown
   in the app while conversions run.
 - **Runtime Binaries:** Local development uses platform-specific FFmpeg and
-  FFprobe binaries under `frame-app/resources/binaries/`. Native bundles include
-  those tools and detect encoder capabilities from the bundled FFmpeg at startup.
+  FFprobe binaries under `frame-app/resources/binaries/`. The app detects encoder
+  capabilities from the selected FFmpeg at startup.
 
 ## Technical Stack
 
@@ -125,7 +94,7 @@ details, tier suggestions, and a launch checklist.
 - **UI:** GPUI-CE.
 - **Native Dialogs:** `rfd`, with extension filtering for supported media files.
 - **Assets:** Embedded SVG icons, bundled Overused Grotesk font, and native app
-  icon resources for macOS, Windows, and Linux packages.
+  icon resources for native builds.
 
 ### Conversion Core
 
@@ -134,134 +103,26 @@ details, tier suggestions, and a launch checklist.
 - **Error Handling:** `thiserror`.
 - **Media Rules:** Shared JSON compatibility matrix consumed by Rust code.
 
-## Installation
+## Local setup
 
-### Download Prebuilt Binaries
-
-The easiest way to get started is to download the latest release for your
-platform directly from GitHub.
-
-[**Download Latest Release**](https://github.com/66HEX/frame/releases)
-
-> **Note:** Since the application is not yet code-signed, you may need to
-> manually approve it in your system settings.
-
-### Automatic Updates
-
-Native release builds include a signed-manifest updater. Frame checks the latest
-GitHub Release manifest, verifies its Ed25519 signature and the SHA-256 hash of
-the selected platform asset, then installs through a small bundled helper.
-
-### WinGet (Windows)
-
-Frame is available in the official WinGet repository under the `66HEX.Frame`
-identifier.
-
-```powershell
-winget install --id 66HEX.Frame -e
-```
-
-To update:
-
-```powershell
-winget upgrade --id 66HEX.Frame -e
-```
-
-### Homebrew (macOS)
-
-For macOS users, Frame is available through the custom Homebrew tap:
-
-```bash
-brew tap 66HEX/frame
-brew install --cask frame
-```
-
-### Flathub (Linux)
-
-The production Flatpak is distributed through Flathub under
-`io.github._66HEX.Frame`. The Flathub build uses FFmpeg, FFprobe, codecs, and
-media libraries from the Freedesktop runtime instead of bundled sidecar media
-tools.
-
-```bash
-flatpak install flathub io.github._66HEX.Frame
-```
-
-To update:
-
-```bash
-flatpak update io.github._66HEX.Frame
-```
-
-### Build from Source
-
-If you prefer to build the application yourself or want to contribute, follow
-these steps.
-
-**1. Prerequisites**
-
-- **Rust:** [Install Rust](https://www.rust-lang.org/tools/install)
-- **Platform toolchain:** a C/C++ build toolchain and native desktop libraries
-  required by Rust and GPUI-CE on your operating system.
-
-**2. Clone the Repository**
-
-```bash
-git clone https://github.com/66HEX/frame.git
-cd frame
-```
-
-**3. Setup Runtime Binaries**
-
-Frame requires FFmpeg and FFprobe runtime binaries. Release and development
-tasks download the platform-specific tools into ignored local runtime paths. To
-prepare them manually:
+This checkout is built and run locally. Install Rust and the native development
+libraries listed in [CONTRIBUTING.md](CONTRIBUTING.md), then run:
 
 ```bash
 cargo xtask setup-ffmpeg
+cargo xtask run
 ```
 
-**4. Run or Build**
+Build an optimized local executable with:
 
-- **Development:**
+```bash
+cargo xtask build --release
+```
 
-  ```bash
-  cargo xtask run
-  ```
-
-- **Production Build:**
-
-  ```bash
-  cargo xtask build --release
-  ```
-
-- **Regenerate release workflows:**
-
-  ```bash
-  cargo xtask workflows
-  ```
-
-- **macOS DMG:**
-
-  ```bash
-  cargo install cargo-bundle
-  cargo xtask bundle macos
-  ```
-
-- **Linux tarball with `.desktop` metadata and hicolor icons:**
-
-  ```bash
-  cargo xtask bundle linux
-  ```
-
-- **Windows installer:**
-
-  ```powershell
-  cargo xtask bundle windows
-  ```
-
-  The release binary embeds the Frame `.ico` resource during the normal Cargo
-  build so Explorer and the taskbar can resolve the application icon.
+The executable is `target/release/frame`, or `target/release/frame.exe` on Windows.
+FFmpeg and FFprobe remain under `frame-app/resources/binaries/`. To use your own
+installations, set `FRAME_FFMPEG_PATH` and `FRAME_FFPROBE_PATH`, or set
+`FRAME_USE_SYSTEM_MEDIA_TOOLS=1` to use the tools on `PATH`.
 
 ## Development Checks
 

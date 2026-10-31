@@ -403,8 +403,7 @@ impl FrameRoot {
                 file.map(|file| file.output_name.clone())
                     .unwrap_or_default()
             },
-            disabled: self.update_installation_in_progress()
-                || self.file_queue.selected_file_locked()
+            disabled: self.file_queue.selected_file_locked()
                 || (self.project.enabled && self.is_processing),
             kind,
             video_controls,

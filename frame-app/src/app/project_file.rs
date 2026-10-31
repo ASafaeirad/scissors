@@ -447,7 +447,7 @@ impl FrameRoot {
     }
 
     const fn can_replace_project(&self) -> bool {
-        !self.is_processing && !self.update_installation_in_progress()
+        !self.is_processing
     }
 
     fn open_project_file(&mut self, path: PathBuf, file: ProjectFile, cx: &mut Context<Self>) {

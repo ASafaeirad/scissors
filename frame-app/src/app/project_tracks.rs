@@ -146,7 +146,7 @@ pub(super) enum TrackToggle {
 
 impl FrameRoot {
     const fn can_edit_timeline(&self) -> bool {
-        !self.is_processing && !self.update_installation_in_progress()
+        !self.is_processing
     }
 
     pub(super) fn add_project_track(&mut self, kind: TrackKind) -> bool {

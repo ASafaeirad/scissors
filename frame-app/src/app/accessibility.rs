@@ -123,20 +123,6 @@ impl FrameRoot {
         self.focus_registered_control("titlebar-settings", window, cx)
             || self.focus_registered_control(APP_ROOT_FOCUS_ID, window, cx)
     }
-
-    pub(in crate::app) fn restore_focus_after_update_dialog_close(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if self.settings_ui.is_present
-            && self.focus_registered_control("app-settings-update-check-now", window, cx)
-        {
-            return true;
-        }
-        self.focus_registered_control("titlebar-settings", window, cx)
-            || self.focus_registered_control(APP_ROOT_FOCUS_ID, window, cx)
-    }
 }
 
 pub(in crate::app) fn focus_visible_ring(

@@ -11,9 +11,8 @@ the current project structure, local setup, checks, and pull request standards.
   compatibility rules, filters, and validation.
 - **Native UI:** `frame-app` for the application shell, GPUI views, app state,
   dialogs, bundled assets, and runtime integration.
-- **Automation:** `cargo xtask` for checks, workflow generation, and native
-  package entrypoints.
-- **Scripts:** `script/` contains the xtask-called packaging entrypoints.
+- **Automation:** `cargo xtask` for local builds, running the app, FFmpeg setup,
+  and checks.
 
 ## Getting Started
 
@@ -27,11 +26,7 @@ To build and run Frame locally, you will need:
 
 ### System Dependencies
 
-These dependencies are needed when building Frame from source. Release artifacts
-such as AppImage, DMG, and the Windows installer have their own bundled runtime
-layout. The production Flathub build is different: it builds from source inside
-the Freedesktop SDK and uses runtime-provided FFmpeg/FFprobe and media libraries
-instead of Frame's bundled media tools.
+Install the development dependencies for your operating system.
 
 #### macOS
 
@@ -93,43 +88,6 @@ sudo pacman -S --needed base-devel clang pkgconf \
   alsa-lib libpulse libdrm
 ```
 
-Linux tarball and AppImage packaging commands need a few extra tools:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install -y curl desktop-file-utils file patchelf
-
-# Fedora
-sudo dnf install curl desktop-file-utils file patchelf
-
-# Arch Linux
-sudo pacman -S --needed curl desktop-file-utils file patchelf
-```
-
-The local devel Flatpak helper still expects Flatpak tooling and the Flathub
-runtime:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install -y flatpak flatpak-builder
-
-# Fedora
-sudo dnf install flatpak flatpak-builder
-
-# Arch Linux
-sudo pacman -S --needed flatpak flatpak-builder
-
-flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
-```
-
-Production Flathub repository files are generated with:
-
-```bash
-cargo xtask flathub-sources --version <version>
-cargo xtask flathub-manifest --help
-```
-
 #### Windows
 
 Install:
@@ -137,25 +95,10 @@ Install:
 1. Rust with the MSVC toolchain.
 2. Visual Studio 2022 Build Tools with the **Desktop development with C++**
    workload, including MSVC and the Windows SDK.
-3. PowerShell for running the packaging script.
-
-Windows installer packaging also requires Inno Setup 6. Install it manually or
-with Chocolatey:
-
-```powershell
-choco install innosetup --no-progress -y
-```
 
 ### Local Setup
 
-1. **Clone the repository:**
-
-   ```bash
-   git clone https://github.com/66HEX/frame.git
-   cd frame
-   ```
-
-2. **Setup FFmpeg binaries:**
+1. **Set up FFmpeg binaries:**
 
    The application looks for FFmpeg and FFprobe in `frame-app/resources/binaries/`
    during local development. Download the platform-specific tools with:
@@ -164,40 +107,29 @@ choco install innosetup --no-progress -y
    cargo xtask setup-ffmpeg
    ```
 
-3. **Run in development mode:**
+2. **Run in development mode:**
 
    ```bash
    cargo xtask run
    ```
 
-4. **Build a release binary:**
+3. **Build an optimized local binary:**
 
    ```bash
    cargo xtask build --release
    ```
 
-5. **Build native packages when needed:**
-
-   ```bash
-   cargo xtask workflows
-   cargo xtask bundle macos
-   cargo xtask bundle linux
-   cargo xtask bundle windows
-   ```
-
-   Windows app icons are embedded into the `.exe` by `frame-app/build.rs`
-   during the normal Cargo build, and the Windows package script places the
-   FFmpeg and FFprobe runtime files next to the app. The production Flathub
-   package is generated through `cargo xtask flathub-sources` and
-   `cargo xtask flathub-manifest`; it does not install Frame's bundled media
-   binaries.
+The executable is `target/release/frame`, or `target/release/frame.exe` on Windows.
+To use an existing FFmpeg installation, set `FRAME_FFMPEG_PATH` and
+`FRAME_FFPROBE_PATH`, or set `FRAME_USE_SYSTEM_MEDIA_TOOLS=1` to resolve both tools
+from `PATH`.
 
 ## Development Workflow
 
 ### Project Structure
 
 - `frame-app/`: native GPUI-CE application, views, app state, dialogs, runtime
-  binary lookup, bundled assets, native app identity, and package app icons.
+  binary lookup, bundled assets, native app identity, and app icons.
 - `frame-app/src/app/`: `FrameRoot`, workspace/logs rendering, settings panels,
   preview shell, import flow, conversion actions, and UI primitives.
 - `frame-app/src/file_queue/`, `frame-app/src/settings/`, `frame-app/src/preview/`,
@@ -207,29 +139,23 @@ choco install innosetup --no-progress -y
   filters, media compatibility rules, and conversion event types.
 - `frame-core/media-rules.json`: source of truth for container, codec, stream,
   and pixel format compatibility.
-- `tooling/xtask/`: Rust automation entrypoint for checks, bundling, and
-  generated workflows.
-- `tooling/manifest-signer/`: minimal, network-free release manifest signer;
-  changes require security-focused CODEOWNERS review.
-- `script/`: platform bundling entrypoints called by `xtask` and GitHub
-  Actions.
-- `CHANGELOG.md`: product release history.
+- `tooling/xtask/`: local run/build commands, FFmpeg setup, and quality checks.
+- `CHANGELOG.md`: historical product changes.
 
 ### Coding Standards
 
 - **Rust formatting:** run `cargo fmt` for touched crates before submitting.
 - **Rust linting:** keep `cargo clippy --all-targets -- -D warnings` clean.
-- **Architecture:** prefer existing `frame-app/src/app/primitives.rs` UI building
-  blocks and domain modules before adding new ad hoc rendering code.
+- **Architecture:** use Material 3 tokens in `frame-app/src/material/` and
+  components in `frame-app/src/app/m3/`.
 - **Conversion Logic:** add FFmpeg behavior in `frame-core` first, then bridge it
   into `frame-app` through typed settings/configuration code.
 - **Media Compatibility:** update `frame-core/media-rules.json` and focused tests
   when adding formats, codecs, stream-copy rules, or pixel formats.
 - **Runtime Binaries:** do not commit downloaded files from
   `frame-app/resources/binaries/`.
-- **Application Icons:** keep desktop package icons under
-  `frame-app/resources/app-icons/`; iOS, Android, and Store/MSIX-specific icon
-  sets are not part of the current desktop packaging flow.
+- **Application Icons:** keep native icons under `frame-app/resources/app-icons/`.
+  `frame-app/build.rs` prepares Linux icons and embeds Windows resources.
 
 ### Testing & Quality Control
 
@@ -237,7 +163,6 @@ Before submitting a PR, run the relevant checks:
 
 ```bash
 cargo xtask ci
-cargo xtask workflows --check
 ```
 
 For UI changes, add or update focused GPUI tests where practical. Visual parity
