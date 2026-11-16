@@ -96,10 +96,6 @@ impl ScissorsRoot {
         true
     }
 
-    pub(super) const fn editing_project_output(&self) -> bool {
-        self.project.enabled && self.export_ui.open
-    }
-
     pub(super) fn project_output_metadata(&self) -> Option<SourceMetadata> {
         let placement = self
             .project
@@ -113,16 +109,6 @@ impl ScissorsRoot {
             metadata.media_kind = Some(SourceKind::Video);
         }
         Some(metadata)
-    }
-
-    pub(super) fn selected_config_mut(&mut self) -> Option<&mut ConversionConfig> {
-        if self.editing_project_output() {
-            Some(&mut self.project.output)
-        } else {
-            self.file_queue
-                .selected_file_mut()
-                .map(|file| &mut file.config)
-        }
     }
 
     pub(super) fn select_library_source(&mut self, id: &str) -> bool {
@@ -811,8 +797,7 @@ pub(in crate::app) mod tests {
         root.add_library_clip("source");
         root.add_library_clip("source");
         let before = root.file_queue.files().to_vec();
-        root.export_ui.open = true;
-        root.update_selected_config(|config| {
+        root.update_config(&EditTarget::Project, |config| {
             config.container = "mkv".to_string();
             true
         });

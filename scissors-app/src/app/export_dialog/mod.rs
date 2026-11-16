@@ -1,5 +1,5 @@
-//! The export dialog, opened by the workspace header's Export button. It edits the selected
-//! file's encoding settings (format, size, frame rate, quality, audio and the advanced encoder
+//! The export dialog, opened by the workspace header's Export button. It edits the Project's
+//! output encoding settings (format, size, frame rate, quality, audio and the advanced encoder
 //! options that used to live in the Video settings tab), then starts the export and shows its
 //! progress.
 
@@ -63,7 +63,7 @@ pub(super) struct ExportUiState {
     /// Shows the encoder output under the export progress.
     pub(super) show_log: bool,
     log: ExportLogState,
-    preset_selections: std::collections::HashMap<String, presets::PresetSelection>,
+    preset_selections: std::collections::HashMap<EditTarget, presets::PresetSelection>,
     scroll_handle: ScrollHandle,
 }
 
@@ -126,6 +126,13 @@ fn apply_export_slider(config: &mut ConversionConfig, slider: ExportSlider, valu
 }
 
 impl ScissorsRoot {
+    fn update_export_config(&mut self, update: impl FnOnce(&mut ConversionConfig) -> bool) -> bool {
+        let Some(target) = self.export_target() else {
+            return false;
+        };
+        self.update_config(&target, update)
+    }
+
     pub(super) fn open_export_dialog(&mut self) -> bool {
         if self.file_queue.selected_file().is_none() {
             return false;
@@ -141,6 +148,9 @@ impl ScissorsRoot {
             {
                 self.prepare_file_for_reconversion(&id);
             }
+        }
+        if let Some(target) = self.export_target() {
+            self.normalize_config(&target);
         }
         self.export_ui.open = true;
         let view = self.export_view(crate::material::scheme(self.appearance.color_theme));
@@ -223,8 +233,13 @@ impl ScissorsRoot {
         if !self.export_ui.open || !self.export_ui.lock_aspect {
             return;
         }
-        let metadata = self.selected_source_metadata();
-        let Some(config) = self.selected_config_mut() else {
+        let metadata = self
+            .export_target()
+            .and_then(|target| self.metadata_for_target(&target));
+        let Some(target) = self.export_target() else {
+            return;
+        };
+        let Some(config) = self.config_for_mut(&target) else {
             return;
         };
         let Some((source_width, source_height)) = source_dimensions(config, metadata.as_ref())
@@ -232,13 +247,13 @@ impl ScissorsRoot {
             return;
         };
         match edited {
-            ScissorsTextInputKind::VideoCustomWidth => {
+            ScissorsTextInputKind::ExportVideoCustomWidth => {
                 if let Some(width) = parse_dimension(config.custom_width.as_deref()) {
                     config.custom_height =
                         Some(scaled_even(width, source_width, source_height).to_string());
                 }
             }
-            ScissorsTextInputKind::VideoCustomHeight => {
+            ScissorsTextInputKind::ExportVideoCustomHeight => {
                 if let Some(height) = parse_dimension(config.custom_height.as_deref()) {
                     config.custom_width =
                         Some(scaled_even(height, source_height, source_width).to_string());
@@ -277,6 +292,9 @@ impl ScissorsRoot {
             });
         }
 
+        if let Some(target) = self.export_target() {
+            self.normalize_config(&target);
+        }
         let view = self.export_view(scheme);
         let phase = self.export_phase();
         self.sync_export_log_scroll();
@@ -304,16 +322,19 @@ impl ScissorsRoot {
             ExportPhase::Idle => {
                 let focuses = ExportInputFocuses {
                     width: self
-                        .ensure_text_input_focus(ScissorsTextInputKind::VideoCustomWidth, cx),
-                    height: self
-                        .ensure_text_input_focus(ScissorsTextInputKind::VideoCustomHeight, cx),
-                    name: self.ensure_text_input_focus(ScissorsTextInputKind::ExportName, cx),
-                    gif_loop: self.ensure_text_input_focus(ScissorsTextInputKind::GifLoop, cx),
+                        .ensure_text_input_focus(ScissorsTextInputKind::ExportVideoCustomWidth, cx),
+                    height: self.ensure_text_input_focus(
+                        ScissorsTextInputKind::ExportVideoCustomHeight,
+                        cx,
+                    ),
+                    name: self.ensure_text_input_focus(ScissorsTextInputKind::ExportOutputName, cx),
+                    gif_loop: self
+                        .ensure_text_input_focus(ScissorsTextInputKind::ExportGifLoop, cx),
                     audio_bitrate: self
-                        .ensure_text_input_focus(ScissorsTextInputKind::AudioBitrate, cx),
+                        .ensure_text_input_focus(ScissorsTextInputKind::ExportAudioBitrate, cx),
                 };
                 let preset_focus =
-                    self.ensure_text_input_focus(ScissorsTextInputKind::PresetName, cx);
+                    self.ensure_text_input_focus(ScissorsTextInputKind::ExportPresetName, cx);
                 let preset_panel = self.export_presets_panel(&view, &preset_focus, window, cx);
                 vec![
                     div()
@@ -381,17 +402,16 @@ impl ScissorsRoot {
     }
 
     fn export_view(&self, scheme: &ColorScheme) -> ExportView {
-        let metadata = if self.project.enabled {
-            self.project_output_metadata()
-        } else {
-            self.selected_source_metadata()
-        };
+        let target = self.export_target();
+        let metadata = target
+            .as_ref()
+            .and_then(|target| self.metadata_for_target(target));
         let file = self.file_queue.selected_file();
-        let config = if self.project.enabled {
-            self.project.output.clone()
-        } else {
-            file.map(|file| file.config.clone()).unwrap_or_default()
-        };
+        let config = target
+            .as_ref()
+            .and_then(|target| self.config_for(target))
+            .cloned()
+            .unwrap_or_default();
         let kind = source_kind_for(metadata.as_ref());
         let video_controls = kind == SourceKind::Video
             && config.processing_mode != ProcessingMode::Copy
@@ -424,8 +444,9 @@ impl ScissorsRoot {
                 file.map(|file| file.output_name.clone())
                     .unwrap_or_default()
             },
-            disabled: self.file_queue.selected_file_locked()
-                || (self.project.enabled && self.is_processing),
+            disabled: target
+                .as_ref()
+                .is_none_or(|target| self.edit_target_locked(target)),
             kind,
             video_controls,
             encoders,
@@ -1054,7 +1075,7 @@ fn export_slider(
                     let fraction =
                         timeline_slider_percent_from_bounds(event.event.position, event.bounds);
                     let value = range_value_from_fraction(fraction, drag.min, drag.max);
-                    if root.update_selected_config(|config| {
+                    if root.update_export_config(|config| {
                         apply_export_slider(config, drag.slider, value)
                     }) {
                         cx.notify();
@@ -1070,7 +1091,7 @@ fn export_slider(
                     };
                     cx.stop_propagation();
                     if root
-                        .update_selected_config(|config| apply_export_slider(config, slider, value))
+                        .update_export_config(|config| apply_export_slider(config, slider, value))
                     {
                         cx.notify();
                     }
@@ -1103,7 +1124,7 @@ fn format_section(
             .enabled(enabled)
             .build(scheme, window, cx)
             .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                if root.update_selected_config(|config| apply_export_format(config, container)) {
+                if root.update_export_config(|config| apply_export_format(config, container)) {
                     cx.notify();
                 }
             }))
@@ -1142,8 +1163,10 @@ fn container_section(
             .enabled(!view.disabled)
             .build(scheme, window, cx)
             .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                let metadata = root.selected_source_metadata();
-                if root.update_selected_config(|config| {
+                let metadata = root
+                    .export_target()
+                    .and_then(|target| root.metadata_for_target(&target));
+                if root.update_export_config(|config| {
                     apply_output_container(config, &container)
                         | normalize_output_config(config, metadata.as_ref())
                 }) {
@@ -1193,8 +1216,10 @@ fn processing_section(
                     let Some(mode) = modes.get(*index).copied() else {
                         return;
                     };
-                    let metadata = root.selected_source_metadata();
-                    if root.update_selected_config(|config| {
+                    let metadata = root
+                        .export_target()
+                        .and_then(|target| root.metadata_for_target(&target));
+                    if root.update_export_config(|config| {
                         apply_processing_mode(config, metadata.as_ref(), mode)
                     }) {
                         cx.notify();
@@ -1250,7 +1275,7 @@ fn resolution_section(
             let Some((resolution, _)) = RESOLUTION_OPTIONS.get(*index) else {
                 return;
             };
-            if root.update_selected_config(|config| {
+            if root.update_export_config(|config| {
                 let changed = apply_resolution(config, resolution);
                 // Start a custom size from the current one rather than blank fields.
                 let prefill = (*resolution == "custom"
@@ -1283,7 +1308,7 @@ fn resolution_section(
                         input_id: "export-width-input",
                         label: "Width",
                         value: config.custom_width.clone().unwrap_or_default(),
-                        kind: ScissorsTextInputKind::VideoCustomWidth,
+                        kind: ScissorsTextInputKind::ExportVideoCustomWidth,
                         suffix: Some("px".to_string()),
                         supporting: None,
                         error: None,
@@ -1323,7 +1348,7 @@ fn resolution_section(
                         input_id: "export-height-input",
                         label: "Height",
                         value: config.custom_height.clone().unwrap_or_default(),
-                        kind: ScissorsTextInputKind::VideoCustomHeight,
+                        kind: ScissorsTextInputKind::ExportVideoCustomHeight,
                         suffix: Some("px".to_string()),
                         supporting: None,
                         error: None,
@@ -1370,7 +1395,7 @@ fn fps_section(
         .enabled(!view.disabled)
         .on_select(cx.listener(move |root, index: &usize, _window, cx| {
             if let Some(fps) = options.get(*index)
-                && root.update_selected_config(|config| apply_fps(config, fps))
+                && root.update_export_config(|config| apply_fps(config, fps))
             {
                 cx.notify();
             }
@@ -1409,8 +1434,7 @@ fn quality_section(
                 .enabled(enabled)
                 .on_select(cx.listener(|root, index: &usize, _window, cx| {
                     let mode = if *index == 0 { "crf" } else { "bitrate" };
-                    if root.update_selected_config(|config| apply_video_bitrate_mode(config, mode))
-                    {
+                    if root.update_export_config(|config| apply_video_bitrate_mode(config, mode)) {
                         cx.notify();
                     }
                 }))
@@ -1619,7 +1643,7 @@ fn audio_options(
             .enabled(enabled)
             .on_select(cx.listener(|root, index: &usize, _window, cx| {
                 if let Some((channels, _)) = AUDIO_CHANNEL_OPTIONS.get(*index)
-                    && root.update_selected_config(|config| apply_audio_channels(config, channels))
+                    && root.update_export_config(|config| apply_audio_channels(config, channels))
                 {
                     cx.notify();
                 }
@@ -1652,7 +1676,7 @@ fn audio_options(
             .enabled(enabled && supported)
             .build(scheme, window, cx)
             .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                if root.update_selected_config(|config| apply_audio_codec(config, codec)) {
+                if root.update_export_config(|config| apply_audio_codec(config, codec)) {
                     cx.notify();
                 }
             }))
@@ -1702,7 +1726,7 @@ fn audio_options(
             .enabled(enabled)
             .on_select(cx.listener(|root, index: &usize, _window, cx| {
                 let mode = if *index == 0 { "bitrate" } else { "vbr" };
-                if root.update_selected_config(|config| apply_audio_bitrate_mode(config, mode)) {
+                if root.update_export_config(|config| apply_audio_bitrate_mode(config, mode)) {
                     cx.notify();
                 }
             }))
@@ -1747,7 +1771,7 @@ fn audio_options(
                 input_id: "export-audio-bitrate-input",
                 label: "Bitrate",
                 value: config.audio_bitrate.clone(),
-                kind: ScissorsTextInputKind::AudioBitrate,
+                kind: ScissorsTextInputKind::ExportAudioBitrate,
                 suffix: Some("kb/s".to_string()),
                 supporting: error.is_none().then_some("128–192 kb/s suits most videos"),
                 error,
@@ -1812,7 +1836,7 @@ fn advanced_options(
             .enabled(enabled)
             .build(scheme, window, cx)
             .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                if root.update_selected_config(|config| apply_video_codec(config, codec)) {
+                if root.update_export_config(|config| apply_video_codec(config, codec)) {
                     cx.notify();
                 }
             }))
@@ -1896,7 +1920,7 @@ fn advanced_options(
                 .enabled(enabled)
                 .build(scheme, window, cx)
                 .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                    if root.update_selected_config(|config| apply_pixel_format(config, id)) {
+                    if root.update_export_config(|config| apply_pixel_format(config, id)) {
                         cx.notify();
                     }
                 }))
@@ -1945,7 +1969,7 @@ fn advanced_options(
                 .enabled(enabled)
                 .on_select(cx.listener(|root, index: &usize, _window, cx| {
                     if let Some((algorithm, _)) = SCALING_OPTIONS.get(*index)
-                        && root.update_selected_config(|config| {
+                        && root.update_export_config(|config| {
                             apply_scaling_algorithm(config, algorithm)
                         })
                     {
@@ -1995,8 +2019,7 @@ fn gif_options(
                     .enabled(enabled)
                     .on_select(cx.listener(|root, index: &usize, _window, cx| {
                         if let Some(colors) = GIF_COLOR_OPTIONS.get(*index)
-                            && root
-                                .update_selected_config(|config| apply_gif_colors(config, *colors))
+                            && root.update_export_config(|config| apply_gif_colors(config, *colors))
                         {
                             cx.notify();
                         }
@@ -2024,8 +2047,7 @@ fn gif_options(
                     .enabled(enabled)
                     .on_select(cx.listener(|root, index: &usize, _window, cx| {
                         if let Some((dither, _)) = GIF_DITHER_OPTIONS.get(*index)
-                            && root
-                                .update_selected_config(|config| apply_gif_dither(config, dither))
+                            && root.update_export_config(|config| apply_gif_dither(config, dither))
                         {
                             cx.notify();
                         }
@@ -2039,7 +2061,7 @@ fn gif_options(
                 input_id: "export-gif-loop-input",
                 label: "Loop count",
                 value: config.gif_loop.to_string(),
-                kind: ScissorsTextInputKind::GifLoop,
+                kind: ScissorsTextInputKind::ExportGifLoop,
                 suffix: None,
                 supporting: Some("0 loops forever"),
                 error: None,
@@ -2172,7 +2194,7 @@ fn switch_row(
                 .enabled(row.enabled)
                 .build(scheme, window, cx)
                 .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                    if root.update_selected_config(toggle) {
+                    if root.update_export_config(toggle) {
                         cx.notify();
                     }
                 })),
@@ -2211,7 +2233,7 @@ fn export_side_panel(
                 input_id: "export-name-input",
                 label: "File name",
                 value: view.output_name.clone(),
-                kind: ScissorsTextInputKind::ExportName,
+                kind: ScissorsTextInputKind::ExportOutputName,
                 suffix: Some(format!(".{}", config.container)),
                 supporting: None,
                 error: view.name_error().map(str::to_string),

@@ -23,10 +23,15 @@ impl ScissorsTextInputMetrics {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::app) enum ScissorsTextInputKind {
     AudioBitrate,
+    ExportAudioBitrate,
     VideoCustomWidth,
+    ExportVideoCustomWidth,
     VideoCustomHeight,
+    ExportVideoCustomHeight,
     ExportName,
+    ExportOutputName,
     GifLoop,
+    ExportGifLoop,
     PreviewStartTime,
     PreviewEndTime,
     MetadataTitle,
@@ -38,15 +43,45 @@ pub(in crate::app) enum ScissorsTextInputKind {
     MetadataServiceName,
     MetadataServiceProvider,
     PresetName,
+    ExportPresetName,
 }
 
 impl ScissorsTextInputKind {
-    pub(in crate::app) const ALL: [Self; 16] = [
+    pub(in crate::app) const fn base_kind(self) -> Self {
+        match self {
+            Self::ExportAudioBitrate => Self::AudioBitrate,
+            Self::ExportVideoCustomWidth => Self::VideoCustomWidth,
+            Self::ExportVideoCustomHeight => Self::VideoCustomHeight,
+            Self::ExportGifLoop => Self::GifLoop,
+            Self::ExportOutputName => Self::ExportName,
+            Self::ExportPresetName => Self::PresetName,
+            kind => kind,
+        }
+    }
+
+    pub(in crate::app) const fn is_export(self) -> bool {
+        matches!(
+            self,
+            Self::ExportAudioBitrate
+                | Self::ExportVideoCustomWidth
+                | Self::ExportVideoCustomHeight
+                | Self::ExportGifLoop
+                | Self::ExportOutputName
+                | Self::ExportPresetName
+        )
+    }
+
+    pub(in crate::app) const ALL: [Self; 22] = [
         Self::AudioBitrate,
+        Self::ExportAudioBitrate,
         Self::VideoCustomWidth,
+        Self::ExportVideoCustomWidth,
         Self::VideoCustomHeight,
+        Self::ExportVideoCustomHeight,
         Self::ExportName,
+        Self::ExportOutputName,
         Self::GifLoop,
+        Self::ExportGifLoop,
         Self::PreviewStartTime,
         Self::PreviewEndTime,
         Self::MetadataTitle,
@@ -58,15 +93,16 @@ impl ScissorsTextInputKind {
         Self::MetadataServiceName,
         Self::MetadataServiceProvider,
         Self::PresetName,
+        Self::ExportPresetName,
     ];
 
     pub(in crate::app) const fn accessibility_label(self) -> &'static str {
         match self {
-            Self::AudioBitrate => "Audio bitrate",
-            Self::VideoCustomWidth => "Video width",
-            Self::VideoCustomHeight => "Video height",
-            Self::ExportName => "Export file name",
-            Self::GifLoop => "GIF loop count",
+            Self::AudioBitrate | Self::ExportAudioBitrate => "Audio bitrate",
+            Self::VideoCustomWidth | Self::ExportVideoCustomWidth => "Video width",
+            Self::VideoCustomHeight | Self::ExportVideoCustomHeight => "Video height",
+            Self::ExportName | Self::ExportOutputName => "Export file name",
+            Self::GifLoop | Self::ExportGifLoop => "GIF loop count",
             Self::PreviewStartTime => "Preview start time",
             Self::PreviewEndTime => "Preview end time",
             Self::MetadataTitle => "Metadata title",
@@ -77,7 +113,7 @@ impl ScissorsTextInputKind {
             Self::MetadataComment => "Metadata comment",
             Self::MetadataServiceName => "MPEG transport stream service name",
             Self::MetadataServiceProvider => "MPEG transport stream service provider",
-            Self::PresetName => "Preset name",
+            Self::PresetName | Self::ExportPresetName => "Preset name",
         }
     }
 
@@ -177,10 +213,15 @@ mod metrics_tests {
 #[derive(Default)]
 pub(in crate::app) struct ScissorsTextInputStore {
     audio_bitrate: ScissorsTextInputRuntime,
+    export_audio_bitrate: ScissorsTextInputRuntime,
     video_width: ScissorsTextInputRuntime,
+    export_video_width: ScissorsTextInputRuntime,
     video_height: ScissorsTextInputRuntime,
+    export_video_height: ScissorsTextInputRuntime,
     export_name: ScissorsTextInputRuntime,
+    export_output_name: ScissorsTextInputRuntime,
     gif_loop: ScissorsTextInputRuntime,
+    export_gif_loop: ScissorsTextInputRuntime,
     preview_start_time: ScissorsTextInputRuntime,
     preview_end_time: ScissorsTextInputRuntime,
     metadata_title: ScissorsTextInputRuntime,
@@ -192,6 +233,7 @@ pub(in crate::app) struct ScissorsTextInputStore {
     metadata_service_name: ScissorsTextInputRuntime,
     metadata_service_provider: ScissorsTextInputRuntime,
     preset_name: ScissorsTextInputRuntime,
+    export_preset_name: ScissorsTextInputRuntime,
 }
 
 impl ScissorsTextInputStore {
@@ -201,10 +243,15 @@ impl ScissorsTextInputStore {
     ) -> &ScissorsTextInputRuntime {
         match kind {
             ScissorsTextInputKind::AudioBitrate => &self.audio_bitrate,
+            ScissorsTextInputKind::ExportAudioBitrate => &self.export_audio_bitrate,
             ScissorsTextInputKind::VideoCustomWidth => &self.video_width,
+            ScissorsTextInputKind::ExportVideoCustomWidth => &self.export_video_width,
             ScissorsTextInputKind::VideoCustomHeight => &self.video_height,
+            ScissorsTextInputKind::ExportVideoCustomHeight => &self.export_video_height,
             ScissorsTextInputKind::ExportName => &self.export_name,
+            ScissorsTextInputKind::ExportOutputName => &self.export_output_name,
             ScissorsTextInputKind::GifLoop => &self.gif_loop,
+            ScissorsTextInputKind::ExportGifLoop => &self.export_gif_loop,
             ScissorsTextInputKind::PreviewStartTime => &self.preview_start_time,
             ScissorsTextInputKind::PreviewEndTime => &self.preview_end_time,
             ScissorsTextInputKind::MetadataTitle => &self.metadata_title,
@@ -216,6 +263,7 @@ impl ScissorsTextInputStore {
             ScissorsTextInputKind::MetadataServiceName => &self.metadata_service_name,
             ScissorsTextInputKind::MetadataServiceProvider => &self.metadata_service_provider,
             ScissorsTextInputKind::PresetName => &self.preset_name,
+            ScissorsTextInputKind::ExportPresetName => &self.export_preset_name,
         }
     }
 
@@ -225,10 +273,15 @@ impl ScissorsTextInputStore {
     ) -> &mut ScissorsTextInputRuntime {
         match kind {
             ScissorsTextInputKind::AudioBitrate => &mut self.audio_bitrate,
+            ScissorsTextInputKind::ExportAudioBitrate => &mut self.export_audio_bitrate,
             ScissorsTextInputKind::VideoCustomWidth => &mut self.video_width,
+            ScissorsTextInputKind::ExportVideoCustomWidth => &mut self.export_video_width,
             ScissorsTextInputKind::VideoCustomHeight => &mut self.video_height,
+            ScissorsTextInputKind::ExportVideoCustomHeight => &mut self.export_video_height,
             ScissorsTextInputKind::ExportName => &mut self.export_name,
+            ScissorsTextInputKind::ExportOutputName => &mut self.export_output_name,
             ScissorsTextInputKind::GifLoop => &mut self.gif_loop,
+            ScissorsTextInputKind::ExportGifLoop => &mut self.export_gif_loop,
             ScissorsTextInputKind::PreviewStartTime => &mut self.preview_start_time,
             ScissorsTextInputKind::PreviewEndTime => &mut self.preview_end_time,
             ScissorsTextInputKind::MetadataTitle => &mut self.metadata_title,
@@ -240,6 +293,7 @@ impl ScissorsTextInputStore {
             ScissorsTextInputKind::MetadataServiceName => &mut self.metadata_service_name,
             ScissorsTextInputKind::MetadataServiceProvider => &mut self.metadata_service_provider,
             ScissorsTextInputKind::PresetName => &mut self.preset_name,
+            ScissorsTextInputKind::ExportPresetName => &mut self.export_preset_name,
         }
     }
 }
@@ -247,10 +301,15 @@ impl ScissorsTextInputStore {
 #[derive(Default)]
 pub(in crate::app) struct ScissorsTextInputFocusStore {
     audio_bitrate: Option<FocusHandle>,
+    export_audio_bitrate: Option<FocusHandle>,
     video_width: Option<FocusHandle>,
+    export_video_width: Option<FocusHandle>,
     video_height: Option<FocusHandle>,
+    export_video_height: Option<FocusHandle>,
     export_name: Option<FocusHandle>,
+    export_output_name: Option<FocusHandle>,
     gif_loop: Option<FocusHandle>,
+    export_gif_loop: Option<FocusHandle>,
     preview_start_time: Option<FocusHandle>,
     preview_end_time: Option<FocusHandle>,
     metadata_title: Option<FocusHandle>,
@@ -262,16 +321,22 @@ pub(in crate::app) struct ScissorsTextInputFocusStore {
     metadata_service_name: Option<FocusHandle>,
     metadata_service_provider: Option<FocusHandle>,
     preset_name: Option<FocusHandle>,
+    export_preset_name: Option<FocusHandle>,
 }
 
 impl ScissorsTextInputFocusStore {
     pub(in crate::app) const fn focus(&self, kind: ScissorsTextInputKind) -> Option<&FocusHandle> {
         match kind {
             ScissorsTextInputKind::AudioBitrate => self.audio_bitrate.as_ref(),
+            ScissorsTextInputKind::ExportAudioBitrate => self.export_audio_bitrate.as_ref(),
             ScissorsTextInputKind::VideoCustomWidth => self.video_width.as_ref(),
+            ScissorsTextInputKind::ExportVideoCustomWidth => self.export_video_width.as_ref(),
             ScissorsTextInputKind::VideoCustomHeight => self.video_height.as_ref(),
+            ScissorsTextInputKind::ExportVideoCustomHeight => self.export_video_height.as_ref(),
             ScissorsTextInputKind::ExportName => self.export_name.as_ref(),
+            ScissorsTextInputKind::ExportOutputName => self.export_output_name.as_ref(),
             ScissorsTextInputKind::GifLoop => self.gif_loop.as_ref(),
+            ScissorsTextInputKind::ExportGifLoop => self.export_gif_loop.as_ref(),
             ScissorsTextInputKind::PreviewStartTime => self.preview_start_time.as_ref(),
             ScissorsTextInputKind::PreviewEndTime => self.preview_end_time.as_ref(),
             ScissorsTextInputKind::MetadataTitle => self.metadata_title.as_ref(),
@@ -285,6 +350,7 @@ impl ScissorsTextInputFocusStore {
                 self.metadata_service_provider.as_ref()
             }
             ScissorsTextInputKind::PresetName => self.preset_name.as_ref(),
+            ScissorsTextInputKind::ExportPresetName => self.export_preset_name.as_ref(),
         }
     }
 
@@ -294,10 +360,15 @@ impl ScissorsTextInputFocusStore {
     ) -> &mut Option<FocusHandle> {
         match kind {
             ScissorsTextInputKind::AudioBitrate => &mut self.audio_bitrate,
+            ScissorsTextInputKind::ExportAudioBitrate => &mut self.export_audio_bitrate,
             ScissorsTextInputKind::VideoCustomWidth => &mut self.video_width,
+            ScissorsTextInputKind::ExportVideoCustomWidth => &mut self.export_video_width,
             ScissorsTextInputKind::VideoCustomHeight => &mut self.video_height,
+            ScissorsTextInputKind::ExportVideoCustomHeight => &mut self.export_video_height,
             ScissorsTextInputKind::ExportName => &mut self.export_name,
+            ScissorsTextInputKind::ExportOutputName => &mut self.export_output_name,
             ScissorsTextInputKind::GifLoop => &mut self.gif_loop,
+            ScissorsTextInputKind::ExportGifLoop => &mut self.export_gif_loop,
             ScissorsTextInputKind::PreviewStartTime => &mut self.preview_start_time,
             ScissorsTextInputKind::PreviewEndTime => &mut self.preview_end_time,
             ScissorsTextInputKind::MetadataTitle => &mut self.metadata_title,
@@ -309,6 +380,7 @@ impl ScissorsTextInputFocusStore {
             ScissorsTextInputKind::MetadataServiceName => &mut self.metadata_service_name,
             ScissorsTextInputKind::MetadataServiceProvider => &mut self.metadata_service_provider,
             ScissorsTextInputKind::PresetName => &mut self.preset_name,
+            ScissorsTextInputKind::ExportPresetName => &mut self.export_preset_name,
         }
     }
 }

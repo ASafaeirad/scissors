@@ -629,6 +629,22 @@ pub fn normalize_output_config(
     config: &mut ConversionConfig,
     metadata: Option<&SourceMetadata>,
 ) -> bool {
+    normalize_config(config, metadata, false)
+}
+
+/// Clips keep their timeline duration even when their source is a still image.
+pub fn normalize_clip_config(
+    config: &mut ConversionConfig,
+    metadata: Option<&SourceMetadata>,
+) -> bool {
+    normalize_config(config, metadata, true)
+}
+
+fn normalize_config(
+    config: &mut ConversionConfig,
+    metadata: Option<&SourceMetadata>,
+    clip: bool,
+) -> bool {
     let before = config.clone();
     let source_kind = source_kind_for(metadata);
 
@@ -644,9 +660,11 @@ pub fn normalize_output_config(
     }
 
     if source_kind == SourceKind::Image {
-        config.start_time = None;
-        config.end_time = None;
-        config.cut_segments.clear();
+        if !clip {
+            config.start_time = None;
+            config.end_time = None;
+            config.cut_segments.clear();
+        }
         config.selected_audio_tracks.clear();
         config.metadata.album = None;
         config.metadata.genre = None;

@@ -81,7 +81,6 @@ fn detect_black_bars(input: &str, duration: Option<f64>) -> Result<Option<Detect
 impl ScissorsRoot {
     pub(super) fn crop_detection_available(&self) -> bool {
         self.preview_ui.crop_mode
-            && !self.editing_project_output()
             && !matches!(self.preview_ui.crop_detect, CropDetectState::Running(_))
             && self.file_queue.selected_file().is_some()
             && self
