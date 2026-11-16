@@ -207,7 +207,25 @@ mod drag_drop_tests {
             let original_view = root.read_with(cx, |root, _| root.project_timeline_view());
             let start = point(source.center().x, source.top() + px(30.0));
             let end = point(bounds.left() + bounds.size.width * 0.75, bounds.center().y);
-            let expected = root.read_with(cx, |root, _| root.project_duration().max(1.0) * 625.0);
+            let expected = root.read_with(cx, |root, _| {
+                let requested =
+                    crate::numeric::rounded_f64_to_u64(root.project_duration().max(1.0) * 625.0);
+                let preceding_end = root
+                    .project_timeline_clips()
+                    .iter()
+                    .filter(|(clip, _)| {
+                        clip.track == root.project.tracks.primary()
+                            && clip.offset_millis <= requested
+                    })
+                    .map(|(_, source)| {
+                        source.offset_millis.saturating_add(
+                            scissors_core::project_timeline::clip_duration_millis(source),
+                        )
+                    })
+                    .max()
+                    .unwrap_or(0);
+                requested.max(preceding_end)
+            });
             cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
             cx.simulate_mouse_move(
                 point(start.x + px(8.0), start.y),
@@ -228,11 +246,7 @@ mod drag_drop_tests {
                 }
                 let clip = root.project.clips.last().unwrap();
                 assert_eq!(clip.source_id, "library-video");
-                assert!(
-                    clip.offset_millis
-                        .abs_diff(crate::numeric::rounded_f64_to_u64(expected))
-                        <= 1
-                );
+                assert!(clip.offset_millis.abs_diff(expected) <= 1);
                 assert_eq!(root.project.library.files().len(), 2);
                 assert_eq!(root.file_queue.selected_file_id(), Some(clip.id.as_str()));
                 assert_eq!(root.project_timeline_view(), original_view);

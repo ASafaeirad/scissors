@@ -146,17 +146,22 @@ impl ScissorsRoot {
         &mut self,
         update: impl FnOnce(&mut ConversionConfig) -> bool,
     ) -> bool {
-        if self.project.enabled && self.is_processing {
+        if self.project.enabled
+            && (self.is_processing
+                || (!self.editing_project_output()
+                    && self
+                        .file_queue
+                        .selected_file_id()
+                        .is_some_and(|id| self.project_clip_locked(id))))
+        {
             return false;
         }
-        let before = (self.project.enabled
-            && self.preview_ui.timeline_snap
-            && !self.editing_project_output())
-        .then(|| self.timeline_snapshot());
+        let before = (self.project.enabled && !self.editing_project_output())
+            .then(|| self.timeline_snapshot());
         let changed = self.selected_config_mut().is_some_and(update);
         if changed
             && let Some(before) = before
-            && self.close_primary_track_gaps()
+            && self.reconcile_track_spacing()
         {
             self.project.history.push(before);
         }

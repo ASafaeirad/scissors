@@ -259,7 +259,7 @@ impl ScissorsRoot {
             muted: false,
             speed: 1.0,
         });
-        self.close_primary_track_gaps();
+        self.reconcile_track_spacing();
         self.zoom_to_first_project_clip();
         true
     }
@@ -288,7 +288,7 @@ impl ScissorsRoot {
             return false;
         }
         self.project.clips.retain(|clip| clip.id != id);
-        self.close_primary_track_gaps();
+        self.reconcile_track_spacing();
         self.file_queue
             .select_file(self.project.clips.last().map(|clip| clip.id.clone()));
         true
@@ -332,7 +332,7 @@ impl ScissorsRoot {
         self.source_metadata.mark_ready(right.id.clone(), metadata);
         self.file_queue.add_file(file);
         self.project.clips.insert(index + 1, right);
-        self.close_primary_track_gaps();
+        self.reconcile_track_spacing();
         true
     }
 
@@ -383,7 +383,7 @@ impl ScissorsRoot {
             config.end_time = Some(format_time(source_time));
         }
         self.file_queue.select_existing_file(&id);
-        self.close_primary_track_gaps();
+        self.reconcile_track_spacing();
         true
     }
 
@@ -527,12 +527,16 @@ impl ScissorsRoot {
                 .clamp(trim_start + 0.05, duration.max(trim_start + 0.05));
             file.config.end_time = Some(format_time(next));
         }
-        self.close_primary_track_gaps();
+        self.reconcile_track_spacing();
         true
     }
 
     pub(super) fn set_project_clip_speed(&mut self, id: &str, speed: f64) -> bool {
-        if self.is_processing || !speed.is_finite() || !(0.5..=20.0).contains(&speed) {
+        if self.is_processing
+            || self.project_clip_locked(id)
+            || !speed.is_finite()
+            || !(0.5..=20.0).contains(&speed)
+        {
             return false;
         }
         let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) else {
@@ -545,7 +549,7 @@ impl ScissorsRoot {
         if let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) {
             clip.speed = speed;
         }
-        self.close_primary_track_gaps();
+        self.reconcile_track_spacing();
         true
     }
 
@@ -554,15 +558,7 @@ impl ScissorsRoot {
         if self.is_processing || self.project_clip_locked(id) {
             return false;
         }
-        let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) else {
-            return false;
-        };
-        if clip.offset_millis == offset_millis {
-            return false;
-        }
-        clip.offset_millis = offset_millis;
-        self.close_primary_track_gaps();
-        true
+        self.place_moved_project_clip(id, offset_millis)
     }
 }
 
