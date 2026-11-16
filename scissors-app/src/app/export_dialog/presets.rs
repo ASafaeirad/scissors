@@ -11,31 +11,18 @@ fn reusable_config(config: &ConversionConfig) -> ConversionConfig {
 }
 
 impl ScissorsRoot {
-    fn export_preset_target(&self) -> Option<String> {
-        if self.editing_project_output() {
-            Some("project".to_string())
-        } else {
-            self.file_queue
-                .selected_file()
-                .map(|file| format!("file:{}", file.id))
-        }
-    }
-
-    pub(in crate::app) fn remember_export_preset(&mut self, id: &str) -> bool {
-        let Some(target) = self.export_preset_target() else {
-            return false;
-        };
-        let Some(config) = self.selected_config() else {
+    pub(in crate::app) fn remember_export_preset(&mut self, target: &EditTarget, id: &str) -> bool {
+        let Some(config) = self.config_for(target) else {
             return false;
         };
         let config = reusable_config(config);
         let changed = self
             .export_ui
             .preset_selections
-            .get(&target)
+            .get(target)
             .is_none_or(|selection| selection.id != id || selection.config != config);
         self.export_ui.preset_selections.insert(
-            target,
+            target.clone(),
             PresetSelection {
                 id: id.to_string(),
                 config,
@@ -46,7 +33,7 @@ impl ScissorsRoot {
 
     pub(super) fn export_preset_selection(&self, view: &ExportView) -> Option<PresetSelection> {
         if let Some(selection) = self
-            .export_preset_target()
+            .export_target()
             .and_then(|target| self.export_ui.preset_selections.get(&target))
             .filter(|selection| self.presets.iter().any(|preset| preset.id == selection.id))
         {
@@ -67,13 +54,15 @@ impl ScissorsRoot {
 
     pub(super) fn initialize_export_preset(&mut self, view: &ExportView) {
         if self
-            .export_preset_target()
+            .export_target()
             .is_some_and(|target| self.export_ui.preset_selections.contains_key(&target))
         {
             return;
         }
-        if let Some(selection) = self.export_preset_selection(view) {
-            self.remember_export_preset(&selection.id);
+        if let Some(selection) = self.export_preset_selection(view)
+            && let Some(target) = self.export_target()
+        {
+            self.remember_export_preset(&target, &selection.id);
         }
     }
 
@@ -88,7 +77,8 @@ impl ScissorsRoot {
         let Some(selection) = self.export_preset_selection(&view) else {
             return false;
         };
-        self.apply_preset_to_selected(&selection.id)
+        self.export_target()
+            .is_some_and(|target| self.apply_preset_to_target(&target, &selection.id))
     }
 
     pub(super) fn export_presets_panel(
@@ -135,7 +125,7 @@ impl ScissorsRoot {
                     input_id: "export-preset-name-input",
                     label: "Save current as…",
                     value: self.settings_ui.preset_name_draft.clone(),
-                    kind: ScissorsTextInputKind::PresetName,
+                    kind: ScissorsTextInputKind::ExportPresetName,
                     suffix: None,
                     supporting: None,
                     error: None,
@@ -154,8 +144,8 @@ impl ScissorsRoot {
                         .enabled(save_enabled)
                         .build(scheme, window, cx)
                         .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-                            if save_enabled {
-                                root.save_preset_from_draft();
+                            if save_enabled && let Some(target) = root.export_target() {
+                                root.save_preset_for_target(&target);
                                 cx.notify();
                             }
                         })),
@@ -292,7 +282,7 @@ fn preset_row(
         .border_0()
         .p(theme::ui_rem(12.0))
         .on_click(cx.listener(move |root, _: &ClickEvent, _window, cx| {
-            if root.apply_preset_to_selected(&id) {
+            if root.apply_export_preset(&id) {
                 cx.notify();
             }
         }))
@@ -359,7 +349,7 @@ mod tests {
         let mut root = ScissorsRoot::new();
         root.apply_preview_ready_fixture();
         root.open_export_dialog();
-        root.apply_preset_to_selected("balanced-mp4");
+        root.apply_export_preset("balanced-mp4");
         root
     }
 
@@ -405,7 +395,7 @@ mod tests {
         let mut root = root();
         root.update_selected_config(|config| apply_fps(config, "24"));
         root.settings_ui.preset_name_draft = "Review".to_string();
-        assert!(root.save_preset_from_draft());
+        assert!(root.save_preset_for_target(&root.export_target().unwrap()));
         let id = root.presets.last().unwrap().id.clone();
         assert!(!edited(&root));
         root.update_selected_config(|config| apply_audio_bitrate(config, "320"));
@@ -425,7 +415,9 @@ mod tests {
     #[test]
     fn source_tracks_do_not_mark_preset_edited_and_revert_preserves_them() {
         let mut root = root();
-        root.selected_config_mut().unwrap().selected_audio_tracks = vec![7];
+        root.config_for_mut(&root.settings_target().unwrap())
+            .unwrap()
+            .selected_audio_tracks = vec![7];
         assert!(!edited(&root));
         root.update_selected_config(|config| apply_fps(config, "24"));
         root.revert_export_preset();
@@ -443,7 +435,7 @@ mod tests {
         root.file_queue
             .add_file(FileItem::from_path("second", "/tmp/second.mp4", 1));
         root.file_queue.select_existing_file("second");
-        root.apply_preset_to_selected("web-share");
+        root.apply_export_preset("web-share");
         assert!(!edited(&root));
         root.file_queue.select_existing_file(&first);
         assert!(edited(&root));
@@ -455,11 +447,22 @@ mod tests {
         root.apply_project_timeline_fixture();
         let original = root.file_queue.selected_file().unwrap().config.clone();
         root.open_export_dialog();
-        assert!(root.apply_preset_to_selected("web-share"));
+        assert!(root.apply_export_preset("web-share"));
         assert_eq!(root.project.output.container, "webm");
         assert_eq!(root.file_queue.selected_file().unwrap().config, original);
         assert!(!edited(&root));
         root.update_selected_config(|config| apply_fps(config, "24"));
+        assert!(!edited(&root));
+        root.apply_preset_to_selected("balanced-mp4");
+        assert_eq!(
+            root.export_preset_selection(
+                &root.export_view(crate::material::scheme(root.appearance.color_theme))
+            )
+            .unwrap()
+            .id,
+            "web-share"
+        );
+        root.update_export_config(|config| apply_fps(config, "24"));
         assert!(edited(&root));
         root.revert_export_preset();
         assert!(!edited(&root));

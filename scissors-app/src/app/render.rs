@@ -39,7 +39,7 @@ impl Render for ScissorsRoot {
         let state = self.app_state();
         let source_metadata_entry = self.selected_source_metadata_entry();
         let source_metadata = source_metadata_entry.metadata.clone();
-        self.normalize_selected_config(source_metadata.as_ref());
+        self.normalize_selected_config();
         self.resolve_selected_settings_tab(source_metadata.as_ref());
         let selected_file_id = self.file_queue.selected_file_id().map(str::to_string);
         let selected_config_snapshot = self.selected_config().cloned().unwrap_or_default();

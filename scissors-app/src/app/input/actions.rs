@@ -95,14 +95,24 @@ impl ScissorsRoot {
         }
     }
 
-    pub(in crate::app) fn text_input_disabled(&self, _kind: ScissorsTextInputKind) -> bool {
-        self.file_queue.selected_file_locked() || (self.project.enabled && self.is_processing)
+    pub(in crate::app) fn text_input_disabled(&self, kind: ScissorsTextInputKind) -> bool {
+        self.text_input_target(kind)
+            .is_none_or(|target| self.edit_target_locked(&target))
+    }
+
+    fn text_input_target(&self, kind: ScissorsTextInputKind) -> Option<EditTarget> {
+        if kind.is_export() {
+            self.export_target()
+        } else {
+            self.settings_target()
+        }
     }
 
     pub(in crate::app) fn text_input_value(&self, kind: ScissorsTextInputKind) -> String {
-        match kind {
+        let target = self.text_input_target(kind);
+        match kind.base_kind() {
             ScissorsTextInputKind::ExportName => {
-                if self.editing_project_output() {
+                if matches!(target, Some(EditTarget::Project)) {
                     self.project.output_name.clone()
                 } else {
                     self.file_queue
@@ -110,19 +120,23 @@ impl ScissorsRoot {
                         .map_or_else(String::new, |file| file.output_name.clone())
                 }
             }
-            ScissorsTextInputKind::AudioBitrate => self
-                .selected_config()
+            ScissorsTextInputKind::AudioBitrate => target
+                .as_ref()
+                .and_then(|target| self.config_for(target))
                 .map_or_else(String::new, |config| config.audio_bitrate.clone()),
-            ScissorsTextInputKind::VideoCustomWidth => self
-                .selected_config()
+            ScissorsTextInputKind::VideoCustomWidth => target
+                .as_ref()
+                .and_then(|target| self.config_for(target))
                 .and_then(|config| config.custom_width.clone())
                 .unwrap_or_default(),
-            ScissorsTextInputKind::VideoCustomHeight => self
-                .selected_config()
+            ScissorsTextInputKind::VideoCustomHeight => target
+                .as_ref()
+                .and_then(|target| self.config_for(target))
                 .and_then(|config| config.custom_height.clone())
                 .unwrap_or_default(),
-            ScissorsTextInputKind::GifLoop => self
-                .selected_config()
+            ScissorsTextInputKind::GifLoop => target
+                .as_ref()
+                .and_then(|target| self.config_for(target))
                 .map_or_else(String::new, |config| config.gif_loop.to_string()),
             ScissorsTextInputKind::PreviewStartTime | ScissorsTextInputKind::PreviewEndTime => self
                 .text_input_runtime(kind)
@@ -148,16 +162,21 @@ impl ScissorsRoot {
             | ScissorsTextInputKind::MetadataDate
             | ScissorsTextInputKind::MetadataComment
             | ScissorsTextInputKind::MetadataServiceName
-            | ScissorsTextInputKind::MetadataServiceProvider => self
-                .file_queue
-                .selected_file()
-                .and_then(|file| {
-                    metadata_field_for_text_input(kind).and_then(|field| {
-                        metadata_field_value(&file.config, field).map(str::to_string)
-                    })
+            | ScissorsTextInputKind::MetadataServiceProvider => target
+                .as_ref()
+                .and_then(|target| self.config_for(target))
+                .and_then(|config| {
+                    metadata_field_for_text_input(kind)
+                        .and_then(|field| metadata_field_value(config, field).map(str::to_string))
                 })
                 .unwrap_or_default(),
             ScissorsTextInputKind::PresetName => self.settings_ui.preset_name_draft.clone(),
+            ScissorsTextInputKind::ExportAudioBitrate
+            | ScissorsTextInputKind::ExportVideoCustomWidth
+            | ScissorsTextInputKind::ExportVideoCustomHeight
+            | ScissorsTextInputKind::ExportGifLoop
+            | ScissorsTextInputKind::ExportOutputName
+            | ScissorsTextInputKind::ExportPresetName => unreachable!("base input kind"),
         }
     }
 
@@ -166,13 +185,14 @@ impl ScissorsRoot {
         kind: ScissorsTextInputKind,
         candidate: &str,
     ) -> Option<String> {
-        match kind {
+        if self.text_input_disabled(kind) {
+            return None;
+        }
+        let target = self.text_input_target(kind);
+        match kind.base_kind() {
             ScissorsTextInputKind::ExportName => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
                 let next = sanitize_output_name(candidate);
-                if self.editing_project_output() {
+                if matches!(target, Some(EditTarget::Project)) {
                     self.project.output_name.clone_from(&next);
                 } else {
                     self.file_queue.set_selected_output_name_from_input(&next);
@@ -180,51 +200,44 @@ impl ScissorsRoot {
                 Some(next)
             }
             ScissorsTextInputKind::AudioBitrate => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
                 let next = sanitize_number_input(candidate);
-                self.selected_config_mut().map(|config| {
+                self.config_for_mut(target.as_ref()?).map(|config| {
                     apply_audio_bitrate(config, &next);
                 })?;
                 Some(next)
             }
             ScissorsTextInputKind::VideoCustomWidth => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
                 let next = sanitize_number_input(candidate);
-                self.selected_config_mut().map(|config| {
+                self.config_for_mut(target.as_ref()?).map(|config| {
                     apply_custom_width(config, &next);
                 })?;
-                self.sync_export_linked_dimension(ScissorsTextInputKind::VideoCustomWidth);
+                if kind.is_export() {
+                    self.sync_export_linked_dimension(
+                        ScissorsTextInputKind::ExportVideoCustomWidth,
+                    );
+                }
                 Some(next)
             }
             ScissorsTextInputKind::VideoCustomHeight => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
                 let next = sanitize_number_input(candidate);
-                self.selected_config_mut().map(|config| {
+                self.config_for_mut(target.as_ref()?).map(|config| {
                     apply_custom_height(config, &next);
                 })?;
-                self.sync_export_linked_dimension(ScissorsTextInputKind::VideoCustomHeight);
+                if kind.is_export() {
+                    self.sync_export_linked_dimension(
+                        ScissorsTextInputKind::ExportVideoCustomHeight,
+                    );
+                }
                 Some(next)
             }
             ScissorsTextInputKind::GifLoop => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
                 let next = sanitize_number_input(candidate);
-                self.selected_config_mut().map(|config| {
+                self.config_for_mut(target.as_ref()?).map(|config| {
                     apply_gif_loop(config, &next);
                 })?;
-                Some(file_gif_loop_value(&self.file_queue))
+                Some(self.config_for(target.as_ref()?)?.gif_loop.to_string())
             }
             ScissorsTextInputKind::PreviewStartTime | ScissorsTextInputKind::PreviewEndTime => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
                 let file_id = self.file_queue.selected_file_id()?.to_string();
                 let next = candidate.to_string();
                 self.text_input_runtime_mut(kind).timecode_draft =
@@ -242,24 +255,24 @@ impl ScissorsRoot {
             | ScissorsTextInputKind::MetadataComment
             | ScissorsTextInputKind::MetadataServiceName
             | ScissorsTextInputKind::MetadataServiceProvider => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
                 let field = metadata_field_for_text_input(kind)?;
-                self.selected_config_mut().map(|config| {
+                self.config_for_mut(target.as_ref()?).map(|config| {
                     apply_metadata_field(config, field, candidate);
                 })?;
                 Some(candidate.to_string())
             }
             ScissorsTextInputKind::PresetName => {
-                if self.file_queue.selected_file_locked() {
-                    return None;
-                }
                 let next: String = candidate.chars().filter(|ch| !ch.is_control()).collect();
                 self.settings_ui.preset_name_draft.clone_from(&next);
                 self.settings_ui.preset_notice = None;
                 Some(next)
             }
+            ScissorsTextInputKind::ExportAudioBitrate
+            | ScissorsTextInputKind::ExportVideoCustomWidth
+            | ScissorsTextInputKind::ExportVideoCustomHeight
+            | ScissorsTextInputKind::ExportGifLoop
+            | ScissorsTextInputKind::ExportOutputName
+            | ScissorsTextInputKind::ExportPresetName => unreachable!("base input kind"),
         }
     }
 
@@ -943,12 +956,6 @@ impl ScissorsRoot {
             }
         });
     }
-}
-
-fn file_gif_loop_value(file_queue: &FileQueue) -> String {
-    file_queue
-        .selected_file()
-        .map_or_else(String::new, |file| file.config.gif_loop.to_string())
 }
 
 const fn metadata_field_for_text_input(kind: ScissorsTextInputKind) -> Option<MetadataField> {

@@ -137,57 +137,24 @@ impl ScissorsRoot {
         )
     }
     pub(super) fn selected_config(&self) -> Option<&ConversionConfig> {
-        if self.editing_project_output() {
-            Some(&self.project.output)
-        } else {
-            self.file_queue.selected_file().map(|file| &file.config)
-        }
+        self.config_for(self.settings_target().as_ref()?)
     }
+
     pub(super) fn update_selected_config(
         &mut self,
         update: impl FnOnce(&mut ConversionConfig) -> bool,
     ) -> bool {
-        if self.project.enabled
-            && (self.is_processing
-                || (!self.editing_project_output()
-                    && self
-                        .file_queue
-                        .selected_file_id()
-                        .is_some_and(|id| self.project_clip_locked(id))))
-        {
+        let Some(target) = self.settings_target() else {
             return false;
-        }
-        let before = (self.project.enabled && !self.editing_project_output())
-            .then(|| self.timeline_snapshot());
-        let changed = self.selected_config_mut().is_some_and(update);
-        if changed
-            && let Some(before) = before
-            && self.reconcile_track_spacing()
-        {
-            self.project.history.push(before);
-        }
-        changed
+        };
+        self.update_config(&target, update)
     }
-    pub(super) fn normalize_selected_config(&mut self, metadata: Option<&SourceMetadata>) -> bool {
-        if self.editing_project_output() {
-            let metadata = self.project_output_metadata();
-            return self.update_selected_config(|config| {
-                normalize_output_config(config, metadata.as_ref())
-            });
-        }
-        let project_enabled = self.project.enabled;
-        self.update_selected_config(|config| {
-            let trim = (
-                config.start_time.clone(),
-                config.end_time.clone(),
-                config.cut_segments.clone(),
-            );
-            let changed = normalize_output_config(config, metadata);
-            if project_enabled {
-                (config.start_time, config.end_time, config.cut_segments) = trim;
-            }
-            changed
-        })
+
+    pub(super) fn normalize_selected_config(&mut self) -> bool {
+        let Some(target) = self.settings_target() else {
+            return false;
+        };
+        self.normalize_config(&target)
     }
 
     pub(super) fn persist_app_settings(
