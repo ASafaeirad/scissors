@@ -318,6 +318,9 @@ impl Render for ScissorsRoot {
                     root.handle_preview_shortcut(event, &shortcut_root_focus, window, cx);
                 }),
             )
+            .capture_key_up(cx.listener(|root, event: &gpui::KeyUpEvent, window, _| {
+                root.suppress_space_click_after_playback(event, window);
+            }))
             .on_drop(cx.listener(|root, paths: &ExternalPaths, _window, cx| {
                 cx.stop_propagation();
                 root.close_drag_drop_overlay();

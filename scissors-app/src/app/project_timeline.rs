@@ -1515,7 +1515,8 @@ fn clip(
             let id = id.clone();
             move |root, event: &gpui::KeyDownEvent, _, cx| {
                 let key = event.keystroke.key.as_str();
-                if matches!(key, "enter" | "space") {
+                // Space is left to the play/pause shortcut.
+                if key == "enter" {
                     root.select_project_clip(&id);
                     cx.stop_propagation();
                     cx.notify();

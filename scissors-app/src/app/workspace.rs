@@ -949,7 +949,8 @@ fn media_card(
         .on_key_down(cx.listener({
             let id = file.id.clone();
             move |root, event: &gpui::KeyDownEvent, _, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                // Space is left to the play/pause shortcut.
+                if event.keystroke.key == "enter" {
                     cx.stop_propagation();
                     if root.select_library_source(&id) {
                         cx.notify();

@@ -22,11 +22,19 @@ impl ScissorsRoot {
                 key,
                 "space" | "x" | "q" | "e" | "z" | "y" | "delete" | "backspace"
             ) && self.registered_control_contains_focus(PREVIEW_SEEK_FOCUS_ID, window, cx);
+        // Space plays and pauses from anywhere in the workspace, like other editors. Text fields
+        // keep it for typing, and controls that claim Space stop propagation before it gets here.
+        let playback_shortcut = key == "space" && !text_input_has_focus(window);
         if (event.is_held || modifiers.modified()) && !history_shortcut
-            || window.focused(cx).is_some() && !root_focus.is_focused(window) && !timeline_shortcut
+            || window.focused(cx).is_some()
+                && !root_focus.is_focused(window)
+                && !timeline_shortcut
+                && !playback_shortcut
             || self.active_view != ActiveView::Workspace
             || self.settings_ui.is_present
             || self.drag_drop_ui.is_present
+            || self.export_ui.present
+            || self.project.confirm_discard
         {
             return;
         }
@@ -40,7 +48,11 @@ impl ScissorsRoot {
                 }
             }
             "delete" | "backspace" if self.project.enabled => self.remove_selected_project_clip(),
-            "space" => self.toggle_preview_playback_with_context(cx),
+            "space" => {
+                let toggled = self.toggle_preview_playback_with_context(cx);
+                self.space_toggled_playback = toggled;
+                toggled
+            }
             "s" if self.preview_timeline_enabled() => {
                 self.focus_registered_control(PREVIEW_SEEK_FOCUS_ID, window, cx)
             }
@@ -55,6 +67,25 @@ impl ScissorsRoot {
             cx.notify();
         }
     }
+
+    /// Runs in the capture phase of key-up. A focused button clicks on Space release, so after
+    /// Space toggled playback this keeps the same press from also activating that button.
+    pub(super) fn suppress_space_click_after_playback(
+        &mut self,
+        event: &gpui::KeyUpEvent,
+        window: &mut Window,
+    ) {
+        if event.keystroke.key == "space" && std::mem::take(&mut self.space_toggled_playback) {
+            window.prevent_default();
+        }
+    }
+}
+
+fn text_input_has_focus(window: &Window) -> bool {
+    window
+        .context_stack()
+        .iter()
+        .any(|context| context.contains(super::SCISSORS_TEXT_INPUT_CONTEXT))
 }
 
 #[cfg(test)]
@@ -62,19 +93,21 @@ mod tests {
     use super::{Context, FocusHandle, PREVIEW_SEEK_FOCUS_ID, ScissorsRoot, Window};
     use crate::app::{Entity, ScissorsFocusKey};
     use gpui::{
-        AppContext, InteractiveElement, IntoElement, ParentElement, Render, Styled, Subscription,
-        TestAppContext, VisualTestContext, div,
+        AppContext, InteractiveElement, IntoElement, ParentElement, Render,
+        StatefulInteractiveElement, Styled, Subscription, TestAppContext, VisualTestContext, div,
     };
 
     struct ShortcutTestView {
         root: Entity<ScissorsRoot>,
         focus: FocusHandle,
+        other_clicks: std::rc::Rc<std::cell::Cell<usize>>,
         _subscription: Subscription,
     }
 
     impl Render for ShortcutTestView {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let focus = self.focus.clone();
+            let other_clicks = self.other_clicks.clone();
             self.root.update(cx, |root, cx| {
                 let seek = root.ensure_focus(
                     ScissorsFocusKey::Control(PREVIEW_SEEK_FOCUS_ID.to_string()),
@@ -83,6 +116,11 @@ mod tests {
                 );
                 let other = root.ensure_focus(
                     ScissorsFocusKey::Control("other-control".to_string()),
+                    true,
+                    cx,
+                );
+                let text = root.ensure_focus(
+                    ScissorsFocusKey::Control("text-field".to_string()),
                     true,
                     cx,
                 );
@@ -113,17 +151,41 @@ mod tests {
                                 }
                             })),
                     )
-                    .child(div().id("other-control").size_20().track_focus(&other))
+                    .child(
+                        div()
+                            .id("other-control")
+                            .size_20()
+                            .track_focus(&other)
+                            .on_click(move |_, _, _| other_clicks.set(other_clicks.get() + 1)),
+                    )
+                    .child(
+                        div()
+                            .id("text-field")
+                            .key_context(crate::app::SCISSORS_TEXT_INPUT_CONTEXT)
+                            .size_20()
+                            .track_focus(&text),
+                    )
                     .on_key_down(cx.listener(
                         move |root, event: &gpui::KeyDownEvent, window, cx| {
                             root.handle_preview_shortcut(event, &focus, window, cx);
                         },
                     ))
+                    .capture_key_up(cx.listener(|root, event: &gpui::KeyUpEvent, window, _| {
+                        root.suppress_space_click_after_playback(event, window);
+                    }))
             })
         }
     }
 
     fn preview_window(cx: &mut TestAppContext) -> (Entity<ScissorsRoot>, &mut VisualTestContext) {
+        let (view, cx) = preview_window_view(cx);
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        (root, cx)
+    }
+
+    fn preview_window_view(
+        cx: &mut TestAppContext,
+    ) -> (Entity<ShortcutTestView>, &mut VisualTestContext) {
         let (view, cx) = cx.add_window_view(|window, cx| {
             let focus = cx.focus_handle();
             focus.focus(window, cx);
@@ -144,13 +206,13 @@ mod tests {
             ShortcutTestView {
                 root,
                 focus,
+                other_clicks: std::rc::Rc::default(),
                 _subscription: subscription,
             }
         });
         cx.update(|window, _| window.activate_window());
         draw(cx);
-        let root = view.read_with(cx, |view, _| view.root.clone());
-        (root, cx)
+        (view, cx)
     }
 
     fn draw(cx: &mut VisualTestContext) {
@@ -237,9 +299,11 @@ mod tests {
             prefer_character_input: false,
         });
         focus(&root, "other-control", cx);
-        for key in ["space", "s", "x"] {
+        for key in ["s", "x"] {
             cx.simulate_keystrokes(key);
         }
+        focus(&root, "text-field", cx);
+        cx.simulate_keystrokes("space");
         assert!(!root.read_with(cx, |root, _| root.preview_ui.playback.is_playing()));
         assert_eq!(
             root.read_with(cx, |root, _| root
@@ -249,6 +313,38 @@ mod tests {
                 .clone()),
             cuts
         );
+    }
+
+    #[test]
+    fn space_toggles_playback_from_a_focused_button_without_clicking_it() {
+        let mut app = TestAppContext::single();
+        let (view, cx) = preview_window_view(&mut app);
+        let root = view.read_with(cx, |view, _| view.root.clone());
+        focus(&root, "other-control", cx);
+        press(cx, "space");
+        assert!(root.read_with(cx, |root, _| root.preview_ui.playback.is_playing()));
+        press(cx, "space");
+        assert!(!root.read_with(cx, |root, _| root.preview_ui.playback.is_playing()));
+        assert_eq!(view.read_with(cx, |view, _| view.other_clicks.get()), 0);
+        // Enter still activates the focused control.
+        press(cx, "enter");
+        assert_eq!(view.read_with(cx, |view, _| view.other_clicks.get()), 1);
+    }
+
+    fn press(cx: &mut VisualTestContext, key: &str) {
+        cx.simulate_keystrokes(key);
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+    }
+
+    #[test]
+    fn space_is_ignored_while_a_dialog_is_open() {
+        let mut app = TestAppContext::single();
+        let (root, cx) = preview_window(&mut app);
+        root.update(cx, |root, _| root.export_ui.present = true);
+        cx.simulate_keystrokes("space");
+        assert!(!root.read_with(cx, |root, _| root.preview_ui.playback.is_playing()));
     }
 
     #[test]
