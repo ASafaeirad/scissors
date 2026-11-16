@@ -137,46 +137,24 @@ impl ScissorsRoot {
         )
     }
     pub(super) fn selected_config(&self) -> Option<&ConversionConfig> {
-        if self.editing_project_output() {
-            Some(&self.project.output)
-        } else {
-            self.file_queue.selected_file().map(|file| &file.config)
-        }
+        self.config_for(self.settings_target().as_ref()?)
     }
+
     pub(super) fn update_selected_config(
         &mut self,
         update: impl FnOnce(&mut ConversionConfig) -> bool,
     ) -> bool {
-        if self.project.enabled && self.is_processing {
+        let Some(target) = self.settings_target() else {
             return false;
-        }
-        if self.project.enabled && !self.editing_project_output() {
-            return self.timeline_editor().settings(update);
-        }
-        self.selected_config_mut().is_some_and(update)
+        };
+        self.update_config(&target, update)
     }
 
-    pub(super) fn normalize_selected_config(&mut self, metadata: Option<&SourceMetadata>) -> bool {
-        if self.project.enabled && self.is_processing {
+    pub(super) fn normalize_selected_config(&mut self) -> bool {
+        let Some(target) = self.settings_target() else {
             return false;
-        }
-        if self.editing_project_output() {
-            let metadata = self.project_output_metadata();
-            return normalize_output_config(&mut self.project.output, metadata.as_ref());
-        }
-        let project_enabled = self.project.enabled;
-        self.selected_config_mut().is_some_and(|config| {
-            let trim = (
-                config.start_time.clone(),
-                config.end_time.clone(),
-                config.cut_segments.clone(),
-            );
-            let changed = normalize_output_config(config, metadata);
-            if project_enabled {
-                (config.start_time, config.end_time, config.cut_segments) = trim;
-            }
-            changed
-        })
+        };
+        self.normalize_config(&target)
     }
 
     pub(super) fn persist_app_settings(

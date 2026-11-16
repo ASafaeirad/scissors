@@ -1,6 +1,6 @@
 use super::{
-    AppearanceSettings, ColorTheme, Context, DecreaseUiScale, IncreaseUiScale, PresetNotice,
-    PresetNoticeTone, ResetUiScale, ScalePreset, ScissorsRoot, Window, apply_preset,
+    AppearanceSettings, ColorTheme, Context, DecreaseUiScale, EditTarget, IncreaseUiScale,
+    PresetNotice, PresetNoticeTone, ResetUiScale, ScalePreset, ScissorsRoot, Window, apply_preset,
     create_custom_preset, output_folder_dialog, pick_output_folder,
 };
 
@@ -165,10 +165,8 @@ impl ScissorsRoot {
         Ok(())
     }
 
-    pub(super) fn save_preset_from_draft(&mut self) -> bool {
-        if (self.project.enabled && self.is_processing)
-            || (!self.editing_project_output() && self.file_queue.selected_file_locked())
-        {
+    pub(super) fn save_preset_for_target(&mut self, target: &EditTarget) -> bool {
+        if self.edit_target_locked(target) {
             return false;
         }
         let name = self.settings_ui.preset_name_draft.trim();
@@ -180,7 +178,7 @@ impl ScissorsRoot {
             return false;
         }
 
-        let Some(config) = self.selected_config().cloned() else {
+        let Some(config) = self.config_for(target).cloned() else {
             self.settings_ui.preset_notice = Some(PresetNotice {
                 text: "Preset not saved".to_string(),
                 tone: PresetNoticeTone::Error,
@@ -200,7 +198,7 @@ impl ScissorsRoot {
             return false;
         }
 
-        self.remember_export_preset(&id);
+        self.remember_export_preset(target, &id);
         self.settings_ui.next_custom_preset_sequence = next_sequence;
         self.settings_ui.preset_name_draft.clear();
         self.settings_ui.preset_notice = Some(PresetNotice {
@@ -241,9 +239,21 @@ impl ScissorsRoot {
     }
 
     pub(super) fn apply_preset_to_selected(&mut self, preset_id: &str) -> bool {
-        if (self.project.enabled && self.is_processing)
-            || (!self.editing_project_output() && self.file_queue.selected_file_locked())
-        {
+        let Some(target) = self.settings_target() else {
+            return false;
+        };
+        self.apply_preset_to_target(&target, preset_id)
+    }
+
+    pub(super) fn apply_export_preset(&mut self, preset_id: &str) -> bool {
+        let Some(target) = self.export_target() else {
+            return false;
+        };
+        self.apply_preset_to_target(&target, preset_id)
+    }
+
+    pub(super) fn apply_preset_to_target(&mut self, target: &EditTarget, preset_id: &str) -> bool {
+        if self.edit_target_locked(target) {
             return false;
         }
         let Some(preset) = self
@@ -254,17 +264,14 @@ impl ScissorsRoot {
         else {
             return false;
         };
-        let metadata = if self.editing_project_output() {
-            self.project_output_metadata()
-        } else {
-            self.selected_source_metadata()
-        };
+        let metadata = self.metadata_for_target(target);
         if !crate::settings::preset_is_compatible(&preset, metadata.as_ref()) {
             return false;
         }
-        let changed =
-            self.update_selected_config(|config| apply_preset(config, &preset, metadata.as_ref()));
-        let selection_changed = self.remember_export_preset(preset_id);
+        let changed = self.update_config(target, |config| {
+            apply_preset(config, &preset, metadata.as_ref())
+        });
+        let selection_changed = self.remember_export_preset(target, preset_id);
         if changed || selection_changed {
             self.settings_ui.preset_notice = Some(PresetNotice {
                 text: format!("Applied {}", preset.name),

@@ -248,15 +248,16 @@ impl TimelineEditor<'_> {
 
     /// Settings alone historically do not enter history. Only changes that move
     /// placements record the configuration and all neighbor moves together.
-    pub(super) fn settings(&mut self, update: impl FnOnce(&mut ConversionConfig) -> bool) -> bool {
-        let Some(id) = self.file_queue.selected_file_id().map(str::to_string) else {
-            return false;
-        };
-        if self.is_processing || self.project_clip_locked(&id) {
+    pub(super) fn settings(
+        &mut self,
+        id: &str,
+        update: impl FnOnce(&mut ConversionConfig) -> bool,
+    ) -> bool {
+        if self.is_processing || self.project_clip_locked(id) {
             return false;
         }
         let before = self.snapshot();
-        let Some(file) = self.file_queue.file_by_id_mut(&id) else {
+        let Some(file) = self.file_queue.file_by_id_mut(id) else {
             return false;
         };
         let original = file.config.clone();
@@ -615,11 +616,7 @@ impl TimelineEditor<'_> {
     }
 
     fn project_clip_locked(&self, id: &str) -> bool {
-        self.clips
-            .iter()
-            .find(|clip| clip.id == id)
-            .and_then(|clip| self.tracks.get(clip.track))
-            .is_some_and(|track| track.locked)
+        clip_locked(self.clips, self.tracks, id)
     }
 
     fn move_project_clip_to_track(&mut self, id: &str, track: usize) -> bool {
@@ -702,6 +699,14 @@ impl TimelineEditor<'_> {
     }
 }
 
+pub(super) fn clip_locked(clips: &[ClipPlacement], tracks: &Tracks, id: &str) -> bool {
+    clips
+        .iter()
+        .find(|clip| clip.id == id)
+        .and_then(|clip| tracks.get(clip.track))
+        .is_some_and(|track| track.locked)
+}
+
 pub(super) fn sources(
     clips: &[ClipPlacement],
     tracks: &Tracks,
@@ -744,6 +749,14 @@ pub(super) fn sources(
 mod tests {
     use super::*;
 
+    fn selected_settings(
+        root: &mut ScissorsRoot,
+        update: impl FnOnce(&mut ConversionConfig) -> bool,
+    ) -> bool {
+        let id = root.file_queue.selected_file_id().unwrap().to_string();
+        root.timeline_editor().settings(&id, update)
+    }
+
     fn insert(root: &mut ScissorsRoot, offset: u64) -> String {
         assert!(root.timeline_editor().apply(TimelineEdit::Insert {
             source: "source",
@@ -758,7 +771,7 @@ mod tests {
         let mut root = super::super::project::tests::project();
         let first = insert(&mut root, 3_000);
         let second = insert(&mut root, 30_000);
-        assert!(root.timeline_editor().settings(|config| {
+        assert!(selected_settings(&mut root, |config| {
             config.audio_volume = 37;
             true
         }));
@@ -896,14 +909,14 @@ mod tests {
             id: &id,
             speed: 2.0
         }));
-        assert!(!root.timeline_editor().settings(|config| {
+        assert!(!selected_settings(&mut root, |config| {
             config.start_time = Some(format_time(1.0));
             true
         }));
         assert!(root.project.history.can_redo());
         root.project.tracks[0].locked = false;
         let before = root.timeline_editor().snapshot();
-        assert!(!root.timeline_editor().settings(|config| {
+        assert!(!selected_settings(&mut root, |config| {
             config.end_time = Some(format_time(3.0));
             false
         }));
@@ -918,7 +931,7 @@ mod tests {
         insert(&mut root, 10_000);
         root.file_queue.select_existing_file(&first);
         root.project.history.clear();
-        assert!(root.timeline_editor().settings(|config| {
+        assert!(selected_settings(&mut root, |config| {
             config.audio_volume = 37;
             true
         }));
@@ -931,7 +944,7 @@ mod tests {
         root.project.history.clear();
         root.preview_ui.timeline_snap = true;
         let before = root.timeline_editor().snapshot();
-        assert!(root.timeline_editor().settings(|config| {
+        assert!(selected_settings(&mut root, |config| {
             config.end_time = Some(format_time(6.0));
             true
         }));
@@ -939,8 +952,8 @@ mod tests {
         let after = root.timeline_editor().snapshot();
         assert!(root.timeline_editor().undo_timeline_edit());
         assert!(root.timeline_editor().snapshot() == before);
-        assert!(!root.timeline_editor().settings(|_| true));
-        root.normalize_selected_config(None);
+        assert!(!selected_settings(&mut root, |_| true));
+        root.normalize_selected_config();
         assert!(root.project.history.can_redo());
         assert!(root.timeline_editor().redo_timeline_edit());
         assert!(root.timeline_editor().snapshot() == after);
@@ -952,7 +965,7 @@ mod tests {
             for elapsed in [0.8746, 0.875, 2.875, 3.3334] {
                 let mut root = super::super::project::tests::project();
                 let id = insert(&mut root, 3_125);
-                root.timeline_editor().settings(|config| {
+                selected_settings(&mut root, |config| {
                     config.start_time = Some("00:00:01.125".to_string());
                     config.end_time = Some("00:00:09.875".to_string());
                     config.cut_segments = [("2", "3"), ("5", "6.25")]
@@ -1050,7 +1063,7 @@ mod tests {
         });
         root.preview_ui.timeline_snap = true;
         let before = root.timeline_editor().snapshot();
-        assert!(root.timeline_editor().settings(|config| {
+        assert!(selected_settings(&mut root, |config| {
             config.cut_segments = vec![crate::settings::CutSegment {
                 start_time: "2".to_string(),
                 end_time: "4".to_string(),
@@ -1063,7 +1076,7 @@ mod tests {
         assert!(root.project.history.can_redo());
         let output_before = root.file_queue.selected_file().unwrap().config.clone();
         root.export_ui.open = true;
-        root.update_selected_config(|config| {
+        root.update_config(&EditTarget::Project, |config| {
             config.audio_volume = 22;
             true
         });

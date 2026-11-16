@@ -986,7 +986,7 @@ mod scissors_root_conversion {
             .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
         root.settings_ui.preset_name_draft = "Review MP4".to_string();
 
-        assert!(root.save_preset_from_draft());
+        assert!(root.save_preset_for_target(&root.export_target().unwrap()));
 
         assert!(
             root.presets
@@ -1015,7 +1015,7 @@ mod scissors_root_conversion {
             .add_file(FileItem::from_path("first", "/tmp/one.mp4", 1));
         root.settings_ui.preset_name_draft = "Review MP4".to_string();
 
-        assert!(root.save_preset_from_draft());
+        assert!(root.save_preset_for_target(&root.export_target().unwrap()));
 
         let settings = persistence.load().expect("settings should be readable");
         assert!(
@@ -1337,10 +1337,14 @@ mod scissors_root_config {
         }
         root.file_queue.select_existing_file("image");
 
-        root.normalize_selected_config(Some(&SourceMetadata {
-            media_kind: Some(SourceKind::Image),
-            ..SourceMetadata::default()
-        }));
+        root.source_metadata.mark_ready(
+            "image",
+            SourceMetadata {
+                media_kind: Some(SourceKind::Image),
+                ..SourceMetadata::default()
+            },
+        );
+        root.normalize_selected_config();
 
         assert_eq!(
             root.file_queue

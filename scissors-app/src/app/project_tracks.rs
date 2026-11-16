@@ -186,6 +186,10 @@ impl ScissorsRoot {
             ))
     }
 
+    pub(super) fn project_clip_locked(&self, id: &str) -> bool {
+        super::timeline_edit::clip_locked(&self.project.clips, &self.project.tracks, id)
+    }
+
     /// Moves a clip to another unlocked track of its kind.
     pub(super) fn move_project_clip_to_track(&mut self, id: &str, track: usize) -> bool {
         self.timeline_editor()
