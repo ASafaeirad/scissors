@@ -215,48 +215,62 @@ impl ScissorsRoot {
         changed
     }
 
-    /// Closes empty time on Video 1 without changing overlaps or other tracks.
+    /// Prevents overlaps on every unlocked track. Snap also closes gaps on Video 1.
     /// Call inside the triggering edit so its history snapshot includes these moves.
-    pub(super) fn close_primary_track_gaps(&mut self) -> bool {
-        let primary = self.project.tracks.primary();
-        if !self.preview_ui.timeline_snap || self.project.tracks[primary].locked {
-            return false;
+    pub(super) fn reconcile_track_spacing(&mut self) -> bool {
+        let mut changed = false;
+        for track in 0..self.project.tracks.len() {
+            if self.project.tracks[track].locked {
+                continue;
+            }
+            let mut clips: Vec<_> = self
+                .project_timeline_clips()
+                .into_iter()
+                .filter(|(clip, _)| clip.track == track)
+                .collect();
+            // Wait until every duration on this track is known.
+            if clips.len()
+                != self
+                    .project
+                    .clips
+                    .iter()
+                    .filter(|clip| clip.track == track)
+                    .count()
+            {
+                continue;
+            }
+            clips.sort_by_key(|(clip, _)| clip.offset_millis);
+            changed |= self.place_track_clips(track, clips, None);
         }
-        let mut clips: Vec<_> = self
-            .project_timeline_clips()
-            .into_iter()
-            .filter(|(clip, _)| clip.track == primary)
-            .collect();
-        // Wait for all durations rather than closing over a clip still being loaded.
-        if clips.len()
-            != self
-                .project
-                .clips
-                .iter()
-                .filter(|clip| clip.track == primary)
-                .count()
-        {
-            return false;
-        }
-        clips.sort_by_key(|(clip, _)| clip.offset_millis);
+        changed
+    }
+
+    /// Preserves free-placement gaps and pushes colliding clips after their predecessor.
+    fn place_track_clips(
+        &mut self,
+        track: usize,
+        clips: Vec<(ClipPlacement, TimelineSource)>,
+        moved: Option<(&str, u64)>,
+    ) -> bool {
+        let close_gaps = self.preview_ui.timeline_snap && track == self.project.tracks.primary();
         let mut end = 0_u64;
-        let mut removed = 0_u64;
         let mut changed = false;
         for (clip, source) in clips {
-            removed = removed.saturating_add(clip.offset_millis.saturating_sub(end));
-            end = end.max(clip.offset_millis.saturating_add(
-                scissors_core::project_timeline::clip_duration_millis(&source),
+            let requested = moved
+                .filter(|(id, _)| *id == clip.id)
+                .map_or(clip.offset_millis, |(_, offset)| offset);
+            let offset = if close_gaps { end } else { requested.max(end) };
+            let placement = self
+                .project
+                .clips
+                .iter_mut()
+                .find(|item| item.id == clip.id)
+                .unwrap();
+            changed |= placement.offset_millis != offset;
+            placement.offset_millis = offset;
+            end = offset.saturating_add(scissors_core::project_timeline::clip_duration_millis(
+                &source,
             ));
-            let offset = clip.offset_millis - removed;
-            if offset != clip.offset_millis {
-                self.project
-                    .clips
-                    .iter_mut()
-                    .find(|item| item.id == clip.id)
-                    .unwrap()
-                    .offset_millis = offset;
-                changed = true;
-            }
         }
         changed
     }
@@ -268,7 +282,7 @@ impl ScissorsRoot {
         self.preview_ui.timeline_snap = !self.preview_ui.timeline_snap;
         if self.preview_ui.timeline_snap {
             let before = self.timeline_snapshot();
-            if self.close_primary_track_gaps() {
+            if self.reconcile_track_spacing() {
                 self.project.history.push(before);
             }
         }
@@ -279,6 +293,51 @@ impl ScissorsRoot {
             .clips
             .iter()
             .any(|clip| clip.id == id && clip.track == self.project.tracks.primary())
+    }
+
+    /// Inserts a moved clip between its neighbors without overlapping them.
+    pub(super) fn place_moved_project_clip(&mut self, id: &str, offset_millis: u64) -> bool {
+        let Some(track) = self
+            .project
+            .clips
+            .iter()
+            .find(|clip| clip.id == id)
+            .map(|clip| clip.track)
+        else {
+            return false;
+        };
+        let mut clips: Vec<_> = self
+            .project_timeline_clips()
+            .into_iter()
+            .filter(|(clip, _)| clip.track == track)
+            .collect();
+        // Do not rearrange a track until every clip has a known duration.
+        if clips.len()
+            != self
+                .project
+                .clips
+                .iter()
+                .filter(|clip| clip.track == track)
+                .count()
+        {
+            return false;
+        }
+        clips.sort_by_key(|(clip, _)| clip.offset_millis);
+        let Some(index) = clips.iter().position(|(clip, _)| clip.id == id) else {
+            return false;
+        };
+        let moved = clips.remove(index);
+        let insertion = clips
+            .iter()
+            .position(|(clip, source)| {
+                let midpoint = clip.offset_millis.saturating_add(
+                    scissors_core::project_timeline::clip_duration_millis(source) / 2,
+                );
+                midpoint > offset_millis
+            })
+            .unwrap_or(clips.len());
+        clips.insert(insertion, moved);
+        self.place_track_clips(track, clips, Some((id, offset_millis)))
     }
 
     /// Clip edges, the playhead, and the project start: where moves and trims snap.
@@ -1503,6 +1562,18 @@ fn clip(
         .aria_selected(selected)
         .focusable()
         .tab_stop(true)
+        // A drag consumes the click, so select before the gesture starts.
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener({
+                let id = id.clone();
+                move |root, _, _, cx| {
+                    if root.select_project_clip(&id) {
+                        cx.notify();
+                    }
+                }
+            }),
+        )
         .on_click(cx.listener({
             let id = id.clone();
             move |root, _, _, cx| {
@@ -1830,7 +1901,10 @@ mod tests {
         assert!(!root.drop_library_source("library-video", point(px(50.0), px(10.0))));
         assert_eq!(root.project.clips.len(), count);
         root.is_processing = false;
-        for (source, x, offset) in [("library-audio", -10.0, 0), ("library-video", 150.0, 4000)] {
+        for (source, x, offset) in [
+            ("library-audio", -10.0, 4000),
+            ("library-video", 150.0, 4000),
+        ] {
             assert!(root.drop_library_source(source, point(px(x), px(10.0))));
             assert_eq!(root.project.clips.last().unwrap().offset_millis, offset);
         }
@@ -2078,12 +2152,12 @@ mod tests {
                 .map(|clip| clip.offset_millis)
                 .collect::<Vec<_>>()
         };
-        // Preserve the overlap between the clips originally at 2s and 5s.
-        assert_eq!(offsets(&root), [13_000, 0, 3_000, 40_000]);
+        // Insertions already prevent overlaps; enabling snap only closes the gaps.
+        assert_eq!(offsets(&root), [20_000, 0, 10_000, 40_000]);
         assert!(root.undo_timeline_edit());
-        assert_eq!(offsets(&root), [30_000, 2_000, 5_000, 40_000]);
+        assert_eq!(offsets(&root), [30_000, 2_000, 12_000, 40_000]);
         assert!(root.redo_timeline_edit());
-        assert_eq!(offsets(&root), [13_000, 0, 3_000, 40_000]);
+        assert_eq!(offsets(&root), [20_000, 0, 10_000, 40_000]);
     }
 
     #[test]
@@ -2111,6 +2185,200 @@ mod tests {
         assert!(root.move_project_clip(&first, 50_000));
         assert_eq!(root.project.clips[2].offset_millis, 0);
         assert_eq!(root.project.clips[0].offset_millis, 10_000);
+    }
+
+    #[test]
+    fn snapped_moves_insert_slices_without_overlap_and_undo_as_one_gesture() {
+        let mut root = crate::app::project::tests::project();
+        root.preview_ui.timeline_snap = true;
+        for _ in 0..3 {
+            assert!(root.add_library_clip("source"));
+        }
+        let ids: Vec<_> = root
+            .project
+            .clips
+            .iter()
+            .map(|clip| clip.id.clone())
+            .collect();
+        let offsets = |root: &ScissorsRoot| {
+            root.project
+                .clips
+                .iter()
+                .map(|clip| clip.offset_millis)
+                .collect::<Vec<_>>()
+        };
+        // A small move stays in its slot, even when the raw position overlaps a neighbor.
+        assert!(!root.move_project_clip(&ids[1], 9_000));
+        assert_eq!(offsets(&root), [0, 10_000, 20_000]);
+        let recorded = Cell::new(false);
+        assert!(root.gesture_edit(&recorded, |root| root.move_project_clip(&ids[0], 16_000)));
+        assert_eq!(offsets(&root), [10_000, 0, 20_000]);
+        assert!(!root.gesture_edit(&recorded, |root| root.move_project_clip(&ids[0], 16_000)));
+        assert!(root.gesture_edit(&recorded, |root| root.move_project_clip(&ids[0], 26_000)));
+        assert_eq!(offsets(&root), [20_000, 0, 10_000]);
+        assert!(root.undo_timeline_edit());
+        assert_eq!(offsets(&root), [0, 10_000, 20_000]);
+        assert!(root.redo_timeline_edit());
+        assert_eq!(offsets(&root), [20_000, 0, 10_000]);
+        assert!(root.move_project_clip(&ids[0], 2_000));
+        assert_eq!(offsets(&root), [0, 10_000, 20_000]);
+    }
+
+    #[test]
+    fn snapped_moves_use_trimmed_and_retimed_lengths_and_leave_other_tracks_alone() {
+        let mut root = crate::app::project::tests::project();
+        root.preview_ui.timeline_snap = true;
+        root.add_project_track(TrackKind::Video);
+        root.add_library_clip("source");
+        root.add_library_clip("source");
+        root.add_library_clip_on_track("source", 7_000, 2);
+        let first = root.project.clips[0].id.clone();
+        let upper = root.project.clips[2].id.clone();
+        assert!(root.set_project_clip_speed(&first, 2.0));
+        assert!(root.trim_project_clip(&first, false, 3.0, 0.0, 0));
+        assert!(root.move_project_clip(&first, 8_000));
+        assert_eq!(root.project.clips[0].offset_millis, 10_000);
+        assert_eq!(root.project.clips[1].offset_millis, 0);
+        assert_eq!(root.project.clips[2].offset_millis, 7_000);
+        assert!((root.project_duration() - 17.0).abs() < f64::EPSILON);
+        assert!(root.move_project_clip(&upper, 2_000));
+        assert_eq!(root.project.clips[2].offset_millis, 2_000);
+        root.project.tracks[0].locked = true;
+        assert!(!root.move_project_clip(&first, 0));
+        assert_eq!(root.project.clips[0].offset_millis, 10_000);
+        root.project.tracks[0].locked = false;
+        root.preview_ui.timeline_snap = false;
+        assert!(root.move_project_clip(&first, 2_000));
+        assert_eq!(root.project.clips[0].offset_millis, 2_000);
+    }
+
+    #[test]
+    fn all_tracks_prevent_overlaps_with_snap_on_or_off() {
+        for snap in [false, true] {
+            for track in [0, 1, 2] {
+                let mut root = crate::app::project::tests::project();
+                root.preview_ui.timeline_snap = snap;
+                root.add_project_track(TrackKind::Video);
+                if track == 1 {
+                    let mut metadata = root.source_metadata.metadata_for("source").unwrap().clone();
+                    metadata.media_kind = Some(SourceKind::Audio);
+                    root.source_metadata.mark_ready("source", metadata);
+                }
+                for offset in [5_000, 25_000, 45_000] {
+                    assert!(root.add_library_clip_on_track("source", offset, track));
+                }
+                let first = root.project.clips[0].id.clone();
+                let original: Vec<_> = root
+                    .project
+                    .clips
+                    .iter()
+                    .map(|clip| clip.offset_millis)
+                    .collect();
+                let recorded = Cell::new(false);
+                assert!(
+                    root.gesture_edit(&recorded, |root| root.move_project_clip(&first, 51_000))
+                );
+                assert_no_track_overlaps(&root);
+                let moved: Vec<_> = root
+                    .project
+                    .clips
+                    .iter()
+                    .map(|clip| clip.offset_millis)
+                    .collect();
+                assert!(root.undo_timeline_edit());
+                assert_eq!(
+                    root.project
+                        .clips
+                        .iter()
+                        .map(|clip| clip.offset_millis)
+                        .collect::<Vec<_>>(),
+                    original
+                );
+                assert!(root.redo_timeline_edit());
+                assert_eq!(
+                    root.project
+                        .clips
+                        .iter()
+                        .map(|clip| clip.offset_millis)
+                        .collect::<Vec<_>>(),
+                    moved
+                );
+                assert!(root.move_project_clip(&first, 0));
+                assert_no_track_overlaps(&root);
+                if !snap || track != 0 {
+                    // Collision protection leaves existing gaps in free placement.
+                    assert_eq!(root.project.clips[1].offset_millis, 25_000);
+                }
+                root.project.tracks[track].locked = true;
+                assert!(!root.move_project_clip(&first, 90_000));
+                assert!(!root.set_project_clip_speed(&first, 0.5));
+                root.file_queue.select_existing_file(&first);
+                assert!(!root.update_selected_config(|config| {
+                    config.end_time = Some(format_time(9.0));
+                    true
+                }));
+            }
+        }
+    }
+
+    fn assert_no_track_overlaps(root: &ScissorsRoot) {
+        for track in 0..root.project.tracks.len() {
+            let mut clips: Vec<_> = root
+                .project_timeline_clips()
+                .into_iter()
+                .filter(|(clip, _)| clip.track == track)
+                .collect();
+            clips.sort_by_key(|(clip, _)| clip.offset_millis);
+            for pair in clips.windows(2) {
+                let end = pair[0].0.offset_millis
+                    + scissors_core::project_timeline::clip_duration_millis(&pair[0].1);
+                assert!(end <= pair[1].0.offset_millis, "overlap on track {track}");
+            }
+        }
+    }
+
+    #[test]
+    fn drops_trims_speed_and_track_changes_prevent_overlaps_without_snap() {
+        let mut root = crate::app::project::tests::project();
+        root.add_project_track(TrackKind::Video);
+        for (offset, track) in [(0, 0), (8_000, 0), (16_000, 0), (0, 2)] {
+            assert!(root.add_library_clip_on_track("source", offset, track));
+            assert_no_track_overlaps(&root);
+        }
+        let first = root.project.clips[0].id.clone();
+        let upper = root.project.clips[3].id.clone();
+        assert!(root.set_project_clip_speed(&first, 0.5));
+        assert_eq!(root.project.clips[1].offset_millis, 20_000);
+        assert_no_track_overlaps(&root);
+        root.file_queue.select_existing_file(&first);
+        assert!(root.update_selected_config(|config| {
+            config.end_time = Some(format_time(5.0));
+            true
+        }));
+        // Shrinking leaves a gap when snap is off.
+        assert_eq!(root.project.clips[1].offset_millis, 20_000);
+        assert!(root.trim_project_clip(&first, false, 20.0, 0.0, 0));
+        assert_no_track_overlaps(&root);
+        assert!(root.move_project_clip_to_track(&upper, 0));
+        assert_no_track_overlaps(&root);
+        assert_eq!(root.project.clips[3].offset_millis, 20_000);
+        assert!(root.set_project_clip_speed(&first, 2.0));
+        root.file_queue.select_existing_file(&first);
+        assert!(root.update_selected_config(|config| {
+            config.end_time = Some(format_time(5.0));
+            true
+        }));
+        let second = root.project.clips[1].id.clone();
+        assert!(root.move_project_clip(&second, 2_500));
+        assert!(root.update_selected_config(|config| {
+            config.end_time = Some(format_time(10.0));
+            true
+        }));
+        assert_no_track_overlaps(&root);
+        assert_eq!(root.project.clips[1].offset_millis, 5_000);
+        assert!(root.undo_timeline_edit());
+        assert_no_track_overlaps(&root);
+        assert_eq!(root.project.clips[1].offset_millis, 2_500);
     }
 
     #[test]
@@ -2152,7 +2420,7 @@ mod tests {
         );
         assert!(!root.snap_targets(&primary).contains(&50.0));
         root.project.tracks[0].locked = false;
-        assert!(root.close_primary_track_gaps());
+        assert!(root.reconcile_track_spacing());
         assert_eq!(root.project.clips[0].offset_millis, 0);
         assert_eq!(root.project.clips[1].offset_millis, 50_000);
         root.toggle_timeline_snap();
@@ -2388,6 +2656,7 @@ mod tests {
         let end = point(start.x + px(8.0) + bounds.size.width * 0.125, start.y);
         drag(cx, start, end);
         root.read_with(cx, |root, _| {
+            assert_eq!(root.file_queue.selected_file_id(), Some(id.as_str()));
             assert!(
                 root.project.clips[0].offset_millis.abs_diff(1000) <= 1,
                 "offset {}",
@@ -2401,11 +2670,16 @@ mod tests {
                 }
             );
         });
+        root.update(cx, |root, _| {
+            let other = root.project.clips[1].id.clone();
+            root.select_project_clip(&other);
+        });
         cx.update(|window, cx| window.draw(cx).clear());
         let start = point(bounds.left() + bounds.size.width * 0.375 - px(3.0), y);
         let end = point(bounds.left() + bounds.size.width * 0.25, y);
         drag(cx, start, end);
         root.read_with(cx, |root, _| {
+            assert_eq!(root.file_queue.selected_file_id(), Some(id.as_str()));
             let trim_end = root
                 .file_queue
                 .file_by_id(&id)
@@ -2569,6 +2843,7 @@ mod tests {
         assert!(panned_view.start > pinch_view.start);
         assert!((panned_view.span - (pinch_view.span)).abs() < f64::EPSILON);
         root.update(cx, |root, _| {
+            root.preview_ui.timeline_snap = false;
             let id = root.project.clips[0].id.clone();
             assert!(root.move_project_clip(&id, 20_000));
             assert_eq!(root.project_timeline_view(), panned_view);

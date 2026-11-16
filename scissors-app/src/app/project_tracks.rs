@@ -190,7 +190,7 @@ impl ScissorsRoot {
                 clip.track -= 1;
             }
         }
-        self.close_primary_track_gaps();
+        self.reconcile_track_spacing();
         if self.file_queue.selected_file().is_none() {
             self.file_queue
                 .select_file(self.project.clips.last().map(|clip| clip.id.clone()));
@@ -240,7 +240,7 @@ impl ScissorsRoot {
             return false;
         }
         clip.track = track;
-        self.close_primary_track_gaps();
+        self.reconcile_track_spacing();
         true
     }
 }
