@@ -22,6 +22,7 @@ mod primitives;
 mod project;
 mod project_file;
 mod project_history;
+mod project_playhead;
 mod project_timeline;
 mod project_tracks;
 mod render;
