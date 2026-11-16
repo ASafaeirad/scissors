@@ -6,14 +6,19 @@ pub(super) fn sanitize_number_input(value: &str) -> String {
 
 pub(super) fn sanitize_replacement_text(kind: ScissorsTextInputKind, value: &str) -> String {
     match kind {
-        ScissorsTextInputKind::AudioBitrate
+        ScissorsTextInputKind::ExportAudioBitrate
+        | ScissorsTextInputKind::AudioBitrate
+        | ScissorsTextInputKind::ExportVideoCustomWidth
         | ScissorsTextInputKind::VideoCustomWidth
+        | ScissorsTextInputKind::ExportVideoCustomHeight
         | ScissorsTextInputKind::VideoCustomHeight
+        | ScissorsTextInputKind::ExportGifLoop
         | ScissorsTextInputKind::GifLoop => sanitize_number_input(value),
         ScissorsTextInputKind::PreviewStartTime | ScissorsTextInputKind::PreviewEndTime => {
             sanitize_number_input(value)
         }
-        ScissorsTextInputKind::ExportName
+        ScissorsTextInputKind::ExportOutputName
+        | ScissorsTextInputKind::ExportName
         | ScissorsTextInputKind::MetadataTitle
         | ScissorsTextInputKind::MetadataArtist
         | ScissorsTextInputKind::MetadataAlbum
@@ -22,6 +27,7 @@ pub(super) fn sanitize_replacement_text(kind: ScissorsTextInputKind, value: &str
         | ScissorsTextInputKind::MetadataComment
         | ScissorsTextInputKind::MetadataServiceName
         | ScissorsTextInputKind::MetadataServiceProvider
+        | ScissorsTextInputKind::ExportPresetName
         | ScissorsTextInputKind::PresetName => {
             value.chars().filter(|ch| !ch.is_control()).collect()
         }

@@ -4,6 +4,7 @@ mod components;
 mod conversion;
 mod crop_detect;
 mod decode_cache;
+mod edit_target;
 mod export_dialog;
 mod files;
 mod filmstrip;
@@ -37,6 +38,7 @@ pub use runtime::{init_app, open_scissors_window, scissors_window_options};
 
 use accessibility::{ScissorsFocusKey, ScissorsFocusRegistry};
 use chrome::{AppSettingsSheetProps, app_settings_sheet, drag_drop_overlay};
+use edit_target::EditTarget;
 use input::{ScissorsTextInputKind, ScissorsTextInputUiState};
 use motion::{
     INTERACTION_MOTION_DURATION, SURFACE_MOTION_DURATION, hover_motion, mix_color, mix_scalar,

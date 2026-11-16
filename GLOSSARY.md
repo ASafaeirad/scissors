@@ -22,3 +22,6 @@ A timeline lane containing a clip. Selecting a track selects that clip's propert
 
 **Export queue**:
 Conversion jobs waiting to run or currently running.
+
+**Edit target**:
+The explicit owner of a settings read or write: the Project's output, a Clip's properties, or a standalone Source's config. The settings panel targets the selected Clip, and the export dialog targets the Project. Standalone Source targets remain for visual fixtures and source-level tests; normal startup always uses Project mode. Opening or closing a dialog never changes the settings panel's target.

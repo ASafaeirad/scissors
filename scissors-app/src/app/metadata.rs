@@ -2,25 +2,16 @@ use super::*;
 
 impl ScissorsRoot {
     pub(super) fn selected_source_metadata_entry(&self) -> SourceMetadataEntry {
-        if self.editing_project_output() {
-            return SourceMetadataEntry {
-                status: MetadataStatus::Ready,
-                metadata: self.project_output_metadata(),
-                error: None,
-            };
-        }
-        self.source_metadata.selected_entry(&self.file_queue)
+        self.settings_target()
+            .map_or_else(SourceMetadataEntry::default, |target| {
+                self.metadata_entry_for(&target)
+            })
     }
 
     pub(super) fn selected_source_metadata(&self) -> Option<SourceMetadata> {
-        if self.editing_project_output() {
-            return self.project_output_metadata();
-        }
-        self.file_queue
-            .selected_file_id()
-            .and_then(|id| self.source_metadata.metadata_for(id))
-            .cloned()
+        self.metadata_for_target(self.settings_target().as_ref()?)
     }
+
     pub(super) fn queue_source_metadata_probe(
         &mut self,
         file_id: String,
