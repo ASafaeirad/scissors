@@ -252,6 +252,8 @@ pub struct ScissorsRoot {
     workspace_ui: workspace::WorkspaceState,
     media_assets: media_assets::MediaAssetsState,
     export_ui: export_dialog::ExportUiState,
+    /// Set when Space toggled playback, so its key-up doesn't also click the focused control.
+    space_toggled_playback: bool,
 }
 
 #[derive(Default)]

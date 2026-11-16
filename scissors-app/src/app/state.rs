@@ -113,6 +113,7 @@ impl ScissorsRoot {
             workspace_ui: workspace::WorkspaceState::default(),
             media_assets: media_assets::MediaAssetsState::default(),
             export_ui: export_dialog::ExportUiState::default(),
+            space_toggled_playback: false,
         };
 
         root.apply_visual_fixture(visual_fixture_from_env_value(
