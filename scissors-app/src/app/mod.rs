@@ -30,6 +30,7 @@ mod settings_panel;
 mod state;
 #[cfg(test)]
 mod tests;
+mod timeline_edit;
 mod track_speed;
 mod waveform;
 mod workspace;

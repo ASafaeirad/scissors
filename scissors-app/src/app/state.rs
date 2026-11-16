@@ -147,36 +147,25 @@ impl ScissorsRoot {
         &mut self,
         update: impl FnOnce(&mut ConversionConfig) -> bool,
     ) -> bool {
-        if self.project.enabled
-            && (self.is_processing
-                || (!self.editing_project_output()
-                    && self
-                        .file_queue
-                        .selected_file_id()
-                        .is_some_and(|id| self.project_clip_locked(id))))
-        {
+        if self.project.enabled && self.is_processing {
             return false;
         }
-        let before = (self.project.enabled && !self.editing_project_output())
-            .then(|| self.timeline_snapshot());
-        let changed = self.selected_config_mut().is_some_and(update);
-        if changed
-            && let Some(before) = before
-            && self.reconcile_track_spacing()
-        {
-            self.project.history.push(before);
+        if self.project.enabled && !self.editing_project_output() {
+            return self.timeline_editor().settings(update);
         }
-        changed
+        self.selected_config_mut().is_some_and(update)
     }
+
     pub(super) fn normalize_selected_config(&mut self, metadata: Option<&SourceMetadata>) -> bool {
+        if self.project.enabled && self.is_processing {
+            return false;
+        }
         if self.editing_project_output() {
             let metadata = self.project_output_metadata();
-            return self.update_selected_config(|config| {
-                normalize_output_config(config, metadata.as_ref())
-            });
+            return normalize_output_config(&mut self.project.output, metadata.as_ref());
         }
         let project_enabled = self.project.enabled;
-        self.update_selected_config(|config| {
+        self.selected_config_mut().is_some_and(|config| {
             let trim = (
                 config.start_time.clone(),
                 config.end_time.clone(),

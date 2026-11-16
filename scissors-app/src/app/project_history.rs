@@ -2,29 +2,31 @@
 //! and changing tracks. Each step is a snapshot of the timeline, not of the library or output.
 use super::project::ClipPlacement;
 use super::project_tracks::Tracks;
-use super::*;
+use super::{FileItem, ScissorsRoot, SourceMetadata};
 
 /// The most steps kept in each direction.
 const HISTORY_LIMIT: usize = 100;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(super) struct TimelineSnapshot {
-    clips: Vec<ClipPlacement>,
-    tracks: Tracks,
+    pub(super) clips: Vec<ClipPlacement>,
+    pub(super) tracks: Tracks,
     /// Every clip instance with its own settings.
-    instances: Vec<FileItem>,
-    metadata: Vec<(String, SourceMetadata)>,
-    selected: Option<String>,
+    pub(super) instances: Vec<FileItem>,
+    pub(super) metadata: Vec<(String, SourceMetadata)>,
+    pub(super) selected: Option<String>,
 }
 
 #[derive(Clone, Default)]
 pub(super) struct TimelineHistory {
-    undo: Vec<TimelineSnapshot>,
-    redo: Vec<TimelineSnapshot>,
+    pub(super) revision: u64,
+    pub(super) undo: Vec<TimelineSnapshot>,
+    pub(super) redo: Vec<TimelineSnapshot>,
 }
 
 impl TimelineHistory {
     pub(super) fn clear(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
         self.undo.clear();
         self.redo.clear();
     }
@@ -33,6 +35,7 @@ impl TimelineHistory {
         if self.undo.len() == HISTORY_LIMIT {
             self.undo.remove(0);
         }
+        self.revision = self.revision.wrapping_add(1);
         self.undo.push(snapshot);
         self.redo.clear();
     }
@@ -47,74 +50,26 @@ impl TimelineHistory {
 }
 
 impl ScissorsRoot {
-    pub(super) fn timeline_snapshot(&self) -> TimelineSnapshot {
-        TimelineSnapshot {
-            clips: self.project.clips.clone(),
-            tracks: self.project.tracks.clone(),
-            instances: self.file_queue.files().to_vec(),
-            metadata: self
-                .project
-                .clips
-                .iter()
-                .filter_map(|clip| {
-                    Some((
-                        clip.id.clone(),
-                        self.source_metadata.metadata_for(&clip.id)?.clone(),
-                    ))
-                })
-                .collect(),
-            selected: self.file_queue.selected_file_id().map(str::to_string),
-        }
-    }
-
-    /// Call before a timeline edit, so undo returns to the state before it.
-    pub(super) fn record_timeline_edit(&mut self) {
-        let snapshot = self.timeline_snapshot();
-        self.project.history.push(snapshot);
-    }
-
     pub(super) fn undo_timeline_edit(&mut self) -> bool {
-        if self.is_processing {
-            return false;
+        let changed = self.timeline_editor().undo_timeline_edit();
+        if changed && let Some(id) = self.file_queue.selected_file_id().map(str::to_string) {
+            self.select_project_clip(&id);
         }
-        let Some(snapshot) = self.project.history.undo.pop() else {
-            return false;
-        };
-        let current = self.timeline_snapshot();
-        self.project.history.redo.push(current);
-        self.restore_timeline_snapshot(snapshot);
-        true
+        changed
     }
-
     pub(super) fn redo_timeline_edit(&mut self) -> bool {
-        if self.is_processing {
-            return false;
+        let changed = self.timeline_editor().redo_timeline_edit();
+        if changed && let Some(id) = self.file_queue.selected_file_id().map(str::to_string) {
+            self.select_project_clip(&id);
         }
-        let Some(snapshot) = self.project.history.redo.pop() else {
-            return false;
-        };
-        let current = self.timeline_snapshot();
-        self.project.history.undo.push(current);
-        self.restore_timeline_snapshot(snapshot);
-        true
-    }
-
-    fn restore_timeline_snapshot(&mut self, snapshot: TimelineSnapshot) {
-        let mut instances = FileQueue::new();
-        instances.add_files(snapshot.instances);
-        instances.select_file(snapshot.selected);
-        self.file_queue = instances;
-        for (id, metadata) in snapshot.metadata {
-            self.source_metadata.mark_ready(id, metadata);
-        }
-        self.project.clips = snapshot.clips;
-        self.project.tracks = snapshot.tracks;
+        changed
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{PreviewMediaKind, format_time, preview_playback_state};
 
     #[test]
     fn undo_and_redo_step_through_clip_edits() {
@@ -164,7 +119,7 @@ mod tests {
     fn history_keeps_a_bounded_number_of_steps() {
         let mut root = crate::app::project::tests::project();
         for _ in 0..HISTORY_LIMIT + 5 {
-            root.record_timeline_edit();
+            assert!(root.add_project_track(super::super::project_tracks::TrackKind::Video));
         }
         assert_eq!(root.project.history.undo.len(), HISTORY_LIMIT);
     }
