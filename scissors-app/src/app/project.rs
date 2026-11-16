@@ -412,14 +412,15 @@ impl ScissorsRoot {
         if !playhead.is_finite() || playhead - offset < 0.05 || offset + length - playhead < 0.05 {
             return None;
         }
-        let mut source_time = (playhead - offset) * clip.speed;
-        for cut in scissors_core::cuts::output_cut_ranges(&config) {
-            if cut.start > source_time {
-                break;
-            }
-            source_time += cut.duration();
-        }
-        Some((playhead, trim_start + source_time))
+        let source = self
+            .project_timeline_clips()
+            .into_iter()
+            .find(|(placement, _)| placement.id == clip.id)?
+            .1;
+        Some((
+            playhead,
+            scissors_core::clip_time::source_time(&source, playhead),
+        ))
     }
 
     /// Sources in composition order: audio and lower video tracks first, so higher video

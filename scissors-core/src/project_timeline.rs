@@ -1,9 +1,6 @@
 //! A finite project composition shared by preview and export.
 use crate::{
-    cuts::{
-        CutRange, build_audio_cut_filters, build_video_cut_filters, output_cut_ranges,
-        output_duration_seconds,
-    },
+    cuts::{CutRange, build_audio_cut_filters, build_video_cut_filters, output_cut_ranges},
     error::ConversionError,
     filters::{
         build_audio_filters, build_overlay_filter_complex, build_video_filters, has_overlay,
@@ -12,22 +9,7 @@ use crate::{
     utils::parse_time,
 };
 
-#[must_use]
-pub fn clip_duration_millis(clip: &TimelineSource) -> u64 {
-    let seconds = output_duration_seconds(&clip.config).unwrap_or_else(|| {
-        std::time::Duration::from_millis(clip.duration_millis).as_secs_f64()
-            - clip
-                .config
-                .start_time
-                .as_deref()
-                .and_then(parse_time)
-                .unwrap_or(0.0)
-    });
-    std::time::Duration::from_secs_f64((seconds / clip.speed).max(0.0))
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX)
-}
+pub use crate::clip_time::duration_millis as clip_duration_millis;
 
 #[must_use]
 pub fn duration_seconds(clips: &[TimelineSource]) -> f64 {
@@ -153,15 +135,8 @@ fn clip_span(clip: &TimelineSource, start: f64, end: f64) -> Option<ClipSpan> {
         .and_then(parse_time)
         .unwrap_or_else(|| std::time::Duration::from_millis(clip.duration_millis).as_secs_f64());
     let skip = (start - offset).max(0.0);
-    // Cuts before the window still consume source time.
     let cuts = output_cut_ranges(config);
-    let mut source = skip * clip.speed;
-    for cut in &cuts {
-        if cut.start > source {
-            break;
-        }
-        source += cut.duration();
-    }
+    let source = crate::clip_time::source_time(clip, start.max(offset)) - trim_start;
     Some(ClipSpan {
         seek: trim_start + source,
         length: (trim_end - trim_start - source).max(0.0),
@@ -497,6 +472,36 @@ mod tests {
         assert!((span.to - 2.0).abs() < f64::EPSILON);
         clip.speed = 0.5;
         assert_eq!(clip_duration_millis(&clip), 36_000);
+    }
+
+    #[test]
+    fn source_mapping_and_render_seeks_agree_at_cut_edges_and_all_speeds() {
+        for speed in [0.5, 1.0, 2.0, 20.0] {
+            let mut clip = clip(3_125, Some("1.125"), "19.875", &[("2", "3"), ("5", "6.25")]);
+            clip.speed = speed;
+            for (elapsed, expected) in [
+                (0.0, 1.125),
+                (0.874, 1.999),
+                (0.875, 3.0),
+                (2.874, 4.999),
+                (2.875, 6.25),
+                (3.3334, 6.7084),
+            ] {
+                let time = 3.125 + elapsed / speed;
+                let mapped = crate::clip_time::source_time(&clip, time);
+                assert!(
+                    (mapped - expected).abs() < 1e-9,
+                    "speed={speed} elapsed={elapsed}: {mapped}"
+                );
+                let mut args = Vec::new();
+                add_graph(
+                    &mut args,
+                    std::slice::from_ref(&clip),
+                    &window(time, time + 0.01),
+                );
+                assert_eq!(&args[..2], &["-ss".to_string(), format!("{expected:.6}")]);
+            }
+        }
     }
 
     #[test]

@@ -3,6 +3,7 @@
 pub mod args;
 pub mod audio_timeline;
 pub mod capabilities;
+pub mod clip_time;
 pub mod codec;
 pub mod container;
 pub mod cropdetect;
