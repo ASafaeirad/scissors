@@ -104,45 +104,11 @@ impl ScissorsRoot {
         };
         let fraction = timeline_slider_percent_from_bounds(position, bounds);
         let time = self.project_timeline_view().time(fraction);
-        let position = point(
-            bounds.left()
-                + bounds.size.width
-                    * crate::numeric::unit_f64_to_f32(
-                        time / self.preview_ui.playback.duration().max(f64::EPSILON),
-                    ),
-            position.y,
-        );
-        if !self.commit_preview_timeline_seek_at_position_with_context(position, cx) {
-            return false;
-        }
-        self.select_project_clip_at_playhead(track);
-        true
-    }
-
-    /// Prefers a clip in the clicked lane, then the highest video clip at the playhead.
-    /// Keeps the current selection when no eligible clip covers the playhead.
-    pub(super) fn select_project_clip_at_playhead(&mut self, track: Option<usize>) -> bool {
-        if !self.project.enabled
-            || self.preview_ui.crop_mode
-            || self.preview_ui.overlay.overlay_mode()
-        {
-            return false;
-        }
-        let time = self.preview_ui.playback.current_time();
-        let selected = self
-            .project_timeline_clips()
-            .into_iter()
-            .filter(|(placement, source)| {
-                let (start, length) = clip_extent(source);
-                let eligible = track == Some(placement.track)
-                    || self.project.tracks[placement.track].kind == TrackKind::Video;
-                eligible && time >= start && time < start + length
-            })
-            .max_by_key(|(placement, _)| (track == Some(placement.track), placement.track))
-            .map(|(placement, _)| placement.id);
-        selected.is_some_and(|id| {
-            self.file_queue.selected_file_id() != Some(id.as_str()) && self.select_project_clip(&id)
-        })
+        self.seek_project_percent(
+            time / self.preview_ui.playback.duration().max(f64::EPSILON),
+            track,
+            Some(cx),
+        )
     }
 
     fn drop_library_source(&mut self, source_id: &str, position: Point<Pixels>) -> bool {

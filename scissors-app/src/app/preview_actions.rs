@@ -1,3 +1,4 @@
+use super::project_playhead::PlayheadChange;
 use super::*;
 use crate::app::crop_detect::{CropDetectState, crop_status_label};
 use crate::app::preview_panel::{CropSourceDimensions, preview_presented_frame};
@@ -567,10 +568,10 @@ impl ScissorsRoot {
     }
 
     fn sync_project_playback_media(&mut self, snapshot: MediaSnapshot) -> bool {
-        let previous_time = self.preview_ui.playback.current_time();
-        self.preview_ui.playback.sync_media(snapshot);
-        (self.preview_ui.playback.current_time() - previous_time).abs() > f64::EPSILON
-            && self.select_project_clip_at_playhead(None)
+        self.update_project_playhead(PlayheadChange::Snapshot, |playback| {
+            playback.sync_media(snapshot);
+        })
+        .1
     }
 
     pub(super) const fn preview_media_snapshot_sync_blocked(&self) -> bool {
@@ -1636,12 +1637,14 @@ impl ScissorsRoot {
         if self.preview_ui.playback.dragging().is_none() {
             if target == TimelineDragTarget::Scrub {
                 self.cancel_trim_preview_seek();
-                let command = self.preview_ui.playback.seek_to_percent(percent);
+                let (command, _) = self
+                    .update_project_playhead(PlayheadChange::Scrub, |playback| {
+                        playback.seek_to_percent(percent)
+                    });
                 if command.pause && self.trim_preview_seek_available() {
                     self.preview_ui.trim_preview_seek.pause_before_next_seek();
                 }
                 self.apply_preview_command_to_local_state(command);
-                self.select_project_clip_at_playhead(None);
                 if let Some(preview_seek_to) = command.seek_to {
                     self.queue_trim_preview_seek(preview_seek_to, cx);
                 }
@@ -1665,11 +1668,14 @@ impl ScissorsRoot {
             }
         }
 
-        let update = self.preview_ui.playback.drag_to_percent(percent);
+        let trigger = if target == TimelineDragTarget::Scrub {
+            PlayheadChange::Scrub
+        } else {
+            PlayheadChange::Handle
+        };
+        let (update, _) =
+            self.update_project_playhead(trigger, |playback| playback.drag_to_percent(percent));
         self.apply_preview_command_to_local_state(update.command);
-        if target == TimelineDragTarget::Scrub {
-            self.select_project_clip_at_playhead(None);
-        }
         if let Some(preview_seek_to) = update.preview_seek_to {
             self.queue_trim_preview_seek(preview_seek_to, cx);
         }
@@ -1713,8 +1719,22 @@ impl ScissorsRoot {
         }
 
         let percent = timeline_slider_percent_from_bounds(position, bounds);
+        self.seek_project_percent(percent, None, cx)
+    }
+
+    pub(super) fn seek_project_percent(
+        &mut self,
+        percent: f64,
+        track: Option<usize>,
+        cx: Option<&Context<Self>>,
+    ) -> bool {
+        if !self.preview_timeline_enabled() {
+            return false;
+        }
         self.cancel_trim_preview_seek();
-        let command = self.preview_ui.playback.seek_once_to_percent(percent);
+        let (command, _) = self.update_project_playhead(PlayheadChange::Seek(track), |playback| {
+            playback.seek_once_to_percent(percent)
+        });
         self.apply_preview_media_command(command, true, cx)
     }
 
@@ -1799,9 +1819,11 @@ impl ScissorsRoot {
 
         if target == TimelineDragTarget::Scrub {
             self.cancel_trim_preview_seek();
-            let command = self.preview_ui.playback.seek_once_to_percent(percent);
+            let (command, _) = self
+                .update_project_playhead(PlayheadChange::Seek(None), |playback| {
+                    playback.seek_once_to_percent(percent)
+                });
             let changed = self.apply_preview_media_command(command, true, cx);
-            self.select_project_clip_at_playhead(None);
             return changed;
         }
 
@@ -1838,13 +1860,10 @@ impl ScissorsRoot {
         }
         let time = (self.preview_ui.playback.current_time() + seconds).clamp(0.0, duration);
         self.cancel_trim_preview_seek();
-        let command = self
-            .preview_ui
-            .playback
-            .seek_once_to_percent(time / duration);
-        let changed = self.apply_preview_media_command(command, true, Some(cx));
-        self.select_project_clip_at_playhead(None);
-        changed
+        let (command, _) = self.update_project_playhead(PlayheadChange::Seek(None), |playback| {
+            playback.seek_once_to_percent(time / duration)
+        });
+        self.apply_preview_media_command(command, true, Some(cx))
     }
 
     pub(super) fn toggle_preview_playback_with_context(&mut self, cx: &Context<Self>) -> bool {
