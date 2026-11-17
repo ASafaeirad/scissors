@@ -570,7 +570,8 @@ impl PreviewRuntimeKey {
             && self.source_kind == next.source_kind
             && self.source_width == next.source_width
             && self.source_height == next.source_height
-            && self.duration_millis == next.duration_millis
+            // Timeline edits change duration; reconfigure preserves the project playhead.
+            && (self.file_id == "project" || self.duration_millis == next.duration_millis)
     }
 }
 

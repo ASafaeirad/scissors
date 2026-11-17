@@ -232,8 +232,30 @@ impl ScissorsRoot {
     /// Cuts the clip under the playhead on the selected clip's track, removing the part
     /// before the playhead (`leading`) or after it. The rest of the clip stays in place.
     pub(super) fn cut_project_track_at_playhead(&mut self, leading: bool) -> bool {
-        self.timeline_editor()
+        if !self
+            .timeline_editor()
             .apply(super::timeline_edit::TimelineEdit::Cut { leading })
+        {
+            return false;
+        }
+        // Reconciliation can move the remaining clip when primary-track snapping is on.
+        if leading
+            && let Some(clip) = self
+                .project
+                .clips
+                .iter()
+                .find(|clip| Some(clip.id.as_str()) == self.file_queue.selected_file_id())
+        {
+            let start = std::time::Duration::from_millis(clip.offset_millis).as_secs_f64();
+            if (self.preview_ui.playback.current_time() - start).abs() > 0.001 {
+                let command = self
+                    .preview_ui
+                    .playback
+                    .seek_once_to_percent(start / self.preview_ui.playback.duration());
+                self.apply_preview_media_command(command, true, None);
+            }
+        }
+        true
     }
 
     /// Sources in composition order: audio and lower video tracks first, so higher video
@@ -410,6 +432,28 @@ pub(in crate::app) mod tests {
         assert!(root.undo_timeline_edit());
         assert!(root.undo_timeline_edit());
         assert!((root.project_duration() - 15.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cutting_to_beginning_keeps_playhead_at_remaining_clip_start() {
+        for snap in [false, true] {
+            let mut root = project();
+            root.preview_ui.timeline_snap = snap;
+            root.add_library_clip("source");
+            root.add_library_clip("source");
+            root.preview_ui.playback =
+                preview_playback_state(PreviewMediaKind::Video, 20.0, None, None);
+            let _ = root.preview_ui.playback.seek_once_to_percent(0.6);
+
+            assert!(root.cut_project_track_at_playhead(true));
+
+            let expected = if snap { 10.0 } else { 12.0 };
+            assert_eq!(
+                root.project.clips[1].offset_millis,
+                if snap { 10_000 } else { 12_000 }
+            );
+            assert!((root.preview_ui.playback.current_time() - expected).abs() < 0.001);
+        }
     }
 
     #[test]
