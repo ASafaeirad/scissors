@@ -71,7 +71,6 @@ impl ScissorsRoot {
                 snap: self.preview_ui.timeline_snap,
                 can_undo: self.project.history.can_undo(),
                 can_redo: self.project.history.can_redo(),
-                playing: self.preview_ui.playback.is_playing(),
                 menu: self.preview_ui.timeline_menu.clone(),
                 ruler_width: self
                     .preview_ui

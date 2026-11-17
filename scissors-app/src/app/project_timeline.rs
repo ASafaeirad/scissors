@@ -487,7 +487,6 @@ pub(super) struct ProjectTimelineState {
     pub(super) snap: bool,
     pub(super) can_undo: bool,
     pub(super) can_redo: bool,
-    pub(super) playing: bool,
     pub(super) menu: Option<TimelineMenu>,
     /// The ruler's width from the last layout, to space its ticks.
     pub(super) ruler_width: Option<f32>,
@@ -653,7 +652,7 @@ pub(super) fn project_timeline(
 
 #[expect(
     clippy::too_many_lines,
-    reason = "The toolbar lays out transport, history, edit, snap, and zoom controls."
+    reason = "The toolbar lays out history, edit, snap, and zoom controls."
 )]
 fn toolbar(
     state: &ProjectTimelineState,
@@ -669,54 +668,6 @@ fn toolbar(
         .flex_wrap()
         .items_center()
         .gap(theme::ui_rem(8.0))
-        .child(
-            m3::IconButton::new(
-                "timeline-play",
-                if state.playing {
-                    Symbol::Pause
-                } else {
-                    Symbol::PlayArrow
-                },
-                if state.playing { "Pause" } else { "Play" },
-            )
-            .variant(m3::IconButtonVariant::Filled)
-            .enabled(!state.clips.is_empty())
-            .build(scheme, window, cx)
-            .on_click(cx.listener(|root, _, _, cx| {
-                if root.toggle_preview_playback_with_context(cx) {
-                    cx.notify();
-                }
-            })),
-        )
-        .child(
-            div()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .m3_type(typography::TITLE_SMALL)
-                        .child(format_timecode(state.current)),
-                )
-                .child(
-                    div()
-                        .m3_type(typography::BODY_SMALL)
-                        .text_color(color(scheme.on_surface_variant))
-                        .child(format!(
-                            "of {} · {} tracks",
-                            format_timecode(state.duration),
-                            state.tracks.len()
-                        )),
-                ),
-        )
-        .child(
-            div()
-                .flex_none()
-                .w(theme::ui_rem(1.0))
-                .h(theme::ui_rem(24.0))
-                .mx(theme::ui_rem(8.0))
-                .bg(color(scheme.outline_variant)),
-        )
         .child(
             m3::IconButton::new("timeline-undo", Symbol::Undo, "Undo")
                 .size(m3::IconButtonSize::ExtraSmall)
