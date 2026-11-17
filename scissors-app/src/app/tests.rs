@@ -2186,6 +2186,25 @@ mod scissors_root_config {
     }
 
     #[test]
+    fn project_preview_reconfigures_after_a_cut_changes_duration() {
+        let mut root = project::tests::project();
+        root.preview_ui.timeline_snap = true;
+        root.add_library_clip("source");
+        root.add_library_clip("source");
+        root.preview_ui.playback =
+            preview_playback_state(PreviewMediaKind::Video, 20.0, None, None);
+        let metadata = root.source_metadata.entry_for(&root.project.clips[0].id);
+        let before = root.selected_preview_runtime_request(&metadata).unwrap();
+        let _ = root.preview_ui.playback.seek_once_to_percent(0.6);
+
+        assert!(root.cut_project_track_at_playhead(true));
+
+        let after = root.selected_preview_runtime_request(&metadata).unwrap();
+        assert_ne!(before.key.duration_millis, after.key.duration_millis);
+        assert!(before.key.can_reconfigure_to(&after.key));
+    }
+
+    #[test]
     fn preview_runtime_key_changes_when_adaptive_dimensions_change() {
         let current = PreviewRuntimeKey {
             file_id: "video".to_string(),
