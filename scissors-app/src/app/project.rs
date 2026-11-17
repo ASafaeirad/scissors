@@ -1,5 +1,8 @@
 //! One project contains reusable media sources and independently edited timeline clips.
-use super::*;
+use super::{
+    ConversionConfig, FileQueue, PathBuf, ScissorsRoot, SettingsTab, SourceKind, SourceMetadata,
+    initialize_output_config,
+};
 use crate::conversion_runner::core_config_from_gpui;
 
 #[derive(Default)]
@@ -22,7 +25,7 @@ pub(super) struct Project {
     pub(super) confirm_discard: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct ClipPlacement {
     pub(super) id: String,
     pub(super) source_id: String,
@@ -163,89 +166,37 @@ impl ScissorsRoot {
         offset_millis: Option<u64>,
         track: Option<usize>,
     ) -> bool {
-        if self.is_processing {
-            return false;
-        }
-        let Some(mut file) = self.project.library.file_by_id(source_id).cloned() else {
-            return false;
-        };
-        let Some(metadata) = self.source_metadata.metadata_for(source_id).cloned() else {
-            return false;
-        };
-        let kind = metadata.source_kind();
-        let track_kind = super::project_tracks::TrackKind::of(kind);
-        let Some(track) = track
-            .filter(|&index| {
-                self.project
-                    .tracks
-                    .get(index)
-                    .is_some_and(|track| track.kind == track_kind && !track.locked)
-            })
-            .or_else(|| self.project.tracks.first_unlocked(track_kind))
-        else {
-            return false;
-        };
-        if self.project.clips.is_empty()
-            || (kind != SourceKind::Audio
+        let initialize = self.project.clips.is_empty()
+            || (self
+                .source_metadata
+                .metadata_for(source_id)
+                .is_some_and(|metadata| metadata.source_kind() != SourceKind::Audio)
                 && self
                     .project
                     .clips
                     .iter()
-                    .all(|clip| clip.kind == SourceKind::Audio))
+                    .all(|clip| clip.kind == SourceKind::Audio));
+        if !self
+            .timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::Insert {
+                source: source_id,
+                offset: offset_millis,
+                track,
+            })
         {
-            let mut output_metadata = metadata.clone();
-            // Still images become finite visual clips in the project.
-            if kind == SourceKind::Image {
-                output_metadata.media_kind = Some(SourceKind::Video);
+            return false;
+        }
+        if initialize
+            && let Some(mut metadata) = self.source_metadata.metadata_for(source_id).cloned()
+        {
+            if metadata.source_kind() == SourceKind::Image {
+                metadata.media_kind = Some(SourceKind::Video);
             }
-            initialize_output_config(&mut self.project.output, Some(&output_metadata));
+            initialize_output_config(&mut self.project.output, Some(&metadata));
             if self.project.output_name.is_empty() {
                 self.project.output_name = "Untitled project".to_string();
             }
         }
-        let duration = if kind == SourceKind::Image {
-            5.0
-        } else {
-            preview_duration_seconds(Some(&metadata))
-        };
-        if duration <= 0.0 {
-            return false;
-        }
-        let offset_millis = offset_millis.unwrap_or_else(|| {
-            if kind == SourceKind::Audio {
-                crate::numeric::rounded_f64_to_u64(self.preview_ui.playback.current_time() * 1000.0)
-            } else {
-                self.project_timeline_clips()
-                    .iter()
-                    .filter(|(placement, _)| placement.track == track)
-                    .map(|(_, clip)| {
-                        clip.offset_millis.saturating_add(
-                            scissors_core::project_timeline::clip_duration_millis(clip),
-                        )
-                    })
-                    .max()
-                    .unwrap_or(0)
-            }
-        });
-        self.record_timeline_edit();
-        file.id = self.next_file_id();
-        file.output_name = "Untitled project".to_string();
-        initialize_output_config(&mut file.config, Some(&metadata));
-        file.config.end_time = Some(format_time(duration));
-        let id = file.id.clone();
-        self.source_metadata.mark_ready(id.clone(), metadata);
-        self.file_queue.add_file(file);
-        self.file_queue.select_existing_file(&id);
-        self.project.clips.push(ClipPlacement {
-            id,
-            source_id: source_id.to_string(),
-            offset_millis,
-            kind,
-            track,
-            muted: false,
-            speed: 1.0,
-        });
-        self.reconcile_track_spacing();
         self.zoom_to_first_project_clip();
         true
     }
@@ -263,150 +214,26 @@ impl ScissorsRoot {
     }
 
     pub(super) fn remove_project_clip(&mut self, id: &str) -> bool {
-        if self.is_processing
-            || self.project_clip_locked(id)
-            || self.file_queue.file_by_id(id).is_none()
-        {
-            return false;
+        let changed = self
+            .timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::Remove(id));
+        if changed {
+            self.media_assets.thumbnails.remove(id);
+            self.conversion_events.remove_logs(id);
         }
-        self.record_timeline_edit();
-        if !self.remove_file_from_queue(id) {
-            return false;
-        }
-        self.project.clips.retain(|clip| clip.id != id);
-        self.reconcile_track_spacing();
-        self.file_queue
-            .select_file(self.project.clips.last().map(|clip| clip.id.clone()));
-        true
+        changed
     }
 
     pub(super) fn split_project_clip_at_playhead(&mut self) -> bool {
-        if self.is_processing || self.export_ui.open {
-            return false;
-        }
-        let Some(id) = self.file_queue.selected_file_id() else {
-            return false;
-        };
-        if self.project_clip_locked(id) {
-            return false;
-        }
-        let Some(index) = self.project.clips.iter().position(|clip| clip.id == id) else {
-            return false;
-        };
-        let Some((playhead, split_time)) = self.project_clip_playhead_time(index) else {
-            return false;
-        };
-        let mut right = self.project.clips[index].clone();
-        let Some(mut file) = self.file_queue.file_by_id(&right.id).cloned() else {
-            return false;
-        };
-        let Some(metadata) = self.source_metadata.metadata_for(&right.id).cloned() else {
-            return false;
-        };
-        let split_time = format_time(split_time);
-        self.record_timeline_edit();
-        let left_id = right.id.clone();
-        file.id = self.next_file_id();
-        file.config.start_time = Some(split_time.clone());
-        right.id.clone_from(&file.id);
-        right.offset_millis = crate::numeric::rounded_f64_to_u64(playhead * 1000.0);
-        self.file_queue
-            .file_by_id_mut(&left_id)
-            .unwrap()
-            .config
-            .end_time = Some(split_time);
-        self.source_metadata.mark_ready(right.id.clone(), metadata);
-        self.file_queue.add_file(file);
-        self.project.clips.insert(index + 1, right);
-        self.reconcile_track_spacing();
-        true
+        self.timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::Split)
     }
 
     /// Cuts the clip under the playhead on the selected clip's track, removing the part
     /// before the playhead (`leading`) or after it. The rest of the clip stays in place.
     pub(super) fn cut_project_track_at_playhead(&mut self, leading: bool) -> bool {
-        if self.is_processing || self.export_ui.open {
-            return false;
-        }
-        let Some(track) = self.file_queue.selected_file_id().and_then(|id| {
-            self.project
-                .clips
-                .iter()
-                .find(|clip| clip.id == id)
-                .map(|clip| clip.track)
-        }) else {
-            return false;
-        };
-        if self
-            .project
-            .tracks
-            .get(track)
-            .is_none_or(|track| track.locked)
-        {
-            return false;
-        }
-        let Some((index, (playhead, source_time))) = self
-            .project
-            .clips
-            .iter()
-            .enumerate()
-            .filter(|(_, clip)| clip.track == track)
-            .find_map(|(index, _)| Some((index, self.project_clip_playhead_time(index)?)))
-        else {
-            return false;
-        };
-        let id = self.project.clips[index].id.clone();
-        if self.file_queue.file_by_id(&id).is_none() {
-            return false;
-        }
-        self.record_timeline_edit();
-        let config = &mut self.file_queue.file_by_id_mut(&id).unwrap().config;
-        if leading {
-            config.start_time = Some(format_time(source_time));
-            self.project.clips[index].offset_millis =
-                crate::numeric::rounded_f64_to_u64(playhead * 1000.0);
-        } else {
-            config.end_time = Some(format_time(source_time));
-        }
-        self.file_queue.select_existing_file(&id);
-        self.reconcile_track_spacing();
-        true
-    }
-
-    /// The playhead and the source time under it, when the playhead is far enough inside
-    /// the clip at `index` to leave a usable clip on each side.
-    fn project_clip_playhead_time(&self, index: usize) -> Option<(f64, f64)> {
-        let clip = self.project.clips.get(index)?;
-        let file = self.file_queue.file_by_id(&clip.id)?;
-        let metadata = self.source_metadata.metadata_for(&clip.id)?;
-        let config = core_config_from_gpui(&file.config);
-        let trim_start = file
-            .config
-            .start_time
-            .as_deref()
-            .map_or(0.0, parse_time_to_seconds);
-        let duration = if clip.kind == SourceKind::Image {
-            5.0
-        } else {
-            preview_duration_seconds(Some(metadata))
-        };
-        let playhead = self.preview_ui.playback.current_time();
-        let offset = Duration::from_millis(clip.offset_millis).as_secs_f64();
-        let length = scissors_core::cuts::output_duration_seconds(&config)
-            .unwrap_or(duration - trim_start)
-            / clip.speed;
-        if !playhead.is_finite() || playhead - offset < 0.05 || offset + length - playhead < 0.05 {
-            return None;
-        }
-        let source = self
-            .project_timeline_clips()
-            .into_iter()
-            .find(|(placement, _)| placement.id == clip.id)?
-            .1;
-        Some((
-            playhead,
-            scissors_core::clip_time::source_time(&source, playhead),
-        ))
+        self.timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::Cut { leading })
     }
 
     /// Sources in composition order: audio and lower video tracks first, so higher video
@@ -424,43 +251,19 @@ impl ScissorsRoot {
     pub(super) fn project_timeline_clips(
         &self,
     ) -> Vec<(ClipPlacement, scissors_core::types::TimelineSource)> {
-        self.project
-            .clips
-            .iter()
-            .filter_map(|placement| {
-                let file = self.file_queue.file_by_id(&placement.id)?;
-                let metadata = self.source_metadata.metadata_for(&placement.id)?;
-                let track = self.project.tracks.get(placement.track);
-                let source = scissors_core::types::TimelineSource {
-                    path: file.path.clone(),
-                    kind: match placement.kind {
-                        SourceKind::Video => "video",
-                        SourceKind::Audio => "audio",
-                        SourceKind::Image => "image",
-                    }
-                    .to_string(),
-                    offset_millis: placement.offset_millis,
-                    duration_millis: crate::numeric::rounded_f64_to_u64(
-                        if placement.kind == SourceKind::Image {
-                            5.0
-                        } else {
-                            preview_duration_seconds(Some(metadata))
-                        } * 1000.0,
-                    ),
-                    muted: placement.muted || track.is_some_and(|track| track.muted),
-                    speed: placement.speed,
-                    hidden: track.is_some_and(|track| track.hidden),
-                    config: Box::new(core_config_from_gpui(&file.config)),
-                };
-                Some((placement.clone(), source))
-            })
-            .collect()
+        super::timeline_edit::sources(
+            &self.project.clips,
+            &self.project.tracks,
+            &self.file_queue,
+            &self.source_metadata,
+        )
     }
 
     pub(super) fn project_duration(&self) -> f64 {
         scissors_core::project_timeline::duration_seconds(&self.project_sources())
     }
 
+    #[cfg(test)]
     pub(super) fn trim_project_clip(
         &mut self,
         id: &str,
@@ -469,89 +272,36 @@ impl ScissorsRoot {
         initial_start: f64,
         initial_offset: u64,
     ) -> bool {
-        if self.is_processing || !project_time.is_finite() || self.project_clip_locked(id) {
-            return false;
-        }
-        let Some(index) = self.project.clips.iter().position(|clip| clip.id == id) else {
-            return false;
-        };
-        let placement = &self.project.clips[index];
-        let Some(metadata) = self.source_metadata.metadata_for(id) else {
-            return false;
-        };
-        let duration = if placement.kind == SourceKind::Image {
-            5.0
-        } else {
-            preview_duration_seconds(Some(metadata))
-        };
-        let offset = std::time::Duration::from_millis(initial_offset).as_secs_f64();
-        let speed = placement.speed;
-        let Some(file) = self.file_queue.file_by_id_mut(id) else {
-            return false;
-        };
-        let trim_start = file
-            .config
-            .start_time
-            .as_deref()
-            .map_or(0.0, parse_time_to_seconds);
-        let trim_end = file
-            .config
-            .end_time
-            .as_deref()
-            .map_or(duration, parse_time_to_seconds);
-        if leading {
-            let lower = offset.mul_add(-speed, initial_start).max(0.0);
-            let next = (project_time - offset)
-                .mul_add(speed, initial_start)
-                .clamp(lower, (trim_end - 0.05).max(lower));
-            file.config.start_time = Some(format_time(next));
-            self.project.clips[index].offset_millis = crate::numeric::rounded_f64_to_u64(
-                (offset + (next - initial_start) / speed).max(0.0) * 1000.0,
-            );
-        } else {
-            let next = (project_time - offset)
-                .mul_add(speed, trim_start)
-                .clamp(trim_start + 0.05, duration.max(trim_start + 0.05));
-            file.config.end_time = Some(format_time(next));
-        }
-        self.reconcile_track_spacing();
-        true
+        self.timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::Trim {
+                id,
+                leading,
+                time: project_time,
+                initial_start,
+                initial_offset,
+            })
     }
 
     pub(super) fn set_project_clip_speed(&mut self, id: &str, speed: f64) -> bool {
-        if self.is_processing
-            || self.project_clip_locked(id)
-            || !speed.is_finite()
-            || !(0.5..=20.0).contains(&speed)
-        {
-            return false;
-        }
-        let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) else {
-            return false;
-        };
-        if (clip.speed - speed).abs() < f64::EPSILON {
-            return false;
-        }
-        self.record_timeline_edit();
-        if let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) {
-            clip.speed = speed;
-        }
-        self.reconcile_track_spacing();
-        true
+        self.timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::Speed { id, speed })
     }
 
-    /// Moves a clip without recording history. Callers record once per gesture.
+    /// A discrete move; pointer gestures use `TimelineEditor::gesture`.
+    #[cfg(test)]
     pub(super) fn move_project_clip(&mut self, id: &str, offset_millis: u64) -> bool {
-        if self.is_processing || self.project_clip_locked(id) {
-            return false;
-        }
-        self.place_moved_project_clip(id, offset_millis)
+        self.timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::Move {
+                id,
+                offset: offset_millis,
+            })
     }
 }
 
 #[cfg(test)]
 pub(in crate::app) mod tests {
     use super::*;
+    use crate::app::*;
 
     pub(in crate::app) fn project() -> ScissorsRoot {
         let mut root = ScissorsRoot::new();

@@ -71,15 +71,10 @@ impl ScissorsRoot {
         if self.edit_target_locked(target) {
             return false;
         }
-        let before = matches!(target, EditTarget::Clip(_)).then(|| self.timeline_snapshot());
-        let changed = self.config_for_mut(target).is_some_and(update);
-        if changed
-            && let Some(before) = before
-            && self.reconcile_track_spacing()
-        {
-            self.project.history.push(before);
+        if let EditTarget::Clip(id) = target {
+            return self.timeline_editor().settings(id, update);
         }
-        changed
+        self.config_for_mut(target).is_some_and(update)
     }
 
     pub(super) fn metadata_entry_for(&self, target: &EditTarget) -> SourceMetadataEntry {
@@ -98,15 +93,19 @@ impl ScissorsRoot {
     }
 
     pub(super) fn normalize_config(&mut self, target: &EditTarget) -> bool {
+        if self.edit_target_locked(target) {
+            return false;
+        }
         let metadata = self.metadata_for_target(target);
-        self.update_config(target, |config| match target {
-            EditTarget::Clip(_) => {
-                crate::settings::normalize_clip_config(config, metadata.as_ref())
-            }
-            EditTarget::Project | EditTarget::Source(_) => {
-                normalize_output_config(config, metadata.as_ref())
-            }
-        })
+        self.config_for_mut(target)
+            .is_some_and(|config| match target {
+                EditTarget::Clip(_) => {
+                    crate::settings::normalize_clip_config(config, metadata.as_ref())
+                }
+                EditTarget::Project | EditTarget::Source(_) => {
+                    normalize_output_config(config, metadata.as_ref())
+                }
+            })
     }
 }
 

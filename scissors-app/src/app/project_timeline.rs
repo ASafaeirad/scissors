@@ -5,6 +5,7 @@
 use super::m3::{self, M3Text};
 use super::project::ClipPlacement;
 use super::project_tracks::{TrackKind, TrackToggle, Tracks};
+use super::timeline_edit::{EditGesture, TimelineEdit};
 use super::*;
 use crate::material::{self, Symbol, shape, typography};
 use scissors_core::types::TimelineSource;
@@ -200,91 +201,14 @@ impl ScissorsRoot {
         self.remove_project_clip(&id)
     }
 
-    /// Runs one step of a drag gesture, recording history before its first change only.
-    fn gesture_edit(
-        &mut self,
-        recorded: &Cell<bool>,
-        edit: impl FnOnce(&mut Self) -> bool,
-    ) -> bool {
-        let before = (!recorded.get()).then(|| self.timeline_snapshot());
-        let changed = edit(self);
-        if changed && let Some(before) = before {
-            self.project.history.push(before);
-            recorded.set(true);
-        }
-        changed
-    }
-
-    /// Prevents overlaps on every unlocked track. Snap also closes gaps on Video 1.
-    /// Call inside the triggering edit so its history snapshot includes these moves.
-    pub(super) fn reconcile_track_spacing(&mut self) -> bool {
-        let mut changed = false;
-        for track in 0..self.project.tracks.len() {
-            if self.project.tracks[track].locked {
-                continue;
-            }
-            let mut clips: Vec<_> = self
-                .project_timeline_clips()
-                .into_iter()
-                .filter(|(clip, _)| clip.track == track)
-                .collect();
-            // Wait until every duration on this track is known.
-            if clips.len()
-                != self
-                    .project
-                    .clips
-                    .iter()
-                    .filter(|clip| clip.track == track)
-                    .count()
-            {
-                continue;
-            }
-            clips.sort_by_key(|(clip, _)| clip.offset_millis);
-            changed |= self.place_track_clips(track, clips, None);
-        }
-        changed
-    }
-
-    /// Preserves free-placement gaps and pushes colliding clips after their predecessor.
-    fn place_track_clips(
-        &mut self,
-        track: usize,
-        clips: Vec<(ClipPlacement, TimelineSource)>,
-        moved: Option<(&str, u64)>,
-    ) -> bool {
-        let close_gaps = self.preview_ui.timeline_snap && track == self.project.tracks.primary();
-        let mut end = 0_u64;
-        let mut changed = false;
-        for (clip, source) in clips {
-            let requested = moved
-                .filter(|(id, _)| *id == clip.id)
-                .map_or(clip.offset_millis, |(_, offset)| offset);
-            let offset = if close_gaps { end } else { requested.max(end) };
-            let placement = self
-                .project
-                .clips
-                .iter_mut()
-                .find(|item| item.id == clip.id)
-                .unwrap();
-            changed |= placement.offset_millis != offset;
-            placement.offset_millis = offset;
-            end = offset.saturating_add(scissors_core::project_timeline::clip_duration_millis(
-                &source,
-            ));
-        }
-        changed
-    }
-
     fn toggle_timeline_snap(&mut self) {
         if self.is_processing {
             return;
         }
         self.preview_ui.timeline_snap = !self.preview_ui.timeline_snap;
         if self.preview_ui.timeline_snap {
-            let before = self.timeline_snapshot();
-            if self.reconcile_track_spacing() {
-                self.project.history.push(before);
-            }
+            self.timeline_editor()
+                .apply(super::timeline_edit::TimelineEdit::Reconcile);
         }
     }
 
@@ -293,51 +217,6 @@ impl ScissorsRoot {
             .clips
             .iter()
             .any(|clip| clip.id == id && clip.track == self.project.tracks.primary())
-    }
-
-    /// Inserts a moved clip between its neighbors without overlapping them.
-    pub(super) fn place_moved_project_clip(&mut self, id: &str, offset_millis: u64) -> bool {
-        let Some(track) = self
-            .project
-            .clips
-            .iter()
-            .find(|clip| clip.id == id)
-            .map(|clip| clip.track)
-        else {
-            return false;
-        };
-        let mut clips: Vec<_> = self
-            .project_timeline_clips()
-            .into_iter()
-            .filter(|(clip, _)| clip.track == track)
-            .collect();
-        // Do not rearrange a track until every clip has a known duration.
-        if clips.len()
-            != self
-                .project
-                .clips
-                .iter()
-                .filter(|clip| clip.track == track)
-                .count()
-        {
-            return false;
-        }
-        clips.sort_by_key(|(clip, _)| clip.offset_millis);
-        let Some(index) = clips.iter().position(|(clip, _)| clip.id == id) else {
-            return false;
-        };
-        let moved = clips.remove(index);
-        let insertion = clips
-            .iter()
-            .position(|(clip, source)| {
-                let midpoint = clip.offset_millis.saturating_add(
-                    scissors_core::project_timeline::clip_duration_millis(source) / 2,
-                );
-                midpoint > offset_millis
-            })
-            .unwrap_or(clips.len());
-        clips.insert(insertion, moved);
-        self.place_track_clips(track, clips, Some((id, offset_millis)))
     }
 
     /// Clip edges, the playhead, and the project start: where moves and trims snap.
@@ -379,9 +258,13 @@ impl ScissorsRoot {
         }
         self.preview_ui.project_timeline_view = Some(drag.view);
         let offset = crate::numeric::rounded_f64_to_u64(start.max(0.0) * 1000.0);
-        self.gesture_edit(&drag.recorded, |root| {
-            root.move_project_clip(&drag.id, offset)
-        })
+        self.timeline_editor().gesture(
+            &drag.gesture,
+            TimelineEdit::Move {
+                id: &drag.id,
+                offset,
+            },
+        )
     }
 
     fn drag_project_trim(
@@ -401,15 +284,16 @@ impl ScissorsRoot {
             time += snap_shift(&[time], &self.snap_targets(&drag.id), threshold);
         }
         self.preview_ui.project_timeline_view = Some(drag.view);
-        self.gesture_edit(&drag.recorded, |root| {
-            root.trim_project_clip(
-                &drag.id,
-                drag.start,
+        self.timeline_editor().gesture(
+            &drag.gesture,
+            TimelineEdit::Trim {
+                id: &drag.id,
+                leading: drag.start,
                 time,
-                drag.initial_start,
-                drag.initial_offset,
-            )
-        })
+                initial_start: drag.initial_start,
+                initial_offset: drag.initial_offset,
+            },
+        )
     }
 
     fn toggle_timeline_menu(
@@ -571,7 +455,7 @@ struct ClipDrag {
     /// Project seconds, for snapping the trailing edge.
     length: f64,
     view: TimelineView,
-    recorded: Rc<Cell<bool>>,
+    gesture: EditGesture,
 }
 
 #[derive(Clone)]
@@ -581,7 +465,7 @@ struct ClipTrimDrag {
     initial_start: f64,
     initial_offset: u64,
     view: TimelineView,
-    recorded: Rc<Cell<bool>>,
+    gesture: EditGesture,
 }
 
 #[derive(Clone, Copy)]
@@ -1438,9 +1322,13 @@ fn lane(
                             return;
                         }
                         let drag = event.drag(cx).clone();
-                        if root.gesture_edit(&drag.recorded, |root| {
-                            root.move_project_clip_to_track(&drag.id, index)
-                        }) {
+                        if root.timeline_editor().gesture(
+                            &drag.gesture,
+                            TimelineEdit::MoveToTrack {
+                                id: &drag.id,
+                                track: index,
+                            },
+                        ) {
                             cx.notify();
                         }
                     }),
@@ -1604,9 +1492,8 @@ fn clip(
                     } else {
                         offset.saturating_add(100)
                     };
-                    root.gesture_edit(&Cell::new(false), |root| {
-                        root.move_project_clip(&id, offset)
-                    });
+                    root.timeline_editor()
+                        .apply(TimelineEdit::Move { id: &id, offset });
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -1619,7 +1506,7 @@ fn clip(
                     grab_x: grab.clone(),
                     length,
                     view,
-                    recorded: Rc::default(),
+                    gesture: EditGesture::default(),
                 },
                 move |drag, position, _, cx| {
                     drag.grab_x.set(position.x);
@@ -1712,7 +1599,7 @@ fn clip(
                                 .start_time
                                 .as_deref()
                                 .map_or(0.0, parse_time_to_seconds),
-                            recorded: Rc::default(),
+                            gesture: EditGesture::default(),
                         },
                         |_, _, _, cx| cx.new(|_| MediaDragPreview),
                     )
@@ -2152,7 +2039,7 @@ mod tests {
                 .map(|clip| clip.offset_millis)
                 .collect::<Vec<_>>()
         };
-        // Insertions already prevent overlaps; enabling snap only closes the gaps.
+        // Free placement separates overlapping successors; snapping then closes gaps.
         assert_eq!(offsets(&root), [20_000, 0, 10_000, 40_000]);
         assert!(root.undo_timeline_edit());
         assert_eq!(offsets(&root), [30_000, 2_000, 12_000, 40_000]);
@@ -2210,11 +2097,29 @@ mod tests {
         // A small move stays in its slot, even when the raw position overlaps a neighbor.
         assert!(!root.move_project_clip(&ids[1], 9_000));
         assert_eq!(offsets(&root), [0, 10_000, 20_000]);
-        let recorded = Cell::new(false);
-        assert!(root.gesture_edit(&recorded, |root| root.move_project_clip(&ids[0], 16_000)));
+        let gesture = EditGesture::default();
+        assert!(root.timeline_editor().gesture(
+            &gesture,
+            TimelineEdit::Move {
+                id: &ids[0],
+                offset: 16_000
+            }
+        ));
         assert_eq!(offsets(&root), [10_000, 0, 20_000]);
-        assert!(!root.gesture_edit(&recorded, |root| root.move_project_clip(&ids[0], 16_000)));
-        assert!(root.gesture_edit(&recorded, |root| root.move_project_clip(&ids[0], 26_000)));
+        assert!(!root.timeline_editor().gesture(
+            &gesture,
+            TimelineEdit::Move {
+                id: &ids[0],
+                offset: 16_000
+            }
+        ));
+        assert!(root.timeline_editor().gesture(
+            &gesture,
+            TimelineEdit::Move {
+                id: &ids[0],
+                offset: 26_000
+            }
+        ));
         assert_eq!(offsets(&root), [20_000, 0, 10_000]);
         assert!(root.undo_timeline_edit());
         assert_eq!(offsets(&root), [0, 10_000, 20_000]);
@@ -2274,10 +2179,14 @@ mod tests {
                     .iter()
                     .map(|clip| clip.offset_millis)
                     .collect();
-                let recorded = Cell::new(false);
-                assert!(
-                    root.gesture_edit(&recorded, |root| root.move_project_clip(&first, 51_000))
-                );
+                let gesture = EditGesture::default();
+                assert!(root.timeline_editor().gesture(
+                    &gesture,
+                    TimelineEdit::Move {
+                        id: &first,
+                        offset: 51_000
+                    }
+                ));
                 assert_no_track_overlaps(&root);
                 let moved: Vec<_> = root
                     .project
@@ -2420,7 +2329,7 @@ mod tests {
         );
         assert!(!root.snap_targets(&primary).contains(&50.0));
         root.project.tracks[0].locked = false;
-        assert!(root.reconcile_track_spacing());
+        assert!(root.timeline_editor().apply(TimelineEdit::Reconcile));
         assert_eq!(root.project.clips[0].offset_millis, 0);
         assert_eq!(root.project.clips[1].offset_millis, 50_000);
         root.toggle_timeline_snap();
@@ -2843,9 +2752,9 @@ mod tests {
         assert!(panned_view.start > pinch_view.start);
         assert!((panned_view.span - (pinch_view.span)).abs() < f64::EPSILON);
         root.update(cx, |root, _| {
-            root.preview_ui.timeline_snap = false;
             let id = root.project.clips[0].id.clone();
-            assert!(root.move_project_clip(&id, 20_000));
+            // Packing this lone primary clip returns it to its original position.
+            assert!(!root.move_project_clip(&id, 20_000));
             assert_eq!(root.project_timeline_view(), panned_view);
         });
     }

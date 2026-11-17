@@ -152,28 +152,14 @@ pub(super) enum TrackToggle {
 }
 
 impl ScissorsRoot {
-    const fn can_edit_timeline(&self) -> bool {
-        !self.is_processing
-    }
-
     pub(super) fn add_project_track(&mut self, kind: TrackKind) -> bool {
-        if !self.can_edit_timeline() {
-            return false;
-        }
-        self.record_timeline_edit();
-        self.project.tracks.push(Track::new(kind));
-        true
+        self.timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::AddTrack(kind))
     }
 
     /// Removes a track and its clips. The last track of a kind stays.
     pub(super) fn remove_project_track(&mut self, index: usize) -> bool {
-        let Some(track) = self.project.tracks.get(index).copied() else {
-            return false;
-        };
-        if !self.can_edit_timeline() || track.locked || self.project.tracks.count(track.kind) < 2 {
-            return false;
-        }
-        self.record_timeline_edit();
+        // UI caches and conversion logs are outside timeline history.
         let ids: Vec<_> = self
             .project
             .clips
@@ -181,67 +167,33 @@ impl ScissorsRoot {
             .filter(|clip| clip.track == index)
             .map(|clip| clip.id.clone())
             .collect();
-        for id in ids {
-            self.remove_file_from_queue(&id);
-        }
-        self.project.tracks.remove(index);
-        for clip in &mut self.project.clips {
-            if clip.track > index {
-                clip.track -= 1;
+        let changed = self
+            .timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::RemoveTrack(index));
+        if changed {
+            for id in ids {
+                self.media_assets.thumbnails.remove(&id);
+                self.conversion_events.remove_logs(&id);
             }
         }
-        self.reconcile_track_spacing();
-        if self.file_queue.selected_file().is_none() {
-            self.file_queue
-                .select_file(self.project.clips.last().map(|clip| clip.id.clone()));
-        }
-        true
+        changed
     }
 
     pub(super) fn toggle_project_track(&mut self, index: usize, toggle: TrackToggle) -> bool {
-        if !self.can_edit_timeline() || index >= self.project.tracks.len() {
-            return false;
-        }
-        // Locking is a view aid, not an edit.
-        if toggle != TrackToggle::Locked {
-            self.record_timeline_edit();
-        }
-        let track = &mut self.project.tracks[index];
-        let flag = match toggle {
-            TrackToggle::Hidden => &mut track.hidden,
-            TrackToggle::Muted => &mut track.muted,
-            TrackToggle::Locked => &mut track.locked,
-        };
-        *flag = !*flag;
-        true
+        self.timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::ToggleTrack(
+                index, toggle,
+            ))
     }
 
     pub(super) fn project_clip_locked(&self, id: &str) -> bool {
-        self.project
-            .clips
-            .iter()
-            .find(|clip| clip.id == id)
-            .and_then(|clip| self.project.tracks.get(clip.track))
-            .is_some_and(|track| track.locked)
+        super::timeline_edit::clip_locked(&self.project.clips, &self.project.tracks, id)
     }
 
     /// Moves a clip to another unlocked track of its kind.
     pub(super) fn move_project_clip_to_track(&mut self, id: &str, track: usize) -> bool {
-        if !self.can_edit_timeline() || self.project_clip_locked(id) {
-            return false;
-        }
-        let Some(target) = self.project.tracks.get(track).copied() else {
-            return false;
-        };
-        let Some(clip) = self.project.clips.iter_mut().find(|clip| clip.id == id) else {
-            return false;
-        };
-        if clip.track == track || target.locked || target.kind != TrackKind::of(clip.kind) {
-            return false;
-        }
-        clip.track = track;
-        self.reconcile_track_spacing();
-        true
+        self.timeline_editor()
+            .apply(super::timeline_edit::TimelineEdit::MoveToTrack { id, track })
     }
 }
 
