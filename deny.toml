@@ -5,16 +5,14 @@ all-features = true
 version = 2
 yanked = "deny"
 ignore = [
+  { id = "RUSTSEC-2026-0543", reason = "Chrono is an unmaintained transitive dependency of vendored GPUI and the pinned Zed scheduler and logging crates. Track replacement with upstream dependency updates." },
   { id = "RUSTSEC-2026-0370", reason = "Unmaintained transitive D-Bus dependency of GPUI/accessibility and desktop integration; no safe upgrade is available, replace with upstream D-Bus migration" },
   { id = "RUSTSEC-2026-0371", reason = "Unmaintained transitive D-Bus dependency of GPUI/accessibility and desktop integration; no safe upgrade is available, replace with upstream D-Bus migration" },
   { id = "RUSTSEC-2026-0372", reason = "Unmaintained transitive D-Bus dependency of GPUI/accessibility and desktop integration; no safe upgrade is available, replace with upstream D-Bus migration" },
 
-  { crate = "spin@0.9.8", reason = "flume 0.11 in the pinned Zed scheduler requires this yanked release; replace with the next vendored GPUI/Zed scheduler update" },
   { id = "RUSTSEC-2024-0384", reason = "instant is an unmaintained transitive dependency of the pinned vendored GPUI snapshot; replace during the tracked GPUI upgrade" },
   { id = "RUSTSEC-2024-0436", reason = "paste is an unmaintained transitive dependency; no vulnerability is reported and upstream replacements are being tracked" },
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser is pulled by vendored GPUI text/SVG code; no safe compatible upgrade is currently available" },
-  { id = "RUSTSEC-2026-0194", reason = "affected quick-xml versions are constrained by current Wayland build tooling and Windows notification code; inputs on these paths are trusted and upstream upgrades are required" },
-  { id = "RUSTSEC-2026-0195", reason = "affected quick-xml versions are constrained by current Wayland build tooling and Windows notification code; inputs on these paths are trusted and upstream upgrades are required" },
   { id = "RUSTSEC-2026-0206", reason = "rustybuzz is pulled by vendored GPUI SVG rendering; no safe compatible upgrade is currently available" },
   { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained and pulled in by accesskit_unix in the vendored GPUI; no vulnerability is reported and no maintained release exists; replace during the tracked GPUI upgrade" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained and pulled in by accesskit_unix in the vendored GPUI; no vulnerability is reported and no maintained release exists; replace during the tracked GPUI upgrade" },
